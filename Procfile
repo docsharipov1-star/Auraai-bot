@@ -1,1 +1,1 @@
-worker:python "AuraAI Bot v3.0" 
+worker: python auraai_bot_v3.py

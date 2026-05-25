@@ -751,21 +751,40 @@ async def process_text(message: Message, state: FSMContext):
         chunks = [result[i:i+3500] for i in range(0, len(result), 3500)]
         for i, chunk in enumerate(chunks):
             if i == 0:
-                await thinking.edit_text(
-                    f"{model_info['emoji']} *{model_info['name']}*\n\n{chunk}\n\n"
-                    f"💎 Потрачено: *{cost} кр.* · Остаток: *{bal} кр.*",
-                    parse_mode="Markdown"
-                )
+                try:
+                    await thinking.edit_text(
+                        f"{model_info['emoji']} *{model_info['name']}*\n\n{chunk}\n\n"
+                        f"💎 Потрачено: *{cost} кр.* · Остаток: *{bal} кр.*",
+                        parse_mode="Markdown"
+                    )
+                except Exception:
+                    await message.answer(
+                        f"{model_info['emoji']} *{model_info['name']}*\n\n{chunk}\n\n"
+                        f"💎 Потрачено: *{cost} кр.* · Остаток: *{bal} кр.*",
+                        parse_mode="Markdown"
+                    )
             else:
                 await message.answer(chunk)
 
         await message.answer("Что дальше?", reply_markup=text_tools_kb())
 
+    except asyncio.TimeoutError:
+        await add_credits(message.from_user.id, cost, "bonus", "Возврат: таймаут")
+        try:
+            await thinking.edit_text("⏱ Время вышло (15 сек). Кредиты возвращены. Попробуй ещё раз.")
+        except Exception:
+            await message.answer("⏱ Время вышло (15 сек). Кредиты возвращены. Попробуй ещё раз.")
+        await message.answer("Выбери инструмент:", reply_markup=text_tools_kb())
+        logging.error(f"Text AI timeout [{tool_id}/{model_id}]")
+
     except Exception as e:
         await add_credits(message.from_user.id, cost, "bonus", "Возврат: ошибка AI")
-        await thinking.edit_text("⚠️ Ошибка AI. Кредиты возвращены.")
+        try:
+            await thinking.edit_text(f"⚠️ Ошибка AI. Кредиты возвращены.\n\n{str(e)[:100]}")
+        except Exception:
+            await message.answer(f"⚠️ Ошибка AI. Кредиты возвращены.")
         await message.answer("Попробуй ещё раз:", reply_markup=text_tools_kb())
-        logging.error(f"Text AI error: {e}")
+        logging.error(f"Text AI error [{tool_id}/{model_id}]: {e}")
 
 # ══════════════════════════════════════════════════════
 #  ГЕНЕРАЦИЯ КАРТИНОК
@@ -828,9 +847,20 @@ async def process_image(message: Message, state: FSMContext):
         await message.answer("Что дальше?", reply_markup=design_kb())
         await log_request(message.from_user.id, f"image_{model}", model, cost)
 
+    except asyncio.TimeoutError:
+        await add_credits(message.from_user.id, cost, "bonus", "Возврат: таймаут картинки")
+        try:
+            await thinking.edit_text("⏱ Время вышло (30 сек). Кредиты возвращены.")
+        except Exception:
+            await message.answer("⏱ Время вышло (30 сек). Кредиты возвращены.")
+        await message.answer("Попробуй снова:", reply_markup=design_kb())
+
     except Exception as e:
         await add_credits(message.from_user.id, cost, "bonus", "Возврат: ошибка генерации")
-        await thinking.edit_text("⚠️ Ошибка генерации. Кредиты возвращены. Попробуй ещё раз.")
+        try:
+            await thinking.edit_text(f"⚠️ Ошибка генерации. Кредиты возвращены.\n{str(e)[:100]}")
+        except Exception:
+            await message.answer("⚠️ Ошибка генерации. Кредиты возвращены.")
         await message.answer("Попробуй снова:", reply_markup=design_kb())
         logging.error(f"Image generation error [{model}]: {e}")
 

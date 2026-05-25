@@ -304,50 +304,66 @@ async def call_text_ai(prompt: str, system: str, model_id: str) -> str:
     provider = model_info["provider"]
     try:
         if provider == "anthropic" and anthropic_client:
-            resp = await anthropic_client.messages.create(
-                model="claude-sonnet-4-20250514", max_tokens=1024,
-                system=system, messages=[{"role": "user", "content": prompt}])
+            resp = await asyncio.wait_for(
+                anthropic_client.messages.create(
+                    model="claude-sonnet-4-20250514", max_tokens=1024,
+                    system=system, messages=[{"role": "user", "content": prompt}]),
+                timeout=15
+            )
             return resp.content[0].text
         elif provider == "deepseek" and deepseek_client:
-            resp = await deepseek_client.chat.completions.create(
-                model="deepseek-chat", max_tokens=1024,
-                messages=[{"role": "system", "content": system}, {"role": "user", "content": prompt}])
+            resp = await asyncio.wait_for(
+                deepseek_client.chat.completions.create(
+                    model="deepseek-chat", max_tokens=1024,
+                    messages=[{"role": "system", "content": system}, {"role": "user", "content": prompt}]),
+                timeout=15
+            )
             return resp.choices[0].message.content
         elif provider == "openai" and openai_client:
-            resp = await openai_client.chat.completions.create(
-                model="gpt-4o", max_tokens=1024,
-                messages=[{"role": "system", "content": system}, {"role": "user", "content": prompt}])
+            resp = await asyncio.wait_for(
+                openai_client.chat.completions.create(
+                    model="gpt-4o", max_tokens=1024,
+                    messages=[{"role": "system", "content": system}, {"role": "user", "content": prompt}]),
+                timeout=15
+            )
             return resp.choices[0].message.content
         else:
             return "❌ Модель недоступна. Проверь API ключи."
+    except asyncio.TimeoutError:
+        logging.error(f"Text AI timeout [{model_id}]")
+        raise Exception("Превышено время ожидания (30 сек). Попробуй ещё раз.")
     except Exception as e:
         logging.error(f"Text AI error [{model_id}]: {e}")
         raise
 
 async def generate_image_dalle(prompt: str) -> bytes:
-    """Генерация через DALL-E 3 — скачивание через httpx"""
+    """Генерация через DALL-E 3"""
     if not openai_client:
         raise Exception("OpenAI ключ не настроен")
-    resp = await openai_client.images.generate(
-        model="dall-e-3", prompt=prompt,
-        n=1, size="1024x1024", quality="standard", response_format="url"
+    resp = await asyncio.wait_for(
+        openai_client.images.generate(
+            model="dall-e-3", prompt=prompt,
+            n=1, size="1024x1024", quality="standard", response_format="url"
+        ), timeout=30
     )
     url = resp.data[0].url
-    async with httpx.AsyncClient(timeout=60) as client:
+    async with httpx.AsyncClient(timeout=30) as client:
         r = await client.get(url)
         r.raise_for_status()
         return r.content
 
 async def generate_image_gpt(prompt: str) -> bytes:
-    """Генерация через GPT Image 2 — скачивание через httpx"""
+    """Генерация через GPT Image 2"""
     if not openai_client:
         raise Exception("OpenAI ключ не настроен")
-    resp = await openai_client.images.generate(
-        model="gpt-image-1", prompt=prompt,
-        n=1, size="1024x1024", quality="standard", response_format="url"
+    resp = await asyncio.wait_for(
+        openai_client.images.generate(
+            model="gpt-image-1", prompt=prompt,
+            n=1, size="1024x1024", quality="standard", response_format="url"
+        ), timeout=30
     )
     url = resp.data[0].url
-    async with httpx.AsyncClient(timeout=60) as client:
+    async with httpx.AsyncClient(timeout=30) as client:
         r = await client.get(url)
         r.raise_for_status()
         return r.content

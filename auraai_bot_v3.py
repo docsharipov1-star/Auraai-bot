@@ -373,18 +373,22 @@ async def generate_image_gpt(prompt: str) -> bytes:
 
 # ── KIE.AI ФУНКЦИИ ────────────────────────────────────
 
-async def kie_request(endpoint: str, payload: dict) -> dict:
-    """Базовый запрос к kie.ai API"""
+async def kie_create_task(model: str, input_data: dict) -> str:
+    """Создать задачу на kie.ai — возвращает task_id"""
     if not KIE_KEY:
         raise Exception("KIE_KEY не настроен")
-    async with httpx.AsyncClient(timeout=120) as client:
+    async with httpx.AsyncClient(timeout=30) as client:
         resp = await client.post(
-            f"https://api.kie.ai/api/v1/{endpoint}",
+            "https://api.kie.ai/api/v1/jobs/createTask",
             headers={"Authorization": f"Bearer {KIE_KEY}", "Content-Type": "application/json"},
-            json=payload
+            json={"model": model, "input": input_data}
         )
         resp.raise_for_status()
-        return resp.json()
+        data = resp.json()
+        task_id = data.get("data", {}).get("task_id") or data.get("data", {}).get("taskId")
+        if not task_id:
+            raise Exception(f"Нет task_id в ответе: {data}")
+        return task_id
 
 async def kie_poll(task_id: str, max_wait: int = 120) -> dict:
     """Ждать завершения задачи kie.ai"""
@@ -392,59 +396,59 @@ async def kie_poll(task_id: str, max_wait: int = 120) -> dict:
         for _ in range(max_wait // 5):
             await asyncio.sleep(5)
             r = await client.get(
-                f"https://api.kie.ai/api/v1/query/{task_id}",
+                f"https://api.kie.ai/api/v1/jobs/queryTask?taskId={task_id}",
                 headers={"Authorization": f"Bearer {KIE_KEY}"}
             )
             data = r.json()
             status = data.get("data", {}).get("status", "")
-            if status == "completed":
+            if status in ("completed", "succeed", "success"):
                 return data
-            elif status == "failed":
+            elif status in ("failed", "error"):
                 raise Exception(f"Задача провалилась: {data}")
     raise Exception("Таймаут ожидания результата")
 
 async def generate_nano_banana(prompt: str) -> bytes:
-    """Nano Banana (Gemini 3.1) через kie.ai"""
-    result = await kie_request("images/generations", {
-        "model": "nano-banana-pro",
+    """Nano Banana Pro (Gemini 3) через kie.ai"""
+    task_id = await kie_create_task("nano-banana-pro", {
         "prompt": prompt,
-        "resolution": "1K",
-        "aspect_ratio": "1:1"
+        "aspect_ratio": "1:1",
+        "resolution": "1K"
     })
-    task_id = result.get("data", {}).get("task_id")
-    if task_id:
-        data = await kie_poll(task_id)
-        url = data.get("data", {}).get("output", [{}])[0].get("url", "")
-    else:
-        url = result.get("data", {}).get("url", "")
+    data = await kie_poll(task_id, max_wait=60)
+    output = data.get("data", {}).get("output", [])
+    url = output[0].get("url", "") if output else ""
+    if not url:
+        raise Exception("Нет URL в ответе")
     async with httpx.AsyncClient(timeout=60) as client:
         r = await client.get(url)
         r.raise_for_status()
         return r.content
 
 async def generate_video_kling(prompt: str) -> str:
-    """Kling 3.0 видео через kie.ai — возвращает URL"""
-    result = await kie_request("videos/generations", {
-        "model": "kling-v3",
+    """Kling 3.0 видео через kie.ai"""
+    task_id = await kie_create_task("kling-v3", {
         "prompt": prompt,
-        "duration": 5,
+        "duration": "5",
         "aspect_ratio": "16:9"
     })
-    task_id = result.get("data", {}).get("task_id")
     data = await kie_poll(task_id, max_wait=180)
-    url = data.get("data", {}).get("output", [{}])[0].get("url", "")
+    output = data.get("data", {}).get("output", [])
+    url = output[0].get("url", "") if output else ""
+    if not url:
+        raise Exception("Нет URL видео")
     return url
 
 async def generate_music_suno(prompt: str) -> str:
-    """Suno v4 музыка через kie.ai — возвращает URL"""
-    result = await kie_request("music/generations", {
-        "model": "suno-v4",
+    """Suno v4 музыка через kie.ai"""
+    task_id = await kie_create_task("suno-v4", {
         "prompt": prompt,
         "duration": 30
     })
-    task_id = result.get("data", {}).get("task_id")
     data = await kie_poll(task_id, max_wait=120)
-    url = data.get("data", {}).get("output", [{}])[0].get("url", "")
+    output = data.get("data", {}).get("output", [])
+    url = output[0].get("url", "") if output else ""
+    if not url:
+        raise Exception("Нет URL музыки")
     return url
 
 # ══════════════════════════════════════════════════════

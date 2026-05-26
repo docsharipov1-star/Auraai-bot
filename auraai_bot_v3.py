@@ -379,7 +379,7 @@ async def kie_create_task(model: str, input_data: dict) -> str:
         raise Exception("KIE_KEY не настроен")
     async with httpx.AsyncClient(timeout=30) as client:
         resp = await client.post(
-            "https://api.kie.ai/api/v1/jobs/createTask",
+            "https://kie.ai/api/v1/jobs/createTask",
             headers={"Authorization": f"Bearer {KIE_KEY}", "Content-Type": "application/json"},
             json={"model": model, "input": input_data}
         )
@@ -396,7 +396,7 @@ async def kie_poll(task_id: str, max_wait: int = 120) -> dict:
         for _ in range(max_wait // 5):
             await asyncio.sleep(5)
             r = await client.get(
-                f"https://api.kie.ai/api/v1/jobs/queryTask?taskId={task_id}",
+                f"https://kie.ai/api/v1/jobs/queryTask?taskId={task_id}",
                 headers={"Authorization": f"Bearer {KIE_KEY}"}
             )
             data = r.json()

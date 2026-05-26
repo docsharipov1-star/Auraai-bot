@@ -337,31 +337,32 @@ async def call_text_ai(prompt: str, system: str, model_id: str) -> str:
         raise
 
 async def generate_image_dalle(prompt: str) -> bytes:
-    """Генерация через DALL-E 3"""
+    """Генерация через DALL-E 3 — b64"""
     if not openai_client:
         raise Exception("OpenAI ключ не настроен")
+    import base64
     resp = await asyncio.wait_for(
         openai_client.images.generate(
             model="dall-e-3", prompt=prompt,
-            n=1, size="1024x1024", quality="standard", response_format="url"
+            n=1, size="1024x1024", quality="standard",
+            response_format="b64_json"
         ), timeout=30
     )
-    url = resp.data[0].url
-    async with httpx.AsyncClient(timeout=30) as client:
-        r = await client.get(url)
-        r.raise_for_status()
-        return r.content
+    return base64.b64decode(resp.data[0].b64_json)
 
 async def generate_image_gpt(prompt: str) -> bytes:
-    """Генерация через GPT Image 2"""
+    """Генерация через GPT Image 2 — b64"""
     if not openai_client:
         raise Exception("OpenAI ключ не настроен")
+    import base64
     resp = await asyncio.wait_for(
         openai_client.images.generate(
             model="gpt-image-1", prompt=prompt,
-            n=1, size="1024x1024", quality="standard", response_format="url"
+            n=1, size="1024x1024"
         ), timeout=30
     )
+    if resp.data[0].b64_json:
+        return base64.b64decode(resp.data[0].b64_json)
     url = resp.data[0].url
     async with httpx.AsyncClient(timeout=30) as client:
         r = await client.get(url)

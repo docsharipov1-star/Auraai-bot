@@ -46,6 +46,7 @@ BOT_TOKEN     = os.getenv("BOT_TOKEN", "")
 ANTHROPIC_KEY = os.getenv("ANTHROPIC_KEY", "")
 OPENAI_KEY    = os.getenv("OPENAI_KEY", "")
 DEEPSEEK_KEY  = os.getenv("DEEPSEEK_KEY", "")
+KIE_KEY       = os.getenv("KIE_KEY", "")
 ADMIN_ID      = int(os.getenv("ADMIN_ID", "0"))
 BOT_USERNAME  = os.getenv("BOT_USERNAME", "GetAuraAI_bot")
 DB_PATH       = "auraai.db"
@@ -55,6 +56,7 @@ REFERRAL_BONUS = 50
 anthropic_client = None
 openai_client    = None
 deepseek_client  = None
+kie_client       = None
 
 PLANS = {
     "pro":  {"name": "Pro",  "emoji": "👑", "stars": 500,  "credits": 5000,  "days": 30, "description": "5 000 кредитов на 30 дней"},
@@ -336,11 +338,12 @@ async def call_text_ai(prompt: str, system: str, model_id: str) -> str:
         logging.error(f"Text AI error [{model_id}]: {e}")
         raise
 
+import base64
+
 async def generate_image_dalle(prompt: str) -> bytes:
-    """Генерация через DALL-E 3 — b64"""
+    """DALL-E 3 — b64"""
     if not openai_client:
         raise Exception("OpenAI ключ не настроен")
-    import base64
     resp = await asyncio.wait_for(
         openai_client.images.generate(
             model="dall-e-3", prompt=prompt,
@@ -351,10 +354,9 @@ async def generate_image_dalle(prompt: str) -> bytes:
     return base64.b64decode(resp.data[0].b64_json)
 
 async def generate_image_gpt(prompt: str) -> bytes:
-    """Генерация через GPT Image 2 — b64"""
+    """GPT Image 2 — b64"""
     if not openai_client:
         raise Exception("OpenAI ключ не настроен")
-    import base64
     resp = await asyncio.wait_for(
         openai_client.images.generate(
             model="gpt-image-1", prompt=prompt,
@@ -368,6 +370,82 @@ async def generate_image_gpt(prompt: str) -> bytes:
         r = await client.get(url)
         r.raise_for_status()
         return r.content
+
+# ── KIE.AI ФУНКЦИИ ────────────────────────────────────
+
+async def kie_request(endpoint: str, payload: dict) -> dict:
+    """Базовый запрос к kie.ai API"""
+    if not KIE_KEY:
+        raise Exception("KIE_KEY не настроен")
+    async with httpx.AsyncClient(timeout=120) as client:
+        resp = await client.post(
+            f"https://api.kie.ai/api/v1/{endpoint}",
+            headers={"Authorization": f"Bearer {KIE_KEY}", "Content-Type": "application/json"},
+            json=payload
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+async def kie_poll(task_id: str, max_wait: int = 120) -> dict:
+    """Ждать завершения задачи kie.ai"""
+    async with httpx.AsyncClient(timeout=30) as client:
+        for _ in range(max_wait // 5):
+            await asyncio.sleep(5)
+            r = await client.get(
+                f"https://api.kie.ai/api/v1/query/{task_id}",
+                headers={"Authorization": f"Bearer {KIE_KEY}"}
+            )
+            data = r.json()
+            status = data.get("data", {}).get("status", "")
+            if status == "completed":
+                return data
+            elif status == "failed":
+                raise Exception(f"Задача провалилась: {data}")
+    raise Exception("Таймаут ожидания результата")
+
+async def generate_nano_banana(prompt: str) -> bytes:
+    """Nano Banana (Gemini 3.1) через kie.ai"""
+    result = await kie_request("images/generations", {
+        "model": "nano-banana-pro",
+        "prompt": prompt,
+        "resolution": "1K",
+        "aspect_ratio": "1:1"
+    })
+    task_id = result.get("data", {}).get("task_id")
+    if task_id:
+        data = await kie_poll(task_id)
+        url = data.get("data", {}).get("output", [{}])[0].get("url", "")
+    else:
+        url = result.get("data", {}).get("url", "")
+    async with httpx.AsyncClient(timeout=60) as client:
+        r = await client.get(url)
+        r.raise_for_status()
+        return r.content
+
+async def generate_video_kling(prompt: str) -> str:
+    """Kling 3.0 видео через kie.ai — возвращает URL"""
+    result = await kie_request("videos/generations", {
+        "model": "kling-v3",
+        "prompt": prompt,
+        "duration": 5,
+        "aspect_ratio": "16:9"
+    })
+    task_id = result.get("data", {}).get("task_id")
+    data = await kie_poll(task_id, max_wait=180)
+    url = data.get("data", {}).get("output", [{}])[0].get("url", "")
+    return url
+
+async def generate_music_suno(prompt: str) -> str:
+    """Suno v4 музыка через kie.ai — возвращает URL"""
+    result = await kie_request("music/generations", {
+        "model": "suno-v4",
+        "prompt": prompt,
+        "duration": 30
+    })
+    task_id = result.get("data", {}).get("task_id")
+    data = await kie_poll(task_id, max_wait=120)
+    url = data.get("data", {}).get("output", [{}])[0].get("url", "")
+    return url
 
 # ══════════════════════════════════════════════════════
 #  КЛАВИАТУРЫ — REPLY KEYBOARD (кнопки внизу)
@@ -422,6 +500,7 @@ def text_tools_kb() -> ReplyKeyboardMarkup:
 def design_kb() -> ReplyKeyboardMarkup:
     """Меню дизайна"""
     b = ReplyKeyboardBuilder()
+    b.row(KeyboardButton(text="🍌 Nano Banana"))
     b.row(KeyboardButton(text="🖼 GPT Image 2"))
     b.row(KeyboardButton(text="🎨 DALL-E 3"))
     b.row(KeyboardButton(text="🏠 В главное меню"))
@@ -581,18 +660,30 @@ async def section_design(message: Message):
         parse_mode="Markdown", reply_markup=design_kb()
     )
 
+def audio_kb() -> ReplyKeyboardMarkup:
+    b = ReplyKeyboardBuilder()
+    b.row(KeyboardButton(text="🎵 Сгенерировать музыку"))
+    b.row(KeyboardButton(text="🏠 В главное меню"))
+    return b.as_markup(resize_keyboard=True)
+
 @router.message(F.text == "🎙 Аудио с ИИ")
 async def section_audio(message: Message):
     await message.answer(
-        "🎙 *Аудио с ИИ*\n\n⏳ Раздел в разработке.\n\nСкоро: генерация музыки Suno, озвучка текста ElevenLabs.",
-        parse_mode="Markdown", reply_markup=main_kb()
+        "🎙 *Аудио с ИИ*\n\n🎵 Suno v4 — генерация музыки по описанию\n💎 50 кредитов за трек",
+        parse_mode="Markdown", reply_markup=audio_kb()
     )
+
+def video_kb() -> ReplyKeyboardMarkup:
+    b = ReplyKeyboardBuilder()
+    b.row(KeyboardButton(text="🎬 Создать видео Kling"))
+    b.row(KeyboardButton(text="🏠 В главное меню"))
+    return b.as_markup(resize_keyboard=True)
 
 @router.message(F.text == "🎬 Видео будущего")
 async def section_video(message: Message):
     await message.answer(
-        "🎬 *Видео будущего*\n\n⏳ Раздел в разработке.\n\nСкоро: Kling Avatar, Runway, Luma видео.",
-        parse_mode="Markdown", reply_markup=main_kb()
+        "🎬 *Видео будущего*\n\n🎬 Kling 3.0 — видео из текста до 5 сек\n💎 150 кредитов за видео",
+        parse_mode="Markdown", reply_markup=video_kb()
     )
 
 @router.message(F.text == "🗂 Хранитель изображений")
@@ -791,16 +882,26 @@ async def process_text(message: Message, state: FSMContext):
 #  ГЕНЕРАЦИЯ КАРТИНОК
 # ══════════════════════════════════════════════════════
 
-@router.message(F.text.in_({"🖼 GPT Image 2", "🎨 DALL-E 3"}))
+@router.message(F.text.in_({"🖼 GPT Image 2", "🎨 DALL-E 3", "🍌 Nano Banana"}))
 async def image_tool_selected(message: Message, state: FSMContext):
-    cost = 80 if "GPT Image 2" in message.text else 50
+    if "Nano Banana" in message.text:
+        cost = 60
+    elif "GPT Image 2" in message.text:
+        cost = 80
+    else:
+        cost = 50
     bal  = await get_balance(message.from_user.id)
 
     if bal < cost:
         await message.answer(f"❌ Нужно *{cost} кр.* · У тебя *{bal} кр.*", parse_mode="Markdown", reply_markup=profile_kb())
         return
 
-    model = "gpt" if "GPT Image 2" in message.text else "dalle"
+    if "Nano Banana" in message.text:
+        model = "nano"
+    elif "GPT Image 2" in message.text:
+        model = "gpt"
+    else:
+        model = "dalle"
     user_image_model[message.from_user.id] = model
     await state.set_state(State_.waiting_image)
     await state.update_data(image_model=model, cost=cost)
@@ -831,22 +932,48 @@ async def process_image(message: Message, state: FSMContext):
     thinking = await message.answer("🎨 Генерирую картинку... (~15-30 сек)", reply_markup=ReplyKeyboardRemove())
 
     try:
-        if model == "gpt":
-            img_bytes = await generate_image_gpt(message.text)
-        else:
-            img_bytes = await generate_image_dalle(message.text)
-
         bal = await get_balance(message.from_user.id)
-        model_name = "GPT Image 2" if model == "gpt" else "DALL-E 3"
 
-        await thinking.delete()
-        await message.answer_photo(
-            BufferedInputFile(img_bytes, filename="image.png"),
-            caption=f"🎨 *{model_name}*\n\n💎 Потрачено: *{cost} кр.* · Остаток: *{bal} кр.*",
-            parse_mode="Markdown"
-        )
-        await message.answer("Что дальше?", reply_markup=design_kb())
-        await log_request(message.from_user.id, f"image_{model}", model, cost)
+        if model == "music":
+            thinking_text = await thinking.edit_text("🎵 Генерирую музыку... (~30-60 сек)")
+            url = await generate_music_suno(message.text)
+            await thinking.delete()
+            await message.answer_audio(
+                url,
+                caption=f"🎵 *Suno v4*\n\n💎 Потрачено: *{cost} кр.* · Остаток: *{bal} кр.*",
+                parse_mode="Markdown"
+            )
+            await message.answer("Что дальше?", reply_markup=audio_kb())
+
+        elif model == "video":
+            thinking_text = await thinking.edit_text("🎬 Генерирую видео... (~60-120 сек)")
+            url = await generate_video_kling(message.text)
+            await thinking.delete()
+            await message.answer_video(
+                url,
+                caption=f"🎬 *Kling 3.0*\n\n💎 Потрачено: *{cost} кр.* · Остаток: *{bal} кр.*",
+                parse_mode="Markdown"
+            )
+            await message.answer("Что дальше?", reply_markup=video_kb())
+
+        else:
+            if model == "nano":
+                img_bytes = await generate_nano_banana(message.text)
+            elif model == "gpt":
+                img_bytes = await generate_image_gpt(message.text)
+            else:
+                img_bytes = await generate_image_dalle(message.text)
+
+            model_name = {"nano": "🍌 Nano Banana", "gpt": "GPT Image 2", "dalle": "DALL-E 3"}.get(model, model)
+            await thinking.delete()
+            await message.answer_photo(
+                BufferedInputFile(img_bytes, filename="image.png"),
+                caption=f"🎨 *{model_name}*\n\n💎 Потрачено: *{cost} кр.* · Остаток: *{bal} кр.*",
+                parse_mode="Markdown"
+            )
+            await message.answer("Что дальше?", reply_markup=design_kb())
+
+        await log_request(message.from_user.id, f"media_{model}", model, cost)
 
     except asyncio.TimeoutError:
         await add_credits(message.from_user.id, cost, "bonus", "Возврат: таймаут картинки")
@@ -868,6 +995,38 @@ async def process_image(message: Message, state: FSMContext):
 # ══════════════════════════════════════════════════════
 #  РЕФЕРАЛЫ
 # ══════════════════════════════════════════════════════
+
+@router.message(F.text == "🎵 Сгенерировать музыку")
+async def music_generate(message: Message, state: FSMContext):
+    cost = 50
+    bal  = await get_balance(message.from_user.id)
+    if bal < cost:
+        await message.answer(f"❌ Нужно *{cost} кр.* · У тебя *{bal} кр.*", parse_mode="Markdown", reply_markup=profile_kb())
+        return
+    await state.set_state(State_.waiting_image)
+    await state.update_data(image_model="music", cost=cost)
+    await message.answer(
+        f"🎵 *Suno v4*  ·  💎 {cost} кредитов\n\n"
+        f"Опиши музыку которую хочешь создать:\n\n"
+        f"Пример: *энергичный рок трек для мотивации, гитара и барабаны*",
+        parse_mode="Markdown", reply_markup=cancel_kb()
+    )
+
+@router.message(F.text == "🎬 Создать видео Kling")
+async def video_generate(message: Message, state: FSMContext):
+    cost = 150
+    bal  = await get_balance(message.from_user.id)
+    if bal < cost:
+        await message.answer(f"❌ Нужно *{cost} кр.* · У тебя *{bal} кр.*", parse_mode="Markdown", reply_markup=profile_kb())
+        return
+    await state.set_state(State_.waiting_image)
+    await state.update_data(image_model="video", cost=cost)
+    await message.answer(
+        f"🎬 *Kling 3.0*  ·  💎 {cost} кредитов\n\n"
+        f"Опиши видео которое хочешь создать:\n\n"
+        f"Пример: *закат над морем, волны, кинематографичная съёмка*",
+        parse_mode="Markdown", reply_markup=cancel_kb()
+    )
 
 @router.message(F.text == "🔗 Рефералы")
 async def section_referral(message: Message):
@@ -1112,6 +1271,9 @@ async def main():
     if DEEPSEEK_KEY:
         deepseek_client = AsyncOpenAI(api_key=DEEPSEEK_KEY, base_url="https://api.deepseek.com")
         logging.info("✅ DeepSeek подключён")
+
+    if KIE_KEY:
+        logging.info("✅ KIE.AI подключён (Nano Banana + Kling + Suno)")
 
     await init_db()
     logging.info("✅ База данных готова")

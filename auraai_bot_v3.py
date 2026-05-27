@@ -403,24 +403,20 @@ async def aiml_request(endpoint: str, payload: dict) -> dict:
         return resp.json()
 
 async def generate_nano_banana(prompt: str) -> bytes:
-    """Nano Banana через aimlapi.com"""
+    """Nano Banana Pro через aimlapi.com"""
     data = await aiml_request("v1/images/generations", {
-        "model": "google/gemini-2.0-flash-exp",
+        "model": "google/nano-banana-pro",
         "prompt": prompt,
-        "n": 1,
-        "size": "1024x1024"
+        "aspect_ratio": "1:1",
+        "resolution": "1K"
     })
     # Получить URL картинки
     url = ""
-    if data.get("data"):
-        url = data["data"][0].get("url", "")
-    elif data.get("images"):
+    if data.get("images"):
         url = data["images"][0].get("url", "")
+    elif data.get("data"):
+        url = data["data"][0].get("url", "")
     if not url:
-        import base64
-        b64 = data.get("data", [{}])[0].get("b64_json", "")
-        if b64:
-            return base64.b64decode(b64)
         raise Exception(f"Нет URL в ответе: {list(data.keys())}")
     async with httpx.AsyncClient(timeout=60) as client:
         r = await client.get(url)

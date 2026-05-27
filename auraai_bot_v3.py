@@ -46,7 +46,7 @@ BOT_TOKEN     = os.getenv("BOT_TOKEN", "")
 ANTHROPIC_KEY = os.getenv("ANTHROPIC_KEY", "")
 OPENAI_KEY    = os.getenv("OPENAI_KEY", "")
 DEEPSEEK_KEY  = os.getenv("DEEPSEEK_KEY", "")
-KIE_KEY       = os.getenv("KIE_KEY", "")
+AIML_KEY      = os.getenv("AIML_KEY", "")
 ADMIN_ID      = int(os.getenv("ADMIN_ID", "0"))
 BOT_USERNAME  = os.getenv("BOT_USERNAME", "GetAuraAI_bot")
 DB_PATH       = "auraai.db"
@@ -301,39 +301,55 @@ async def admin_stats():
 #  AI ФУНКЦИИ
 # ══════════════════════════════════════════════════════
 
-async def call_text_ai(prompt: str, system: str, model_id: str) -> str:
+async def call_text_ai(prompt: str, system: str, model_id: str, uid: int = 0, use_history: bool = False) -> str:
     model_info = TEXT_MODELS.get(model_id, TEXT_MODELS["claude"])
     provider = model_info["provider"]
+
+    # Построить сообщения с историей
+    if use_history and uid:
+        history = get_history(uid)
+        messages = history + [{"role": "user", "content": prompt}]
+    else:
+        messages = [{"role": "user", "content": prompt}]
+
     try:
         if provider == "anthropic" and anthropic_client:
             resp = await asyncio.wait_for(
                 anthropic_client.messages.create(
                     model="claude-sonnet-4-20250514", max_tokens=1024,
-                    system=system, messages=[{"role": "user", "content": prompt}]),
+                    system=system, messages=messages),
                 timeout=15
             )
-            return resp.content[0].text
+            result = resp.content[0].text
         elif provider == "deepseek" and deepseek_client:
             resp = await asyncio.wait_for(
                 deepseek_client.chat.completions.create(
                     model="deepseek-chat", max_tokens=1024,
-                    messages=[{"role": "system", "content": system}, {"role": "user", "content": prompt}]),
+                    messages=[{"role": "system", "content": system}] + messages),
                 timeout=15
             )
-            return resp.choices[0].message.content
+            result = resp.choices[0].message.content
         elif provider == "openai" and openai_client:
             resp = await asyncio.wait_for(
                 openai_client.chat.completions.create(
                     model="gpt-4o", max_tokens=1024,
-                    messages=[{"role": "system", "content": system}, {"role": "user", "content": prompt}]),
+                    messages=[{"role": "system", "content": system}] + messages),
                 timeout=15
             )
-            return resp.choices[0].message.content
+            result = resp.choices[0].message.content
         else:
             return "❌ Модель недоступна. Проверь API ключи."
+
+        # Сохранить в историю
+        if use_history and uid:
+            add_to_history(uid, "user", prompt)
+            add_to_history(uid, "assistant", result)
+
+        return result
+
     except asyncio.TimeoutError:
         logging.error(f"Text AI timeout [{model_id}]")
-        raise Exception("Превышено время ожидания (30 сек). Попробуй ещё раз.")
+        raise Exception("Превышено время ожидания. Попробуй ещё раз.")
     except Exception as e:
         logging.error(f"Text AI error [{model_id}]: {e}")
         raise
@@ -373,82 +389,87 @@ async def generate_image_gpt(prompt: str) -> bytes:
 
 # ── KIE.AI ФУНКЦИИ ────────────────────────────────────
 
-async def kie_create_task(model: str, input_data: dict) -> str:
-    """Создать задачу на kie.ai — возвращает task_id"""
-    if not KIE_KEY:
-        raise Exception("KIE_KEY не настроен")
-    async with httpx.AsyncClient(timeout=30) as client:
+async def aiml_request(endpoint: str, payload: dict) -> dict:
+    """Базовый запрос к aimlapi.com"""
+    if not AIML_KEY:
+        raise Exception("AIML_KEY не настроен")
+    async with httpx.AsyncClient(timeout=60) as client:
         resp = await client.post(
-            "https://kie.ai/api/v1/jobs/createTask",
-            headers={"Authorization": f"Bearer {KIE_KEY}", "Content-Type": "application/json"},
-            json={"model": model, "input": input_data}
+            f"https://api.aimlapi.com/{endpoint}",
+            headers={"Authorization": f"Bearer {AIML_KEY}", "Content-Type": "application/json"},
+            json=payload
         )
         resp.raise_for_status()
-        data = resp.json()
-        task_id = data.get("data", {}).get("task_id") or data.get("data", {}).get("taskId")
-        if not task_id:
-            raise Exception(f"Нет task_id в ответе: {data}")
-        return task_id
-
-async def kie_poll(task_id: str, max_wait: int = 120) -> dict:
-    """Ждать завершения задачи kie.ai"""
-    async with httpx.AsyncClient(timeout=30) as client:
-        for _ in range(max_wait // 5):
-            await asyncio.sleep(5)
-            r = await client.get(
-                f"https://kie.ai/api/v1/jobs/queryTask?taskId={task_id}",
-                headers={"Authorization": f"Bearer {KIE_KEY}"}
-            )
-            data = r.json()
-            status = data.get("data", {}).get("status", "")
-            if status in ("completed", "succeed", "success"):
-                return data
-            elif status in ("failed", "error"):
-                raise Exception(f"Задача провалилась: {data}")
-    raise Exception("Таймаут ожидания результата")
+        return resp.json()
 
 async def generate_nano_banana(prompt: str) -> bytes:
-    """Nano Banana Pro (Gemini 3) через kie.ai"""
-    task_id = await kie_create_task("nano-banana-pro", {
+    """Nano Banana через aimlapi.com"""
+    data = await aiml_request("v1/images/generations", {
+        "model": "google/gemini-2.0-flash-exp",
         "prompt": prompt,
-        "aspect_ratio": "1:1",
-        "resolution": "1K"
+        "n": 1,
+        "size": "1024x1024"
     })
-    data = await kie_poll(task_id, max_wait=60)
-    output = data.get("data", {}).get("output", [])
-    url = output[0].get("url", "") if output else ""
+    # Получить URL картинки
+    url = ""
+    if data.get("data"):
+        url = data["data"][0].get("url", "")
+    elif data.get("images"):
+        url = data["images"][0].get("url", "")
     if not url:
-        raise Exception("Нет URL в ответе")
+        import base64
+        b64 = data.get("data", [{}])[0].get("b64_json", "")
+        if b64:
+            return base64.b64decode(b64)
+        raise Exception(f"Нет URL в ответе: {list(data.keys())}")
     async with httpx.AsyncClient(timeout=60) as client:
         r = await client.get(url)
         r.raise_for_status()
         return r.content
 
 async def generate_video_kling(prompt: str) -> str:
-    """Kling 3.0 видео через kie.ai"""
-    task_id = await kie_create_task("kling-v3", {
+    """Видео через aimlapi.com"""
+    data = await aiml_request("v2/generate/video/kling/generation", {
         "prompt": prompt,
         "duration": "5",
-        "aspect_ratio": "16:9"
+        "aspect_ratio": "16:9",
+        "model": "kling-video/v1.6/standard/text-to-video"
     })
-    data = await kie_poll(task_id, max_wait=180)
-    output = data.get("data", {}).get("output", [])
-    url = output[0].get("url", "") if output else ""
+    # Получить URL видео
+    task_id = data.get("id") or data.get("task_id")
+    if task_id:
+        for _ in range(24):
+            await asyncio.sleep(5)
+            async with httpx.AsyncClient(timeout=30) as client:
+                r = await client.get(
+                    f"https://api.aimlapi.com/v2/generate/video/kling/generation?generation_id={task_id}",
+                    headers={"Authorization": f"Bearer {AIML_KEY}"}
+                )
+                result = r.json()
+                status = result.get("status", "")
+                if status == "completed":
+                    return result.get("video", {}).get("url", "")
+                elif status == "failed":
+                    raise Exception("Видео не сгенерировалось")
+        raise Exception("Таймаут генерации видео")
+    url = data.get("url", "") or data.get("video_url", "")
     if not url:
-        raise Exception("Нет URL видео")
+        raise Exception(f"Нет URL видео: {list(data.keys())}")
     return url
 
 async def generate_music_suno(prompt: str) -> str:
-    """Suno v4 музыка через kie.ai"""
-    task_id = await kie_create_task("suno-v4", {
+    """Музыка Suno через aimlapi.com"""
+    data = await aiml_request("v2/generate/audio/suno-ai/clip", {
         "prompt": prompt,
-        "duration": 30
+        "make_instrumental": False,
+        "wait_audio": True
     })
-    data = await kie_poll(task_id, max_wait=120)
-    output = data.get("data", {}).get("output", [])
-    url = output[0].get("url", "") if output else ""
+    clips = data.get("clips", data.get("data", []))
+    if clips:
+        return clips[0].get("audio_url", clips[0].get("url", ""))
+    url = data.get("audio_url", "") or data.get("url", "")
     if not url:
-        raise Exception("Нет URL музыки")
+        raise Exception(f"Нет URL музыки: {list(data.keys())}")
     return url
 
 # ══════════════════════════════════════════════════════
@@ -498,6 +519,7 @@ def text_tools_kb() -> ReplyKeyboardMarkup:
         KeyboardButton(text="✏️ Рерайт"),
     )
     b.row(KeyboardButton(text="💡 Идеи"))
+    b.row(KeyboardButton(text="🗑 Очистить историю чата"))
     b.row(KeyboardButton(text="🏠 В главное меню"))
     return b.as_markup(resize_keyboard=True)
 
@@ -574,6 +596,22 @@ class State_(StatesGroup):
 user_tool:  dict[int, str] = {}
 user_model: dict[int, str] = {}
 user_image_model: dict[int, str] = {}
+# История чатов — последние 10 сообщений на пользователя
+chat_history: dict[int, list] = {}
+
+def get_history(uid: int) -> list:
+    return chat_history.get(uid, [])
+
+def add_to_history(uid: int, role: str, content: str):
+    if uid not in chat_history:
+        chat_history[uid] = []
+    chat_history[uid].append({"role": role, "content": content})
+    # Держать только последние 30 сообщений
+    if len(chat_history[uid]) > 30:
+        chat_history[uid] = chat_history[uid][-30:]
+
+def clear_history(uid: int):
+    chat_history[uid] = []
 
 TOOL_MAP = {
     "💬 AI Чат":     ("chat",      10),
@@ -649,6 +687,11 @@ async def to_main(message: Message, state: FSMContext):
 async def cancel(message: Message, state: FSMContext):
     await state.clear()
     await message.answer("Отменено.", reply_markup=main_kb())
+
+@router.message(F.text == "🗑 Очистить историю чата")
+async def clear_chat_history(message: Message):
+    clear_history(message.from_user.id)
+    await message.answer("🗑 История чата очищена!", reply_markup=text_tools_kb())
 
 @router.message(F.text == "💡 GPTs/Claude/Gemini")
 async def section_text(message: Message):
@@ -838,7 +881,8 @@ async def process_text(message: Message, state: FSMContext):
 
     try:
         system = SYSTEM_PROMPTS.get(tool_id, SYSTEM_PROMPTS["chat"])
-        result = await call_text_ai(message.text, system, model_id)
+        use_history = (tool_id == "chat")
+        result = await call_text_ai(message.text, system, model_id, uid=message.from_user.id, use_history=use_history)
         bal    = await get_balance(message.from_user.id)
         model_info = TEXT_MODELS.get(model_id, TEXT_MODELS["claude"])
 
@@ -1276,8 +1320,8 @@ async def main():
         deepseek_client = AsyncOpenAI(api_key=DEEPSEEK_KEY, base_url="https://api.deepseek.com")
         logging.info("✅ DeepSeek подключён")
 
-    if KIE_KEY:
-        logging.info("✅ KIE.AI подключён (Nano Banana + Kling + Suno)")
+    if AIML_KEY:
+        logging.info("✅ AIML API подключён (Nano Banana + Kling + Suno)")
 
     await init_db()
     logging.info("✅ База данных готова")

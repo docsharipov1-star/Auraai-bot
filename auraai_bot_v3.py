@@ -1102,7 +1102,7 @@ async def process_image(message: Message, state: FSMContext):
 
     except Exception as e:
         await add_credits(message.from_user.id, cost, "bonus", "Возврат: ошибка")
-        await message.answer(f"⚠️ Ошибка. Кредиты возвращены.
+    await message.answer(f"⚠️ Ошибка. Кредиты возвращены.")
 {str(e)[:150]}")
         kb = audio_kb() if model == "music" else (video_kb() if model == "video" else design_kb())
         await message.answer("Попробуй снова:", reply_markup=kb)

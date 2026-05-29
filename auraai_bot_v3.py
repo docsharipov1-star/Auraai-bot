@@ -423,50 +423,106 @@ async def generate_nano_banana(prompt: str) -> bytes:
         r.raise_for_status()
         return r.content
 
-async def generate_video_kling(prompt: str) -> str:
-    """Видео через aimlapi.com"""
-    data = await aiml_request("v2/generate/video/kling/generation", {
+async def generate_img2img(image_url: str, prompt: str) -> bytes:
+    """Редактирование фото через Nano Banana 2 (img2img)"""
+    data = await aiml_request("v1/images/generations", {
+        "model": "google/nano-banana-2",
         "prompt": prompt,
-        "duration": "5",
-        "aspect_ratio": "16:9",
-        "model": "kling-video/v1.6/standard/text-to-video"
+        "image_urls": [image_url],
+        "aspect_ratio": "1:1",
+        "resolution": "1K"
     })
-    # Получить URL видео
-    task_id = data.get("id") or data.get("task_id")
-    if task_id:
-        for _ in range(24):
-            await asyncio.sleep(5)
-            async with httpx.AsyncClient(timeout=30) as client:
-                r = await client.get(
-                    f"https://api.aimlapi.com/v2/generate/video/kling/generation?generation_id={task_id}",
-                    headers={"Authorization": f"Bearer {AIML_KEY}"}
-                )
-                result = r.json()
-                status = result.get("status", "")
-                if status == "completed":
-                    return result.get("video", {}).get("url", "")
-                elif status == "failed":
-                    raise Exception("Видео не сгенерировалось")
-        raise Exception("Таймаут генерации видео")
-    url = data.get("url", "") or data.get("video_url", "")
+    url = ""
+    if data.get("images"):
+        url = data["images"][0].get("url", "")
+    elif data.get("data"):
+        url = data["data"][0].get("url", "")
     if not url:
-        raise Exception(f"Нет URL видео: {list(data.keys())}")
-    return url
+        raise Exception(f"Нет URL в ответе: {list(data.keys())}")
+    async with httpx.AsyncClient(timeout=60) as client:
+        r = await client.get(url)
+        r.raise_for_status()
+        return r.content
+
+async def generate_video_kling(prompt: str) -> str:
+    """Видео Kling через aimlapi.com"""
+    if not AIML_KEY:
+        raise Exception("AIML_KEY не настроен")
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(
+            "https://api.aimlapi.com/v2/generate/video/kling/generation",
+            headers={"Authorization": f"Bearer {AIML_KEY}", "Content-Type": "application/json"},
+            json={
+                "model": "kling-video/v1.6/standard/text-to-video",
+                "prompt": prompt,
+                "duration": "5",
+                "aspect_ratio": "16:9"
+            }
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        task_id = data.get("id") or data.get("generation_id")
+        if not task_id:
+            raise Exception(f"Нет task_id: {list(data.keys())}")
+
+        # Polling
+        for _ in range(36):
+            await asyncio.sleep(5)
+            r = await client.get(
+                f"https://api.aimlapi.com/v2/generate/video/kling/generation?generation_id={task_id}",
+                headers={"Authorization": f"Bearer {AIML_KEY}"}
+            )
+            result = r.json()
+            status = result.get("status", "")
+            if status == "completed":
+                url = result.get("video", {}).get("url", "")
+                if url:
+                    return url
+                raise Exception("Нет URL видео в ответе")
+            elif status in ("failed", "error"):
+                raise Exception(f"Kling failed: {result}")
+        raise Exception("Таймаут генерации видео (3 мин)")
 
 async def generate_music_suno(prompt: str) -> str:
     """Музыка Suno через aimlapi.com"""
-    data = await aiml_request("v2/generate/audio/suno-ai/clip", {
-        "prompt": prompt,
-        "make_instrumental": False,
-        "wait_audio": True
-    })
-    clips = data.get("clips", data.get("data", []))
-    if clips:
-        return clips[0].get("audio_url", clips[0].get("url", ""))
-    url = data.get("audio_url", "") or data.get("url", "")
-    if not url:
-        raise Exception(f"Нет URL музыки: {list(data.keys())}")
-    return url
+    if not AIML_KEY:
+        raise Exception("AIML_KEY не настроен")
+    async with httpx.AsyncClient(timeout=120) as client:
+        # Создать задачу
+        resp = await client.post(
+            "https://api.aimlapi.com/v2/generate/audio/suno-ai/clip",
+            headers={"Authorization": f"Bearer {AIML_KEY}", "Content-Type": "application/json"},
+            json={"prompt": prompt, "make_instrumental": False}
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        
+        # Если уже готово
+        clips = data.get("clips", [])
+        if clips and clips[0].get("audio_url"):
+            return clips[0]["audio_url"]
+        
+        # Получить task_id и ждать
+        task_id = data.get("id") or (clips[0].get("id") if clips else None)
+        if not task_id:
+            raise Exception(f"Нет task_id: {list(data.keys())}")
+        
+        # Polling
+        for _ in range(24):
+            await asyncio.sleep(5)
+            r = await client.get(
+                f"https://api.aimlapi.com/v2/generate/audio/suno-ai/clip?clip_id={task_id}",
+                headers={"Authorization": f"Bearer {AIML_KEY}"}
+            )
+            result = r.json()
+            clips = result.get("clips", [result] if result.get("audio_url") else [])
+            if clips and clips[0].get("audio_url"):
+                return clips[0]["audio_url"]
+            status = result.get("status", "")
+            if status in ("failed", "error"):
+                raise Exception(f"Suno failed: {result}")
+        
+        raise Exception("Таймаут генерации музыки")
 
 # ══════════════════════════════════════════════════════
 #  КЛАВИАТУРЫ — REPLY KEYBOARD (кнопки внизу)
@@ -525,6 +581,7 @@ def design_kb() -> ReplyKeyboardMarkup:
     b.row(KeyboardButton(text="🍌 Nano Banana"))
     b.row(KeyboardButton(text="🖼 GPT Image 2"))
     b.row(KeyboardButton(text="🎨 DALL-E 3"))
+    b.row(KeyboardButton(text="✏️ Редактировать фото"))
     b.row(KeyboardButton(text="🏠 В главное меню"))
     return b.as_markup(resize_keyboard=True)
 
@@ -588,6 +645,9 @@ class State_(StatesGroup):
     waiting_text  = State()
     # Картинки
     waiting_image = State()
+    # Редактирование фото
+    waiting_photo      = State()
+    waiting_photo_text = State()
 
 user_tool:  dict[int, str] = {}
 user_model: dict[int, str] = {}
@@ -979,9 +1039,15 @@ async def process_image(message: Message, state: FSMContext):
         bal = await get_balance(message.from_user.id)
 
         if model == "music":
-            thinking_text = await thinking.edit_text("🎵 Генерирую музыку... (~30-60 сек)")
+            try:
+                await thinking.edit_text("🎵 Генерирую музыку... (~30-60 сек)")
+            except Exception:
+                pass
             url = await generate_music_suno(message.text)
-            await thinking.delete()
+            try:
+                await thinking.delete()
+            except Exception:
+                pass
             await message.answer_audio(
                 url,
                 caption=f"🎵 *Suno v4*\n\n💎 Потрачено: *{cost} кр.* · Остаток: *{bal} кр.*",
@@ -990,9 +1056,15 @@ async def process_image(message: Message, state: FSMContext):
             await message.answer("Что дальше?", reply_markup=audio_kb())
 
         elif model == "video":
-            thinking_text = await thinking.edit_text("🎬 Генерирую видео... (~60-120 сек)")
+            try:
+                await thinking.edit_text("🎬 Генерирую видео... (~60-180 сек)")
+            except Exception:
+                pass
             url = await generate_video_kling(message.text)
-            await thinking.delete()
+            try:
+                await thinking.delete()
+            except Exception:
+                pass
             await message.answer_video(
                 url,
                 caption=f"🎬 *Kling 3.0*\n\n💎 Потрачено: *{cost} кр.* · Остаток: *{bal} кр.*",
@@ -1009,7 +1081,10 @@ async def process_image(message: Message, state: FSMContext):
                 img_bytes = await generate_image_dalle(message.text)
 
             model_name = {"nano": "🍌 Nano Banana", "gpt": "GPT Image 2", "dalle": "DALL-E 3"}.get(model, model)
-            await thinking.delete()
+            try:
+                await thinking.delete()
+            except Exception:
+                pass
             await message.answer_photo(
                 BufferedInputFile(img_bytes, filename="image.png"),
                 caption=f"🎨 *{model_name}*\n\n💎 Потрачено: *{cost} кр.* · Остаток: *{bal} кр.*",
@@ -1020,21 +1095,18 @@ async def process_image(message: Message, state: FSMContext):
         await log_request(message.from_user.id, f"media_{model}", model, cost)
 
     except asyncio.TimeoutError:
-        await add_credits(message.from_user.id, cost, "bonus", "Возврат: таймаут картинки")
-        try:
-            await thinking.edit_text("⏱ Время вышло (30 сек). Кредиты возвращены.")
-        except Exception:
-            await message.answer("⏱ Время вышло (30 сек). Кредиты возвращены.")
-        await message.answer("Попробуй снова:", reply_markup=design_kb())
+        await add_credits(message.from_user.id, cost, "bonus", "Возврат: таймаут")
+        await message.answer("⏱ Время вышло. Кредиты возвращены.")
+        kb = audio_kb() if model == "music" else (video_kb() if model == "video" else design_kb())
+        await message.answer("Попробуй снова:", reply_markup=kb)
 
     except Exception as e:
-        await add_credits(message.from_user.id, cost, "bonus", "Возврат: ошибка генерации")
-        try:
-            await thinking.edit_text(f"⚠️ Ошибка генерации. Кредиты возвращены.\n{str(e)[:100]}")
-        except Exception:
-            await message.answer("⚠️ Ошибка генерации. Кредиты возвращены.")
-        await message.answer("Попробуй снова:", reply_markup=design_kb())
-        logging.error(f"Image generation error [{model}]: {e}")
+        await add_credits(message.from_user.id, cost, "bonus", "Возврат: ошибка")
+        await message.answer(f"⚠️ Ошибка. Кредиты возвращены.
+{str(e)[:150]}")
+        kb = audio_kb() if model == "music" else (video_kb() if model == "video" else design_kb())
+        await message.answer("Попробуй снова:", reply_markup=kb)
+        logging.error(f"Media generation error [{model}]: {e}")
 
 # ══════════════════════════════════════════════════════
 #  РЕФЕРАЛЫ
@@ -1071,6 +1143,115 @@ async def video_generate(message: Message, state: FSMContext):
         f"Пример: *закат над морем, волны, кинематографичная съёмка*",
         parse_mode="Markdown", reply_markup=cancel_kb()
     )
+
+# ── РЕДАКТИРОВАНИЕ ФОТО ───────────────────────────────
+
+user_photo_urls: dict[int, str] = {}
+
+@router.message(F.text == "✏️ Редактировать фото")
+async def img2img_start(message: Message, state: FSMContext):
+    cost = 70
+    bal = await get_balance(message.from_user.id)
+    if bal < cost:
+        await message.answer(f"❌ Нужно *{cost} кр.* · У тебя *{bal} кр.*", parse_mode="Markdown", reply_markup=profile_kb())
+        return
+    await state.set_state(State_.waiting_photo)
+    await state.update_data(cost=cost)
+    await message.answer(
+        "✏️ *Редактировать фото*  ·  💎 70 кредитов
+
+"
+        "1️⃣ Отправь фото которое хочешь изменить:",
+        parse_mode="Markdown", reply_markup=cancel_kb()
+    )
+
+@router.message(State_.waiting_photo, F.photo)
+async def img2img_photo_received(message: Message, state: FSMContext):
+    # Получить наибольшее фото
+    photo = message.photo[-1]
+    file = await message.bot.get_file(photo.file_id)
+    file_url = f"https://api.telegram.org/file/bot{message.bot.token}/{file.file_path}"
+    user_photo_urls[message.from_user.id] = file_url
+    await state.set_state(State_.waiting_photo_text)
+    await message.answer(
+        "✅ Фото получено!
+
+"
+        "2️⃣ Теперь опиши что хочешь изменить:
+
+"
+        "Примеры:
+"
+        "• *сделай фон розовым*
+"
+        "• *добавь снег*
+"
+        "• *измени стиль на аниме*
+"
+        "• *убери фон*",
+        parse_mode="Markdown", reply_markup=cancel_kb()
+    )
+
+@router.message(State_.waiting_photo, F.text != "❌ Отмена")
+async def img2img_no_photo(message: Message):
+    await message.answer("📸 Пожалуйста отправь фото (не файл, а именно фото):")
+
+@router.message(State_.waiting_photo_text)
+async def img2img_process(message: Message, state: FSMContext):
+    if message.text == "❌ Отмена":
+        await state.clear()
+        await message.answer("Отменено.", reply_markup=design_kb())
+        return
+
+    data = await state.get_data()
+    cost = data.get("cost", 70)
+    image_url = user_photo_urls.get(message.from_user.id)
+
+    if not image_url:
+        await message.answer("❌ Фото не найдено. Начни заново.", reply_markup=design_kb())
+        await state.clear()
+        return
+
+    ok = await use_credits(message.from_user.id, "img2img", cost)
+    if not ok:
+        await message.answer("❌ Недостаточно кредитов.", reply_markup=profile_kb())
+        await state.clear()
+        return
+
+    await state.clear()
+    thinking = await message.answer("✏️ Редактирую фото... (~15-30 сек)", reply_markup=ReplyKeyboardRemove())
+
+    try:
+        img_bytes = await generate_img2img(image_url, message.text)
+        bal = await get_balance(message.from_user.id)
+        await thinking.delete()
+        await message.answer_photo(
+            BufferedInputFile(img_bytes, filename="edited.png"),
+            caption=f"✏️ *Редактирование фото*
+
+💎 Потрачено: *{cost} кр.* · Остаток: *{bal} кр.*",
+            parse_mode="Markdown"
+        )
+        await message.answer("Что дальше?", reply_markup=design_kb())
+        await log_request(message.from_user.id, "img2img", "nano-banana-2", cost)
+
+    except asyncio.TimeoutError:
+        await add_credits(message.from_user.id, cost, "bonus", "Возврат: таймаут")
+        try:
+            await thinking.edit_text("⏱ Время вышло. Кредиты возвращены.")
+        except Exception:
+            await message.answer("⏱ Время вышло. Кредиты возвращены.")
+        await message.answer("Попробуй снова:", reply_markup=design_kb())
+
+    except Exception as e:
+        await add_credits(message.from_user.id, cost, "bonus", "Возврат: ошибка")
+        try:
+            await thinking.edit_text(f"⚠️ Ошибка. Кредиты возвращены.
+{str(e)[:100]}")
+        except Exception:
+            await message.answer("⚠️ Ошибка. Кредиты возвращены.")
+        await message.answer("Попробуй снова:", reply_markup=design_kb())
+        logging.error(f"img2img error: {e}")
 
 @router.message(F.text == "🔗 Рефералы")
 async def section_referral(message: Message):

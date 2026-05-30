@@ -437,7 +437,7 @@ async def generate_img2img(image_url: str, prompt: str) -> bytes:
         r.raise_for_status()
         return r.content
 
-async def generate_video_kling(prompt: str) -> str:
+async def generate_video_seedance(prompt: str) -> str:
     """Seedance 2.0 от ByteDance через aimlapi.com"""
     if not AIML_KEY:
         raise Exception("AIML_KEY не настроен")
@@ -479,7 +479,7 @@ async def generate_music_suno(prompt: str) -> str:
     """Google Lyria 2 через aimlapi.com"""
     if not AIML_KEY:
         raise Exception("AIML_KEY не настроен")
-    async with httpx.AsyncClient(timeout=120) as client:
+    async with httpx.AsyncClient(timeout=300) as client:
         resp = await client.post(
             "https://api.aimlapi.com/v2/generate/audio",
             headers={"Authorization": f"Bearer {AIML_KEY}", "Content-Type": "application/json"},
@@ -499,7 +499,7 @@ async def generate_music_suno(prompt: str) -> str:
         if not task_id:
             raise Exception(f"Нет id в ответе: {list(data.keys())}")
 
-        for _ in range(24):
+        for _ in range(40):
             await asyncio.sleep(5)
             r = await client.get(
                 f"https://api.aimlapi.com/v2/generate/audio?id={task_id}",
@@ -1082,37 +1082,69 @@ async def process_image(message: Message, state: FSMContext):
 
         if model == "music":
             try:
-                await thinking.edit_text("🎵 Генерирую музыку... (~30-60 сек)")
+                await thinking.edit_text(
+                    "🎵 *Генерирую музыку...*\n\n"
+                    "⏱ Это займёт ~2-3 минуты\n"
+                    "✅ Можешь пользоваться ботом — результат придёт автоматически!"
+                )
             except Exception:
                 pass
-            url = await generate_music_suno(message.text)
-            try:
-                await thinking.delete()
-            except Exception:
-                pass
-            await message.answer_audio(
-                url,
-                caption=f"🎵 *Google Lyria 2*\n\n💎 Потрачено: *{cost} кр.* · Остаток: *{bal} кр.*",
-                parse_mode="Markdown"
-            )
-            await message.answer("Что дальше?", reply_markup=audio_kb())
+
+            async def music_task():
+                try:
+                    url = await generate_music_suno(message.text)
+                    b = await get_balance(message.from_user.id)
+                    await message.answer_audio(
+                        url,
+                        caption=f"🎵 *Google Lyria 2*\n\n💎 Потрачено: *{cost} кр.* · Остаток: *{b} кр.*",
+                        parse_mode="Markdown"
+                    )
+                    await message.answer("Что дальше?", reply_markup=audio_kb())
+                except Exception as e:
+                    await add_credits(message.from_user.id, cost, "bonus", "Возврат: ошибка музыки")
+                    await message.answer(f"⚠️ Ошибка генерации музыки. Кредиты возвращены.\n{str(e)[:100]}", reply_markup=audio_kb())
+                    logging.error(f"Music task error: {e}")
+                finally:
+                    try:
+                        await thinking.delete()
+                    except Exception:
+                        pass
+
+            asyncio.create_task(music_task())
+            return
 
         elif model == "kling":
             try:
-                await thinking.edit_text("🎥 Генерирую видео Kling... (~60-180 сек)")
+                await thinking.edit_text(
+                    "🎥 *Генерирую видео Kling...*\n\n"
+                    "⏱ Это займёт ~2-3 минуты\n"
+                    "✅ Можешь пользоваться ботом — результат придёт автоматически!"
+                )
             except Exception:
                 pass
-            url = await generate_video_kling(message.text)
-            try:
-                await thinking.delete()
-            except Exception:
-                pass
-            await message.answer_video(
-                url,
-                caption=f"🎥 *Kling 1.6*\n\n💎 Потрачено: *{cost} кр.* · Остаток: *{bal} кр.*",
-                parse_mode="Markdown"
-            )
-            await message.answer("Что дальше?", reply_markup=video_kb())
+
+            async def kling_task():
+                try:
+                    url = await generate_video_kling(message.text)
+                    b = await get_balance(message.from_user.id)
+                    await message.answer_video(
+                        url,
+                        caption=f"🎥 *Kling 1.6*\n\n💎 Потрачено: *{cost} кр.* · Остаток: *{b} кр.*",
+                        parse_mode="Markdown"
+                    )
+                    await message.answer("Что дальше?", reply_markup=video_kb())
+                except Exception as e:
+                    await add_credits(message.from_user.id, cost, "bonus", "Возврат: ошибка видео")
+                    await message.answer(f"⚠️ Ошибка генерации видео. Кредиты возвращены.\n{str(e)[:100]}", reply_markup=video_kb())
+                    logging.error(f"Kling task error: {e}")
+                finally:
+                    try:
+                        await thinking.delete()
+                    except Exception:
+                        pass
+
+            asyncio.create_task(kling_task())
+            return
 
         elif model == "tts":
             try:

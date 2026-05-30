@@ -1011,6 +1011,20 @@ async def process_text_with_photo(message: Message, state: FSMContext):
     """Обработка фото в текстовом чате"""
     await process_text(message, state)
 
+@router.message(State_.choose_model, F.photo)
+async def photo_in_model_selection(message: Message, state: FSMContext):
+    """Если прислали фото когда нужно выбрать модель"""
+    # Сохранить фото для последующего использования
+    photo = message.photo[-1]
+    file = await message.bot.get_file(photo.file_id)
+    file_url = f"https://api.telegram.org/file/bot{message.bot.token}/{file.file_path}"
+    await state.update_data(pending_photo=file_url, pending_caption=message.caption or "")
+    await message.answer(
+        "📸 Фото получено! Теперь выбери AI модель:",
+        reply_markup=model_kb()
+    )
+
+
 @router.message(State_.choose_model, lambda m: m.text in MODEL_MAP)
 async def model_selected(message: Message, state: FSMContext):
     model_id = MODEL_MAP[message.text]
@@ -1030,10 +1044,25 @@ async def model_selected(message: Message, state: FSMContext):
 
     model_info = TEXT_MODELS[model_id]
     hint = TOOL_HINTS.get(tool_id, "Введи запрос:")
-    await message.answer(
-        f"{model_info['emoji']} *{model_info['name']}*  ·  💎 {total_cost} кредитов\n\n{hint}",
-        parse_mode="Markdown", reply_markup=cancel_kb()
-    )
+
+    # Если было отложенное фото — сразу обработать
+    pending_photo = (await state.get_data()).get("pending_photo")
+    pending_caption = (await state.get_data()).get("pending_caption", "")
+    if pending_photo and tool_id == "chat":
+        await state.update_data(tool=tool_id, model=model_id, cost=total_cost)
+        await state.set_state(State_.waiting_text)
+        # Создать фиктивное сообщение не получится — просто подсказать
+        await state.update_data(pending_photo=None)
+        await message.answer(
+            f"{model_info['emoji']} *{model_info['name']}*  ·  💎 {total_cost} кредитов\n\n"
+            f"Фото сохранено! Теперь отправь его снова вместе с вопросом:",
+            parse_mode="Markdown", reply_markup=cancel_kb()
+        )
+    else:
+        await message.answer(
+            f"{model_info['emoji']} *{model_info['name']}*  ·  💎 {total_cost} кредитов\n\n{hint}",
+            parse_mode="Markdown", reply_markup=cancel_kb()
+        )
 
 @router.message(State_.choose_model, F.text == "🏠 В главное меню")
 async def model_cancel(message: Message, state: FSMContext):

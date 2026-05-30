@@ -1172,6 +1172,13 @@ async def process_text(message: Message, state: FSMContext):
 #  ГЕНЕРАЦИЯ КАРТИНОК
 # ══════════════════════════════════════════════════════
 
+def image_mode_kb() -> ReplyKeyboardMarkup:
+    b = ReplyKeyboardBuilder()
+    b.row(KeyboardButton(text="✏️ С нуля по описанию"))
+    b.row(KeyboardButton(text="🖼 На основе моего фото"))
+    b.row(KeyboardButton(text="❌ Отмена"))
+    return b.as_markup(resize_keyboard=True)
+
 @router.message(F.text.in_({"🖼 GPT Image 2", "🎨 DALL-E 3", "🍌 Nano Banana"}))
 async def image_tool_selected(message: Message, state: FSMContext):
     if "Nano Banana" in message.text:
@@ -1192,16 +1199,51 @@ async def image_tool_selected(message: Message, state: FSMContext):
         model = "gpt"
     else:
         model = "dalle"
+
     user_image_model[message.from_user.id] = model
-    await state.set_state(State_.waiting_image)
     await state.update_data(image_model=model, cost=cost)
+    await state.set_state(State_.waiting_image)
 
     await message.answer(
         f"*{message.text}*  ·  💎 {cost} кредитов\n\n"
-        f"Опиши картинку которую хочешь создать:\n\n"
-        f"Пример: *красивый закат над горами, фотореализм, 4K*",
+        f"Выбери режим:",
+        parse_mode="Markdown", reply_markup=image_mode_kb()
+    )
+
+@router.message(State_.waiting_image, F.text == "✏️ С нуля по описанию")
+async def image_from_scratch(message: Message, state: FSMContext):
+    await state.update_data(base_photo=None)
+    await message.answer(
+        "Опиши картинку которую хочешь создать:\n\n"
+        "Пример: *красивый закат над горами, фотореализм, 4K*",
         parse_mode="Markdown", reply_markup=cancel_kb()
     )
+
+@router.message(State_.waiting_image, F.text == "🖼 На основе моего фото")
+async def image_from_photo_prompt(message: Message, state: FSMContext):
+    await state.update_data(waiting_base_photo=True)
+    await message.answer(
+        "📸 Отправь своё фото которое хочешь использовать как основу:",
+        reply_markup=cancel_kb()
+    )
+
+@router.message(State_.waiting_image, F.photo)
+async def image_base_photo_received(message: Message, state: FSMContext):
+    data = await state.get_data()
+    if data.get("waiting_base_photo"):
+        photo = message.photo[-1]
+        file = await message.bot.get_file(photo.file_id)
+        file_url = f"https://api.telegram.org/file/bot{message.bot.token}/{file.file_path}"
+        await state.update_data(base_photo=file_url, waiting_base_photo=False)
+        await message.answer(
+            "✅ Фото получено!\n\n"
+            "Теперь опиши что хочешь изменить или создать на основе этого фото:\n\n"
+            "Примеры:\n"
+            "• *сделай фон космическим*\n"
+            "• *измени стиль на аниме*\n"
+            "• *добавь снег*",
+            parse_mode="Markdown", reply_markup=cancel_kb()
+        )
 
 @router.message(State_.waiting_image)
 async def process_image(message: Message, state: FSMContext):
@@ -1209,9 +1251,19 @@ async def process_image(message: Message, state: FSMContext):
         await state.clear()
         await message.answer("Отменено.", reply_markup=design_kb()); return
 
+    # Игнорировать кнопки режима (они обрабатываются выше)
+    if message.text in ("✏️ С нуля по описанию", "🖼 На основе моего фото"):
+        return
+
     data  = await state.get_data()
     model = data.get("image_model", "dalle")
     cost  = data.get("cost", 50)
+    base_photo = data.get("base_photo")
+
+    # Если ждём фото — пропустить текст
+    if data.get("waiting_base_photo") and not message.photo:
+        await message.answer("📸 Пожалуйста отправь фото:")
+        return
 
     ok = await use_credits(message.from_user.id, f"image_{model}", cost)
     if not ok:
@@ -1325,12 +1377,16 @@ async def process_image(message: Message, state: FSMContext):
             await message.answer("Что дальше?", reply_markup=video_kb())
 
         else:
-            if model == "nano":
-                img_bytes = await generate_nano_banana(message.text)
+            prompt = message.text or ""
+            if base_photo:
+                # Использовать img2img с базовым фото
+                img_bytes = await generate_img2img(base_photo, prompt)
+            elif model == "nano":
+                img_bytes = await generate_nano_banana(prompt)
             elif model == "gpt":
-                img_bytes = await generate_image_gpt(message.text)
+                img_bytes = await generate_image_gpt(prompt)
             else:
-                img_bytes = await generate_image_dalle(message.text)
+                img_bytes = await generate_image_dalle(prompt)
 
             model_name = {"nano": "🍌 Nano Banana", "gpt": "GPT Image 2", "dalle": "DALL-E 3"}.get(model, model)
             try:

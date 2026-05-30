@@ -438,9 +438,90 @@ async def generate_img2img(image_url: str, prompt: str) -> bytes:
         return r.content
 
 async def generate_video_kling(prompt: str) -> str:
+    """Seedance 2.0 от ByteDance через aimlapi.com"""
     if not AIML_KEY:
         raise Exception("AIML_KEY не настроен")
-    async with httpx.AsyncClient(timeout=30) as client:
+    async with httpx.AsyncClient(timeout=60) as client:
+        resp = await client.post(
+            "https://api.aimlapi.com/v2/video/generations",
+            headers={"Authorization": f"Bearer {AIML_KEY}", "Content-Type": "application/json"},
+            json={
+                "model": "bytedance/seedance-2-0",
+                "prompt": prompt,
+                "duration": "5",
+                "aspect_ratio": "16:9"
+            }
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        task_id = data.get("id")
+        if not task_id:
+            raise Exception(f"Нет task_id: {list(data.keys())}")
+
+        for _ in range(36):
+            await asyncio.sleep(5)
+            r = await client.get(
+                f"https://api.aimlapi.com/v2/video/generations?generation_id={task_id}",
+                headers={"Authorization": f"Bearer {AIML_KEY}"}
+            )
+            result = r.json()
+            status = result.get("status", "")
+            if status in ("completed", "succeeded"):
+                url = result.get("video", {}).get("url", "")
+                if url:
+                    return url
+                raise Exception("Нет URL видео в ответе")
+            elif status in ("failed", "error"):
+                raise Exception(f"Seedance failed: {result}")
+        raise Exception("Таймаут генерации видео (3 мин)")
+
+async def generate_music_suno(prompt: str) -> str:
+    """Google Lyria 2 через aimlapi.com"""
+    if not AIML_KEY:
+        raise Exception("AIML_KEY не настроен")
+    async with httpx.AsyncClient(timeout=120) as client:
+        resp = await client.post(
+            "https://api.aimlapi.com/v2/generate/audio",
+            headers={"Authorization": f"Bearer {AIML_KEY}", "Content-Type": "application/json"},
+            json={"model": "google/lyria2", "prompt": prompt[:600]}
+        )
+        resp.raise_for_status()
+        data = resp.json()
+
+        # Если сразу готово
+        if data.get("status") == "completed":
+            url = data.get("audio_file", {}).get("url", "")
+            if url:
+                return url
+
+        # Polling по id
+        task_id = data.get("id")
+        if not task_id:
+            raise Exception(f"Нет id в ответе: {list(data.keys())}")
+
+        for _ in range(24):
+            await asyncio.sleep(5)
+            r = await client.get(
+                f"https://api.aimlapi.com/v2/generate/audio?id={task_id}",
+                headers={"Authorization": f"Bearer {AIML_KEY}"}
+            )
+            result = r.json()
+            status = result.get("status", "")
+            if status == "completed":
+                url = result.get("audio_file", {}).get("url", "")
+                if url:
+                    return url
+                raise Exception("Нет URL аудио в ответе")
+            elif status == "error":
+                raise Exception(f"Lyria2 failed: {result}")
+
+        raise Exception("Таймаут генерации музыки")
+
+async def generate_video_kling(prompt: str) -> str:
+    """Kling через aimlapi.com"""
+    if not AIML_KEY:
+        raise Exception("AIML_KEY не настроен")
+    async with httpx.AsyncClient(timeout=60) as client:
         resp = await client.post(
             "https://api.aimlapi.com/v2/generate/video/kling/generation",
             headers={"Authorization": f"Bearer {AIML_KEY}", "Content-Type": "application/json"},
@@ -474,41 +555,23 @@ async def generate_video_kling(prompt: str) -> str:
                 raise Exception(f"Kling failed: {result}")
         raise Exception("Таймаут генерации видео (3 мин)")
 
-async def generate_music_suno(prompt: str) -> str:
+async def generate_tts(text: str, voice: str = "Nicole") -> bytes:
+    """ElevenLabs TTS через aimlapi.com — возвращает аудио байты"""
     if not AIML_KEY:
         raise Exception("AIML_KEY не настроен")
-    async with httpx.AsyncClient(timeout=120) as client:
+    async with httpx.AsyncClient(timeout=60) as client:
         resp = await client.post(
-            "https://api.aimlapi.com/v1/generate/audio/suno-ai/clip",
+            "https://api.aimlapi.com/v1/tts",
             headers={"Authorization": f"Bearer {AIML_KEY}", "Content-Type": "application/json"},
-            json={"prompt": prompt, "make_instrumental": False}
+            json={
+                "model": "elevenlabs/eleven_turbo_v2_5",
+                "text": text[:2000],
+                "voice": voice
+            }
         )
         resp.raise_for_status()
-        data = resp.json()
+        return resp.content
 
-        clips = data.get("clips", [])
-        if clips and clips[0].get("audio_url"):
-            return clips[0]["audio_url"]
-
-        task_id = data.get("id") or (clips[0].get("id") if clips else None)
-        if not task_id:
-            raise Exception(f"Нет task_id: {list(data.keys())}")
-
-        for _ in range(24):
-            await asyncio.sleep(5)
-            r = await client.get(
-                f"https://api.aimlapi.com/v1/generate/audio/suno-ai/clip?clip_id={task_id}",
-                headers={"Authorization": f"Bearer {AIML_KEY}"}
-            )
-            result = r.json()
-            clips = result.get("clips", [result] if result.get("audio_url") else [])
-            if clips and clips[0].get("audio_url"):
-                return clips[0]["audio_url"]
-            status = result.get("status", "")
-            if status in ("failed", "error"):
-                raise Exception(f"Suno failed: {result}")
-
-        raise Exception("Таймаут генерации музыки")
 
 # ══════════════════════════════════════════════════════
 #  КЛАВИАТУРЫ
@@ -618,12 +681,14 @@ def ref_inline_kb():
 def audio_kb() -> ReplyKeyboardMarkup:
     b = ReplyKeyboardBuilder()
     b.row(KeyboardButton(text="🎵 Сгенерировать музыку"))
+    b.row(KeyboardButton(text="🔊 Озвучить текст"))
     b.row(KeyboardButton(text="🏠 В главное меню"))
     return b.as_markup(resize_keyboard=True)
 
 def video_kb() -> ReplyKeyboardMarkup:
     b = ReplyKeyboardBuilder()
-    b.row(KeyboardButton(text="🎬 Создать видео Kling"))
+    b.row(KeyboardButton(text="🎬 Создать видео Seedance"))
+    b.row(KeyboardButton(text="🎥 Создать видео Kling"))
     b.row(KeyboardButton(text="🏠 В главное меню"))
     return b.as_markup(resize_keyboard=True)
 
@@ -755,14 +820,14 @@ async def section_design(message: Message):
 @router.message(F.text == "🎙 Аудио с ИИ")
 async def section_audio(message: Message):
     await message.answer(
-        "🎙 *Аудио с ИИ*\n\n🎵 Suno v4 — генерация музыки по описанию\n💎 50 кредитов за трек",
+        "🎙 *Аудио с ИИ*\n\n🎵 Google Lyria 2 — генерация музыки по описанию\n💎 50 кредитов за трек\n\n🔊 ElevenLabs TTS — озвучка текста голосом\n💎 20 кредитов",
         parse_mode="Markdown", reply_markup=audio_kb()
     )
 
 @router.message(F.text == "🎬 Видео будущего")
 async def section_video(message: Message):
     await message.answer(
-        "🎬 *Видео будущего*\n\n🎬 Kling 3.0 — видео из текста до 5 сек\n💎 150 кредитов за видео",
+        "🎬 *Видео будущего*\n\n🎬 Seedance 2.0 — видео нового поколения до 5 сек\n💎 150 кредитов\n\n🎥 Kling 1.6 — проверенная классика до 5 сек\n💎 150 кредитов",
         parse_mode="Markdown", reply_markup=video_kb()
     )
 
@@ -1027,7 +1092,41 @@ async def process_image(message: Message, state: FSMContext):
                 pass
             await message.answer_audio(
                 url,
-                caption=f"🎵 *Suno v4*\n\n💎 Потрачено: *{cost} кр.* · Остаток: *{bal} кр.*",
+                caption=f"🎵 *Google Lyria 2*\n\n💎 Потрачено: *{cost} кр.* · Остаток: *{bal} кр.*",
+                parse_mode="Markdown"
+            )
+            await message.answer("Что дальше?", reply_markup=audio_kb())
+
+        elif model == "kling":
+            try:
+                await thinking.edit_text("🎥 Генерирую видео Kling... (~60-180 сек)")
+            except Exception:
+                pass
+            url = await generate_video_kling(message.text)
+            try:
+                await thinking.delete()
+            except Exception:
+                pass
+            await message.answer_video(
+                url,
+                caption=f"🎥 *Kling 1.6*\n\n💎 Потрачено: *{cost} кр.* · Остаток: *{bal} кр.*",
+                parse_mode="Markdown"
+            )
+            await message.answer("Что дальше?", reply_markup=video_kb())
+
+        elif model == "tts":
+            try:
+                await thinking.edit_text("🔊 Озвучиваю текст...")
+            except Exception:
+                pass
+            audio_bytes = await generate_tts(message.text)
+            try:
+                await thinking.delete()
+            except Exception:
+                pass
+            await message.answer_voice(
+                BufferedInputFile(audio_bytes, filename="speech.mp3"),
+                caption=f"🔊 *ElevenLabs TTS*\n\n💎 Потрачено: *{cost} кр.* · Остаток: *{bal} кр.*",
                 parse_mode="Markdown"
             )
             await message.answer("Что дальше?", reply_markup=audio_kb())
@@ -1044,7 +1143,7 @@ async def process_image(message: Message, state: FSMContext):
                 pass
             await message.answer_video(
                 url,
-                caption=f"🎬 *Kling 3.0*\n\n💎 Потрачено: *{cost} кр.* · Остаток: *{bal} кр.*",
+                caption=f"🎬 *Seedance 2.0*\n\n💎 Потрачено: *{cost} кр.* · Остаток: *{bal} кр.*",
                 parse_mode="Markdown"
             )
             await message.answer("Что дальше?", reply_markup=video_kb())
@@ -1098,13 +1197,13 @@ async def music_generate(message: Message, state: FSMContext):
     await state.set_state(State_.waiting_image)
     await state.update_data(image_model="music", cost=cost)
     await message.answer(
-        f"🎵 *Suno v4*  ·  💎 {cost} кредитов\n\n"
+        f"🎵 *Google Lyria 2*  ·  💎 {cost} кредитов\n\n"
         f"Опиши музыку которую хочешь создать:\n\n"
         f"Пример: *энергичный рок трек для мотивации, гитара и барабаны*",
         parse_mode="Markdown", reply_markup=cancel_kb()
     )
 
-@router.message(F.text == "🎬 Создать видео Kling")
+@router.message(F.text == "🎬 Создать видео Seedance")
 async def video_generate(message: Message, state: FSMContext):
     cost = 150
     bal  = await get_balance(message.from_user.id)
@@ -1114,11 +1213,43 @@ async def video_generate(message: Message, state: FSMContext):
     await state.set_state(State_.waiting_image)
     await state.update_data(image_model="video", cost=cost)
     await message.answer(
-        f"🎬 *Kling 3.0*  ·  💎 {cost} кредитов\n\n"
+        f"🎬 *Seedance 2.0*  ·  💎 {cost} кредитов\n\n"
         f"Опиши видео которое хочешь создать:\n\n"
         f"Пример: *закат над морем, волны, кинематографичная съёмка*",
         parse_mode="Markdown", reply_markup=cancel_kb()
     )
+@router.message(F.text == "🔊 Озвучить текст")
+async def tts_start(message: Message, state: FSMContext):
+    cost = 20
+    bal  = await get_balance(message.from_user.id)
+    if bal < cost:
+        await message.answer(f"❌ Нужно *{cost} кр.* · У тебя *{bal} кр.*", parse_mode="Markdown", reply_markup=profile_kb())
+        return
+    await state.set_state(State_.waiting_image)
+    await state.update_data(image_model="tts", cost=cost)
+    await message.answer(
+        f"🔊 *ElevenLabs TTS*  ·  💎 {cost} кредитов\n\n"
+        f"Введи текст который хочешь озвучить:\n\n"
+        f"Пример: *Привет! Добро пожаловать в AuraAI*",
+        parse_mode="Markdown", reply_markup=cancel_kb()
+    )
+@router.message(F.text == "🎥 Создать видео Kling")
+async def kling_generate(message: Message, state: FSMContext):
+    cost = 150
+    bal  = await get_balance(message.from_user.id)
+    if bal < cost:
+        await message.answer(f"❌ Нужно *{cost} кр.* · У тебя *{bal} кр.*", parse_mode="Markdown", reply_markup=profile_kb())
+        return
+    await state.set_state(State_.waiting_image)
+    await state.update_data(image_model="kling", cost=cost)
+    await message.answer(
+        f"🎥 *Kling 1.6*  ·  💎 {cost} кредитов\n\n"
+        f"Опиши видео которое хочешь создать:\n\n"
+        f"Пример: *закат над морем, волны, кинематографичная съёмка*",
+        parse_mode="Markdown", reply_markup=cancel_kb()
+    )
+
+
 
 # ══════════════════════════════════════════════════════
 #  РЕДАКТИРОВАНИЕ ФОТО

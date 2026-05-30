@@ -1129,7 +1129,16 @@ async def process_text(message: Message, state: FSMContext):
             else:
                 await message.answer(chunk)
 
-        await message.answer("Что дальше?", reply_markup=text_tools_kb())
+        # Если это чат — остаться в состоянии для продолжения разговора
+        if tool_id == "chat":
+            await state.set_state(State_.waiting_text)
+            await state.update_data(tool=tool_id, model=model_id, cost=cost)
+            await message.answer(
+                "💬 Продолжай писать или нажми кнопку ниже:",
+                reply_markup=cancel_kb()
+            )
+        else:
+            await message.answer("Что дальше?", reply_markup=text_tools_kb())
 
     except asyncio.TimeoutError:
         await add_credits(message.from_user.id, cost, "bonus", "Возврат: таймаут")
@@ -1137,7 +1146,12 @@ async def process_text(message: Message, state: FSMContext):
             await thinking.edit_text("⏱ Время вышло (15 сек). Кредиты возвращены. Попробуй ещё раз.")
         except Exception:
             await message.answer("⏱ Время вышло (15 сек). Кредиты возвращены. Попробуй ещё раз.")
-        await message.answer("Выбери инструмент:", reply_markup=text_tools_kb())
+        if tool_id == "chat":
+            await state.set_state(State_.waiting_text)
+            await state.update_data(tool=tool_id, model=model_id, cost=cost)
+            await message.answer("Попробуй ещё раз:", reply_markup=cancel_kb())
+        else:
+            await message.answer("Выбери инструмент:", reply_markup=text_tools_kb())
         logging.error(f"Text AI timeout [{tool_id}/{model_id}]")
 
     except Exception as e:
@@ -1146,7 +1160,12 @@ async def process_text(message: Message, state: FSMContext):
             await thinking.edit_text(f"⚠️ Ошибка AI. Кредиты возвращены.\n\n{str(e)[:100]}")
         except Exception:
             await message.answer("⚠️ Ошибка AI. Кредиты возвращены.")
-        await message.answer("Попробуй ещё раз:", reply_markup=text_tools_kb())
+        if tool_id == "chat":
+            await state.set_state(State_.waiting_text)
+            await state.update_data(tool=tool_id, model=model_id, cost=cost)
+            await message.answer("Попробуй ещё раз:", reply_markup=cancel_kb())
+        else:
+            await message.answer("Попробуй ещё раз:", reply_markup=text_tools_kb())
         logging.error(f"Text AI error [{tool_id}/{model_id}]: {e}")
 
 # ══════════════════════════════════════════════════════
@@ -1878,6 +1897,40 @@ async def cmd_user(message: Message):
         f"*Последние транзакции:*\n" + "\n".join(tx_lines or ["Нет"])
     )
     await message.answer(text, parse_mode="Markdown")
+
+@router.message(Command("broadcast"))
+async def cmd_broadcast(message: Message):
+    if message.from_user.id != ADMIN_ID: return
+    parts = message.text.split(None, 1)
+    if len(parts) < 2:
+        await message.answer(
+            "Формат: /broadcast текст сообщения\n\n"
+            "Пример: /broadcast 🚀 Бот обновлён! Нажми /start чтобы получить новое меню."
+        )
+        return
+    text = parts[1]
+    users = await db_all("SELECT id FROM users")
+    total = len(users)
+    sent = 0
+    failed = 0
+    status_msg = await message.answer(f"📤 Отправляю {total} пользователям...")
+    for user in users:
+        try:
+            await message.bot.send_message(user["id"], text, parse_mode="Markdown", reply_markup=main_kb())
+            sent += 1
+        except Exception:
+            failed += 1
+        await asyncio.sleep(0.05)  # Не превышать лимиты Telegram
+    try:
+        await status_msg.edit_text(
+            f"✅ *Рассылка завершена*\n\n"
+            f"📤 Отправлено: *{sent}*\n"
+            f"❌ Ошибок: *{failed}*",
+            parse_mode="Markdown"
+        )
+    except Exception:
+        pass
+
 
 # ══════════════════════════════════════════════════════
 #  ЗАПУСК

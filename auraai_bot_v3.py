@@ -103,7 +103,7 @@ SYSTEM_PROMPTS = {
 # ══════════════════════════════════════════════════════
 #  БАЗА ДАННЫХ
 # ══════════════════════════════════════════════════════
-
+os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 async def init_db():
     async with aiosqlite.connect(DB_PATH) as db:
         await db.executescript("""

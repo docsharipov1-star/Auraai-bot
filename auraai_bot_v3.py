@@ -494,7 +494,7 @@ async def generate_music_suno(prompt: str) -> str:
         for _ in range(24):
             await asyncio.sleep(5)
             r = await client.get(
-                f"https://api.aimlapi.com/v1/generate/audio/suno-ai/clip?clip_id={task_id}",
+                "https://api.aimlapi.com/v1/generate/audio/suno-ai/clip",
                 headers={"Authorization": f"Bearer {AIML_KEY}"}
             )
             result = r.json()

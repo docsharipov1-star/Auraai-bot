@@ -476,7 +476,7 @@ async def generate_music_suno(prompt: str) -> str:
         raise Exception("AIML_KEY не настроен")
     async with httpx.AsyncClient(timeout=120) as client:
         resp = await client.post(
-            "https://api.aimlapi.com/v2/generate/audio/suno-ai/clip",
+       https://api.aimlapi.com/v1/generate/audio/suno-ai/clip
             headers={"Authorization": f"Bearer {AIML_KEY}", "Content-Type": "application/json"},
             json={"prompt": prompt, "make_instrumental": False}
         )
@@ -494,7 +494,7 @@ async def generate_music_suno(prompt: str) -> str:
         for _ in range(24):
             await asyncio.sleep(5)
             r = await client.get(
-                f"https://api.aimlapi.com/v2/generate/audio/suno-ai/clip?clip_id={task_id}",
+                f"https://api.aimlapi.com/v1/generate/audio/suno-ai/clip?clip_id={task_id}",
                 headers={"Authorization": f"Bearer {AIML_KEY}"}
             )
             result = r.json()

@@ -445,43 +445,40 @@ async def generate_nano_banana(prompt: str) -> bytes:
         r.raise_for_status()
         return r.content
 
-async def generate_img2img(image_url: str, prompt: str) -> bytes:
-    """Редактирование фото — скачиваем и передаём как base64"""
+async def generate_img2img(image_url: str, prompt: str) -> tuple:
+    """Редактирование фото через Nano Banana 2 — возвращает (bytes, url)"""
     if not AIML_KEY:
         raise Exception("AIML_KEY не настроен")
-    # Скачать фото
+    
+    # Скачать фото и закодировать в base64
     async with httpx.AsyncClient(timeout=60) as client:
         r = await client.get(image_url)
         r.raise_for_status()
         img_b64 = base64.b64encode(r.content).decode()
         content_type = r.headers.get("content-type", "image/jpeg").split(";")[0]
 
-        # Отправить через API с base64
-        resp = await client.post(
-            "https://api.aimlapi.com/v1/images/generations",
-            headers={"Authorization": f"Bearer {AIML_KEY}", "Content-Type": "application/json"},
-            json={
-                "model": "google/nano-banana-2",
-                "prompt": prompt,
-                "image": f"data:{content_type};base64,{img_b64}",
-                "aspect_ratio": "1:1",
-                "resolution": "1K"
-            }
-        )
-        resp.raise_for_status()
-        data = resp.json()
+    # Отправить запрос с image_urls (Remix режим как в Syntx)
+    data = await aiml_request("v1/images/generations", {
+        "model": "google/nano-banana-pro",
+        "prompt": prompt,
+        "image_urls": [f"data:{content_type};base64,{img_b64}"],
+        "aspect_ratio": "1:1",
+        "resolution": "2K"
+    })
 
-    url = ""
+    result_url = ""
     if data.get("images"):
-        url = data["images"][0].get("url", "")
+        result_url = data["images"][0].get("url", "")
     elif data.get("data"):
-        url = data["data"][0].get("url", "")
-    if not url:
+        result_url = data["data"][0].get("url", "")
+    if not result_url:
         raise Exception(f"Нет URL в ответе: {list(data.keys())}")
+    
+    # Скачать результат
     async with httpx.AsyncClient(timeout=60) as client:
-        r = await client.get(url)
+        r = await client.get(result_url)
         r.raise_for_status()
-        return r.content
+        return r.content, result_url
 
 async def generate_video_seedance(prompt: str) -> str:
     """Seedance 2.0 от ByteDance через aimlapi.com"""
@@ -1571,16 +1568,30 @@ async def img2img_process(message: Message, state: FSMContext):
     thinking = await message.answer("✏️ Редактирую фото... (~15-30 сек)", reply_markup=ReplyKeyboardRemove())
 
     try:
-        img_bytes = await generate_img2img(image_url, message.text)
+        img_bytes, result_url = await generate_img2img(image_url, message.text)
         bal = await get_balance(message.from_user.id)
-        await thinking.delete()
+        try:
+            await thinking.delete()
+        except Exception:
+            pass
         await message.answer_photo(
             BufferedInputFile(img_bytes, filename="edited.png"),
-            caption=f"✏️ *Редактирование фото*\n\n💎 Потрачено: *{cost} кр.* · Остаток: *{bal} кр.*",
+            caption=(
+                f"✏️ *Редактирование фото*\n\n"
+                f"📌 Ваш запрос: _{message.text}_\n\n"
+                f"✨ Качество: *2K*\n"
+                f"🖼 Модель: *NanoBanana PRO*\n\n"
+                f"💎 Потрачено: *{cost} кр.* · Остаток: *{bal} кр.*\n\n"
+                f"[📥 Скачать в высоком качестве]({result_url})"
+            ),
             parse_mode="Markdown"
         )
-        await message.answer("Что дальше?", reply_markup=design_kb())
-        await log_request(message.from_user.id, "img2img", "nano-banana-2", cost)
+        # Предложить сразу ещё раз отредактировать
+        await message.answer(
+            "Хочешь отредактировать ещё раз?\n\nОтправь новое фото с подписью или выбери действие:",
+            reply_markup=design_kb()
+        )
+        await log_request(message.from_user.id, "img2img", "nano-banana-pro", cost)
 
     except asyncio.TimeoutError:
         await add_credits(message.from_user.id, cost, "bonus", "Возврат: таймаут")
@@ -1689,6 +1700,58 @@ async def img2video_video_process(message: Message, state: FSMContext):
                 pass
 
     asyncio.create_task(img2video_task())
+
+@router.message(F.photo & F.caption, ~F.from_user.is_bot)
+async def remix_photo_caption(message: Message, state: FSMContext):
+    """Remix режим — фото + подпись сразу редактируется"""
+    current_state = await state.get_state()
+    # Только если не в другом состоянии
+    if current_state is not None:
+        return
+    
+    cost = 70
+    bal = await get_balance(message.from_user.id)
+    if bal < cost:
+        await message.answer(f"❌ Нужно *{cost} кр.* для редактирования фото · У тебя *{bal} кр.*", parse_mode="Markdown")
+        return
+
+    ok = await use_credits(message.from_user.id, "img2img_remix", cost)
+    if not ok:
+        await message.answer("❌ Недостаточно кредитов.", reply_markup=profile_kb())
+        return
+
+    photo = message.photo[-1]
+    file = await message.bot.get_file(photo.file_id)
+    image_url = f"https://api.telegram.org/file/bot{message.bot.token}/{file.file_path}"
+    prompt = message.caption
+
+    thinking = await message.answer("✏️ *Редактирую фото...*\n\n⏱ ~15-30 сек", parse_mode="Markdown", reply_markup=ReplyKeyboardRemove())
+
+    try:
+        img_bytes, result_url = await generate_img2img(image_url, prompt)
+        bal = await get_balance(message.from_user.id)
+        try:
+            await thinking.delete()
+        except Exception:
+            pass
+        await message.answer_photo(
+            BufferedInputFile(img_bytes, filename="edited.png"),
+            caption=(
+                f"✏️ *Редактирование фото*\n\n"
+                f"📌 Запрос: _{prompt}_\n\n"
+                f"✨ Качество: *2K* · Модель: *NanoBanana PRO*\n\n"
+                f"💎 Потрачено: *{cost} кр.* · Остаток: *{bal} кр.*\n\n"
+                f"[📥 Скачать в высоком качестве]({result_url})"
+            ),
+            parse_mode="Markdown"
+        )
+        await message.answer("Отправь ещё фото с подписью для редактирования!", reply_markup=design_kb())
+        await log_request(message.from_user.id, "img2img_remix", "nano-banana-pro", cost)
+    except Exception as e:
+        await add_credits(message.from_user.id, cost, "bonus", "Возврат: ошибка remix")
+        await message.answer(f"⚠️ Ошибка. Кредиты возвращены.\n{str(e)[:100]}", reply_markup=design_kb())
+        logging.error(f"Remix error: {e}")
+
 
 # ══════════════════════════════════════════════════════
 #  РЕФЕРАЛЫ

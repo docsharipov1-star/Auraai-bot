@@ -49,7 +49,7 @@ DEEPSEEK_KEY  = os.getenv("DEEPSEEK_KEY", "")
 AIML_KEY      = os.getenv("AIML_KEY", "")
 ADMIN_ID      = int(os.getenv("ADMIN_ID", "0"))
 BOT_USERNAME  = os.getenv("BOT_USERNAME", "GetAuraAI_bot")
-DB_PATH = "/app/data/auraai.db"
+DB_PATH       = "/app/data/auraai.db"
 FREE_CREDITS  = 100
 REFERRAL_BONUS = 50
 
@@ -103,7 +103,10 @@ SYSTEM_PROMPTS = {
 # ══════════════════════════════════════════════════════
 #  БАЗА ДАННЫХ
 # ══════════════════════════════════════════════════════
-os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+
+import pathlib
+pathlib.Path("/app/data").mkdir(parents=True, exist_ok=True)
+
 async def init_db():
     async with aiosqlite.connect(DB_PATH) as db:
         await db.executescript("""
@@ -476,7 +479,7 @@ async def generate_music_suno(prompt: str) -> str:
         raise Exception("AIML_KEY не настроен")
     async with httpx.AsyncClient(timeout=120) as client:
         resp = await client.post(
-       https://api.aimlapi.com/v1/generate/audio/suno-ai/clip
+            "https://api.aimlapi.com/v1/generate/audio/suno-ai/clip",
             headers={"Authorization": f"Bearer {AIML_KEY}", "Content-Type": "application/json"},
             json={"prompt": prompt, "make_instrumental": False}
         )
@@ -494,7 +497,7 @@ async def generate_music_suno(prompt: str) -> str:
         for _ in range(24):
             await asyncio.sleep(5)
             r = await client.get(
-                "https://api.aimlapi.com/v1/generate/audio/suno-ai/clip",
+                f"https://api.aimlapi.com/v1/generate/audio/suno-ai/clip?clip_id={task_id}",
                 headers={"Authorization": f"Bearer {AIML_KEY}"}
             )
             result = r.json()

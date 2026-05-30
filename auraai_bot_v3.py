@@ -160,6 +160,14 @@ async def init_db():
                 status TEXT DEFAULT 'pending', admin_note TEXT,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP, processed_at TEXT
             );
+            CREATE TABLE IF NOT EXISTS chat_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_chat_history_user ON chat_history(user_id);
         """)
         await db.commit()
 
@@ -304,15 +312,35 @@ async def admin_stats():
 #  AI ФУНКЦИИ
 # ══════════════════════════════════════════════════════
 
-async def call_text_ai(prompt: str, system: str, model_id: str, uid: int = 0, use_history: bool = False) -> str:
+async def call_text_ai(prompt: str, system: str, model_id: str, uid: int = 0, use_history: bool = False, image_url: str = None) -> str:
     model_info = TEXT_MODELS.get(model_id, TEXT_MODELS["claude"])
     provider = model_info["provider"]
 
-    if use_history and uid:
-        history = get_history(uid)
-        messages = history + [{"role": "user", "content": prompt}]
+    # Построить контент сообщения (текст + опционально картинка)
+    if image_url and provider == "anthropic":
+        # Скачать картинку и передать как base64
+        async with httpx.AsyncClient(timeout=30) as client:
+            r = await client.get(image_url)
+            r.raise_for_status()
+            img_b64 = base64.b64encode(r.content).decode()
+            content_type = r.headers.get("content-type", "image/jpeg").split(";")[0]
+        user_content = [
+            {"type": "image", "source": {"type": "base64", "media_type": content_type, "data": img_b64}},
+            {"type": "text", "text": prompt}
+        ]
+    elif image_url and provider in ("openai", "deepseek"):
+        user_content = [
+            {"type": "image_url", "image_url": {"url": image_url}},
+            {"type": "text", "text": prompt}
+        ]
     else:
-        messages = [{"role": "user", "content": prompt}]
+        user_content = prompt
+
+    if use_history and uid:
+        history = await get_history(uid)
+        messages = history + [{"role": "user", "content": user_content}]
+    else:
+        messages = [{"role": "user", "content": user_content}]
 
     try:
         if provider == "anthropic" and anthropic_client:
@@ -343,8 +371,8 @@ async def call_text_ai(prompt: str, system: str, model_id: str, uid: int = 0, us
             return "❌ Модель недоступна. Проверь API ключи."
 
         if use_history and uid:
-            add_to_history(uid, "user", prompt)
-            add_to_history(uid, "assistant", result)
+            await add_to_history(uid, "user", prompt)
+            await add_to_history(uid, "assistant", result)
 
         return result
 
@@ -555,6 +583,45 @@ async def generate_video_kling(prompt: str) -> str:
                 raise Exception(f"Kling failed: {result}")
         raise Exception("Таймаут генерации видео (3 мин)")
 
+async def generate_img2video(image_url: str, prompt: str) -> str:
+    """Kling img2video — фото в видео через aimlapi.com"""
+    if not AIML_KEY:
+        raise Exception("AIML_KEY не настроен")
+    async with httpx.AsyncClient(timeout=60) as client:
+        resp = await client.post(
+            "https://api.aimlapi.com/v2/generate/video/kling/generation",
+            headers={"Authorization": f"Bearer {AIML_KEY}", "Content-Type": "application/json"},
+            json={
+                "model": "kling-video/v1.6/standard/image-to-video",
+                "image_url": image_url,
+                "prompt": prompt,
+                "duration": "5",
+                "aspect_ratio": "16:9"
+            }
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        task_id = data.get("id") or data.get("generation_id")
+        if not task_id:
+            raise Exception(f"Нет task_id: {list(data.keys())}")
+
+        for _ in range(36):
+            await asyncio.sleep(5)
+            r = await client.get(
+                f"https://api.aimlapi.com/v2/generate/video/kling/generation?generation_id={task_id}",
+                headers={"Authorization": f"Bearer {AIML_KEY}"}
+            )
+            result = r.json()
+            status = result.get("status", "")
+            if status == "completed":
+                url = result.get("video", {}).get("url", "")
+                if url:
+                    return url
+                raise Exception("Нет URL видео в ответе")
+            elif status in ("failed", "error"):
+                raise Exception(f"Img2Video failed: {result}")
+        raise Exception("Таймаут генерации видео")
+
 async def generate_tts(text: str, voice: str = "Nicole") -> bytes:
     """ElevenLabs TTS через aimlapi.com — возвращает аудио байты"""
     if not AIML_KEY:
@@ -689,6 +756,7 @@ def video_kb() -> ReplyKeyboardMarkup:
     b = ReplyKeyboardBuilder()
     b.row(KeyboardButton(text="🎬 Создать видео Seedance"))
     b.row(KeyboardButton(text="🎥 Создать видео Kling"))
+    b.row(KeyboardButton(text="🖼➡️🎬 Фото в видео"))
     b.row(KeyboardButton(text="🏠 В главное меню"))
     return b.as_markup(resize_keyboard=True)
 
@@ -704,24 +772,33 @@ class State_(StatesGroup):
     waiting_image = State()
     waiting_photo      = State()
     waiting_photo_text = State()
+    waiting_video_photo = State()
+    waiting_video_photo_text = State()
 
 user_tool:  dict[int, str] = {}
 user_model: dict[int, str] = {}
 user_image_model: dict[int, str] = {}
-chat_history: dict[int, list] = {}
+async def get_history(uid: int) -> list:
+    rows = await db_all(
+        "SELECT role, content FROM chat_history WHERE user_id=? ORDER BY created_at ASC",
+        (uid,)
+    )
+    return [{"role": r["role"], "content": r["content"]} for r in rows]
 
-def get_history(uid: int) -> list:
-    return chat_history.get(uid, [])
+async def add_to_history(uid: int, role: str, content: str):
+    await db_run(
+        "INSERT INTO chat_history (user_id, role, content) VALUES (?, ?, ?)",
+        (uid, role, content)
+    )
+    # Держать только последние 30 сообщений
+    await db_run(
+        "DELETE FROM chat_history WHERE user_id=? AND id NOT IN ("
+        "SELECT id FROM chat_history WHERE user_id=? ORDER BY created_at DESC LIMIT 30)",
+        (uid, uid)
+    )
 
-def add_to_history(uid: int, role: str, content: str):
-    if uid not in chat_history:
-        chat_history[uid] = []
-    chat_history[uid].append({"role": role, "content": content})
-    if len(chat_history[uid]) > 30:
-        chat_history[uid] = chat_history[uid][-30:]
-
-def clear_history(uid: int):
-    chat_history[uid] = []
+async def clear_history(uid: int):
+    await db_run("DELETE FROM chat_history WHERE user_id=?", (uid,))
 
 TOOL_MAP = {
     "💬 AI Чат":     ("chat",      10),
@@ -800,7 +877,7 @@ async def cancel(message: Message, state: FSMContext):
 
 @router.message(F.text == "🗑 Очистить историю чата")
 async def clear_chat_history(message: Message):
-    clear_history(message.from_user.id)
+    await clear_history(message.from_user.id)
     await message.answer("🗑 История чата очищена!", reply_markup=text_tools_kb())
 
 @router.message(F.text == "💡 GPTs/Claude/Gemini")
@@ -827,7 +904,7 @@ async def section_audio(message: Message):
 @router.message(F.text == "🎬 Видео будущего")
 async def section_video(message: Message):
     await message.answer(
-        "🎬 *Видео будущего*\n\n🎬 Seedance 2.0 — видео нового поколения до 5 сек\n💎 150 кредитов\n\n🎥 Kling 1.6 — проверенная классика до 5 сек\n💎 150 кредитов",
+        "🎬 *Видео будущего*\n\n🎬 Seedance 2.0 — видео нового поколения до 5 сек\n💎 150 кредитов\n\n🎥 Kling 1.6 — проверенная классика до 5 сек\n💎 150 кредитов\n\n🖼➡️🎬 Фото в видео — оживи своё фото\n💎 100 кредитов",
         parse_mode="Markdown", reply_markup=video_kb()
     )
 
@@ -929,6 +1006,11 @@ async def tool_selected(message: Message, state: FSMContext):
         parse_mode="Markdown", reply_markup=model_kb()
     )
 
+@router.message(State_.waiting_text, F.photo)
+async def process_text_with_photo(message: Message, state: FSMContext):
+    """Обработка фото в текстовом чате"""
+    await process_text(message, state)
+
 @router.message(State_.choose_model, lambda m: m.text in MODEL_MAP)
 async def model_selected(message: Message, state: FSMContext):
     model_id = MODEL_MAP[message.text]
@@ -969,6 +1051,20 @@ async def process_text(message: Message, state: FSMContext):
     model_id = data.get("model", "claude")
     cost     = data.get("cost", 10)
 
+    # Получить текст и фото если есть
+    user_text = message.text or message.caption or ""
+    image_url = None
+    if message.photo:
+        photo = message.photo[-1]
+        file = await message.bot.get_file(photo.file_id)
+        image_url = f"https://api.telegram.org/file/bot{message.bot.token}/{file.file_path}"
+        if not user_text:
+            user_text = "Опиши что на этом изображении"
+
+    if not user_text and not image_url:
+        await message.answer("Введи текст или отправь фото:")
+        return
+
     ok = await use_credits(message.from_user.id, tool_id, cost)
     if not ok:
         await message.answer("❌ Недостаточно кредитов.", reply_markup=profile_kb())
@@ -980,7 +1076,7 @@ async def process_text(message: Message, state: FSMContext):
     try:
         system = SYSTEM_PROMPTS.get(tool_id, SYSTEM_PROMPTS["chat"])
         use_history = (tool_id == "chat")
-        result = await call_text_ai(message.text, system, model_id, uid=message.from_user.id, use_history=use_history)
+        result = await call_text_ai(user_text, system, model_id, uid=message.from_user.id, use_history=use_history, image_url=image_url)
         bal    = await get_balance(message.from_user.id)
         model_info = TEXT_MODELS.get(model_id, TEXT_MODELS["claude"])
 
@@ -1288,6 +1384,7 @@ async def kling_generate(message: Message, state: FSMContext):
 # ══════════════════════════════════════════════════════
 
 user_photo_urls: dict[int, str] = {}
+user_video_photo_urls: dict[int, str] = {}
 
 @router.message(F.text == "✏️ Редактировать фото")
 async def img2img_start(message: Message, state: FSMContext):
@@ -1379,6 +1476,97 @@ async def img2img_process(message: Message, state: FSMContext):
             await message.answer("⚠️ Ошибка. Кредиты возвращены.")
         await message.answer("Попробуй снова:", reply_markup=design_kb())
         logging.error(f"img2img error: {e}")
+
+@router.message(F.text == "🖼➡️🎬 Фото в видео")
+async def img2video_video_start(message: Message, state: FSMContext):
+    cost = 100
+    bal = await get_balance(message.from_user.id)
+    if bal < cost:
+        await message.answer(f"❌ Нужно *{cost} кр.* · У тебя *{bal} кр.*", parse_mode="Markdown", reply_markup=profile_kb())
+        return
+    await state.set_state(State_.waiting_video_photo)
+    await state.update_data(cost=cost)
+    await message.answer(
+        "🖼➡️🎬 *Фото в видео*  ·  💎 100 кредитов\n\n"
+        "1️⃣ Отправь фото которое хочешь оживить:",
+        parse_mode="Markdown", reply_markup=cancel_kb()
+    )
+
+@router.message(State_.waiting_video_photo, F.photo)
+async def img2video_photo_received(message: Message, state: FSMContext):
+    photo = message.photo[-1]
+    file = await message.bot.get_file(photo.file_id)
+    file_url = f"https://api.telegram.org/file/bot{message.bot.token}/{file.file_path}"
+    user_video_photo_urls[message.from_user.id] = file_url
+    await state.set_state(State_.waiting_video_photo_text)
+    await message.answer(
+        "✅ Фото получено!\n\n"
+        "2️⃣ Опиши что должно происходить в видео:\n\n"
+        "Примеры:\n"
+        "• *плавное движение камеры вперёд*\n"
+        "• *волосы развеваются на ветру*\n"
+        "• *облака медленно плывут*",
+        parse_mode="Markdown", reply_markup=cancel_kb()
+    )
+
+@router.message(State_.waiting_video_photo, F.text != "❌ Отмена")
+async def img2video_no_photo(message: Message):
+    await message.answer("📸 Пожалуйста отправь фото:")
+
+@router.message(State_.waiting_video_photo_text)
+async def img2video_video_process(message: Message, state: FSMContext):
+    if message.text == "❌ Отмена":
+        await state.clear()
+        await message.answer("Отменено.", reply_markup=video_kb())
+        return
+
+    data = await state.get_data()
+    cost = data.get("cost", 100)
+    image_url = user_video_photo_urls.get(message.from_user.id)
+
+    if not image_url:
+        await message.answer("❌ Фото не найдено. Начни заново.", reply_markup=video_kb())
+        await state.clear()
+        return
+
+    ok = await use_credits(message.from_user.id, "img2video", cost)
+    if not ok:
+        await message.answer("❌ Недостаточно кредитов.", reply_markup=profile_kb())
+        await state.clear()
+        return
+
+    await state.clear()
+    thinking = await message.answer(
+        "🖼➡️🎬 *Генерирую видео из фото...*\n\n"
+        "⏱ Это займёт ~2-3 минуты\n"
+        "✅ Можешь пользоваться ботом — результат придёт автоматически!",
+        parse_mode="Markdown", reply_markup=main_kb()
+    )
+
+    prompt = message.text
+    uid = message.from_user.id
+
+    async def img2video_task():
+        try:
+            url = await generate_img2video(image_url, prompt)
+            bal = await get_balance(uid)
+            await message.answer_video(
+                url,
+                caption=f"🖼➡️🎬 *Фото в видео*\n\n💎 Потрачено: *{cost} кр.* · Остаток: *{bal} кр.*",
+                parse_mode="Markdown"
+            )
+            await message.answer("Что дальше?", reply_markup=video_kb())
+        except Exception as e:
+            await add_credits(uid, cost, "bonus", "Возврат: ошибка img2video")
+            await message.answer(f"⚠️ Ошибка. Кредиты возвращены.\n{str(e)[:100]}", reply_markup=video_kb())
+            logging.error(f"img2video error: {e}")
+        finally:
+            try:
+                await thinking.delete()
+            except Exception:
+                pass
+
+    asyncio.create_task(img2video_task())
 
 # ══════════════════════════════════════════════════════
 #  РЕФЕРАЛЫ
@@ -1605,6 +1793,62 @@ async def cmd_addcredits(message: Message):
     if len(parts) != 3: await message.answer("Формат: /addcredits USER_ID AMOUNT"); return
     new_bal = await add_credits(int(parts[1]), int(parts[2]), "admin", "Ручное начисление")
     await message.answer(f"✅ Начислено *{parts[2]} кр.* Баланс: *{new_bal}*", parse_mode="Markdown")
+
+@router.message(Command("users"))
+async def cmd_users(message: Message):
+    if message.from_user.id != ADMIN_ID: return
+    rows = await db_all(
+        "SELECT id, full_name, username, credits, plan, credits_total, registered_at "
+        "FROM users ORDER BY registered_at DESC LIMIT 20"
+    )
+    if not rows:
+        await message.answer("Пользователей нет")
+        return
+    lines = ["👥 *Последние 20 пользователей*\n"]
+    for r in rows:
+        plan_label = {"free": "Free", "pro": "👑Pro", "team": "💎Team"}.get(r["plan"], "Free")
+        name = r["full_name"] or r["username"] or "Аноним"
+        lines.append(
+            f"👤 *{name}*\n"
+            f"🆔 `{r['id']}`\n"
+            f"💎 {r['credits']} кр. · {plan_label}\n"
+        )
+    await message.answer("\n".join(lines), parse_mode="Markdown")
+
+@router.message(Command("user"))
+async def cmd_user(message: Message):
+    if message.from_user.id != ADMIN_ID: return
+    parts = message.text.split()
+    if len(parts) != 2:
+        await message.answer("Формат: /user USER_ID")
+        return
+    user = await get_user(int(parts[1]))
+    if not user:
+        await message.answer("❌ Пользователь не найден")
+        return
+    plan_label = {"free": "Free", "pro": "👑 Pro", "team": "💎 Team"}.get(user["plan"], "Free")
+    expires = f"\n📅 До: *{user['plan_expires'][:10]}*" if user["plan_expires"] else ""
+    rows = await db_all(
+        "SELECT amount, description, created_at FROM transactions "
+        "WHERE user_id=? ORDER BY created_at DESC LIMIT 5",
+        (user["id"],)
+    )
+    tx_lines = []
+    for r in rows:
+        sign = "+" if r["amount"] > 0 else ""
+        tx_lines.append(f"`{r['created_at'][:10]}` {sign}{r['amount']} — {r['description']}")
+    text = (
+        f"👤 *Профиль пользователя*\n\n"
+        f"Имя: *{user['full_name'] or 'Нет'}*\n"
+        f"Username: @{user['username'] or 'нет'}\n"
+        f"🆔 `{user['id']}`\n"
+        f"Plan: *{plan_label}*{expires}\n"
+        f"💎 Кредиты: *{user['credits']}*\n"
+        f"🏅 Всего: *{user['credits_total']}*\n"
+        f"👥 Рефералов: *{user['referrals_count']}*\n\n"
+        f"*Последние транзакции:*\n" + "\n".join(tx_lines or ["Нет"])
+    )
+    await message.answer(text, parse_mode="Markdown")
 
 # ══════════════════════════════════════════════════════
 #  ЗАПУСК

@@ -305,7 +305,6 @@ async def call_text_ai(prompt: str, system: str, model_id: str, uid: int = 0, us
     model_info = TEXT_MODELS.get(model_id, TEXT_MODELS["claude"])
     provider = model_info["provider"]
 
-    # Построить сообщения с историей
     if use_history and uid:
         history = get_history(uid)
         messages = history + [{"role": "user", "content": prompt}]
@@ -340,7 +339,6 @@ async def call_text_ai(prompt: str, system: str, model_id: str, uid: int = 0, us
         else:
             return "❌ Модель недоступна. Проверь API ключи."
 
-        # Сохранить в историю
         if use_history and uid:
             add_to_history(uid, "user", prompt)
             add_to_history(uid, "assistant", result)
@@ -357,7 +355,6 @@ async def call_text_ai(prompt: str, system: str, model_id: str, uid: int = 0, us
 import base64
 
 async def generate_image_dalle(prompt: str) -> bytes:
-    """DALL-E 3 — b64"""
     if not openai_client:
         raise Exception("OpenAI ключ не настроен")
     resp = await asyncio.wait_for(
@@ -370,7 +367,6 @@ async def generate_image_dalle(prompt: str) -> bytes:
     return base64.b64decode(resp.data[0].b64_json)
 
 async def generate_image_gpt(prompt: str) -> bytes:
-    """GPT Image 2 — b64"""
     if not openai_client:
         raise Exception("OpenAI ключ не настроен")
     resp = await asyncio.wait_for(
@@ -387,10 +383,7 @@ async def generate_image_gpt(prompt: str) -> bytes:
         r.raise_for_status()
         return r.content
 
-# ── KIE.AI ФУНКЦИИ ────────────────────────────────────
-
 async def aiml_request(endpoint: str, payload: dict) -> dict:
-    """Базовый запрос к aimlapi.com"""
     if not AIML_KEY:
         raise Exception("AIML_KEY не настроен")
     async with httpx.AsyncClient(timeout=60) as client:
@@ -403,14 +396,12 @@ async def aiml_request(endpoint: str, payload: dict) -> dict:
         return resp.json()
 
 async def generate_nano_banana(prompt: str) -> bytes:
-    """Nano Banana Pro через aimlapi.com"""
     data = await aiml_request("v1/images/generations", {
         "model": "google/nano-banana-pro",
         "prompt": prompt,
         "aspect_ratio": "1:1",
         "resolution": "1K"
     })
-    # Получить URL картинки
     url = ""
     if data.get("images"):
         url = data["images"][0].get("url", "")
@@ -424,7 +415,6 @@ async def generate_nano_banana(prompt: str) -> bytes:
         return r.content
 
 async def generate_img2img(image_url: str, prompt: str) -> bytes:
-    """Редактирование фото через Nano Banana 2 (img2img)"""
     data = await aiml_request("v1/images/generations", {
         "model": "google/nano-banana-2",
         "prompt": prompt,
@@ -445,7 +435,6 @@ async def generate_img2img(image_url: str, prompt: str) -> bytes:
         return r.content
 
 async def generate_video_kling(prompt: str) -> str:
-    """Видео Kling через aimlapi.com"""
     if not AIML_KEY:
         raise Exception("AIML_KEY не настроен")
     async with httpx.AsyncClient(timeout=30) as client:
@@ -465,7 +454,6 @@ async def generate_video_kling(prompt: str) -> str:
         if not task_id:
             raise Exception(f"Нет task_id: {list(data.keys())}")
 
-        # Polling
         for _ in range(36):
             await asyncio.sleep(5)
             r = await client.get(
@@ -484,11 +472,9 @@ async def generate_video_kling(prompt: str) -> str:
         raise Exception("Таймаут генерации видео (3 мин)")
 
 async def generate_music_suno(prompt: str) -> str:
-    """Музыка Suno через aimlapi.com"""
     if not AIML_KEY:
         raise Exception("AIML_KEY не настроен")
     async with httpx.AsyncClient(timeout=120) as client:
-        # Создать задачу
         resp = await client.post(
             "https://api.aimlapi.com/v2/generate/audio/suno-ai/clip",
             headers={"Authorization": f"Bearer {AIML_KEY}", "Content-Type": "application/json"},
@@ -496,18 +482,15 @@ async def generate_music_suno(prompt: str) -> str:
         )
         resp.raise_for_status()
         data = resp.json()
-        
-        # Если уже готово
+
         clips = data.get("clips", [])
         if clips and clips[0].get("audio_url"):
             return clips[0]["audio_url"]
-        
-        # Получить task_id и ждать
+
         task_id = data.get("id") or (clips[0].get("id") if clips else None)
         if not task_id:
             raise Exception(f"Нет task_id: {list(data.keys())}")
-        
-        # Polling
+
         for _ in range(24):
             await asyncio.sleep(5)
             r = await client.get(
@@ -521,15 +504,14 @@ async def generate_music_suno(prompt: str) -> str:
             status = result.get("status", "")
             if status in ("failed", "error"):
                 raise Exception(f"Suno failed: {result}")
-        
+
         raise Exception("Таймаут генерации музыки")
 
 # ══════════════════════════════════════════════════════
-#  КЛАВИАТУРЫ — REPLY KEYBOARD (кнопки внизу)
+#  КЛАВИАТУРЫ
 # ══════════════════════════════════════════════════════
 
 def main_kb() -> ReplyKeyboardMarkup:
-    """Главное меню — кнопки внизу экрана как в Syntx AI"""
     b = ReplyKeyboardBuilder()
     b.row(KeyboardButton(text="💡 GPTs/Claude/Gemini"))
     b.row(
@@ -551,7 +533,6 @@ def main_kb() -> ReplyKeyboardMarkup:
     return b.as_markup(resize_keyboard=True)
 
 def text_tools_kb() -> ReplyKeyboardMarkup:
-    """Меню текстовых инструментов"""
     b = ReplyKeyboardBuilder()
     b.row(KeyboardButton(text="💬 AI Чат"))
     b.row(
@@ -576,7 +557,6 @@ def text_tools_kb() -> ReplyKeyboardMarkup:
     return b.as_markup(resize_keyboard=True)
 
 def design_kb() -> ReplyKeyboardMarkup:
-    """Меню дизайна"""
     b = ReplyKeyboardBuilder()
     b.row(KeyboardButton(text="🍌 Nano Banana"))
     b.row(KeyboardButton(text="🖼 GPT Image 2"))
@@ -586,7 +566,6 @@ def design_kb() -> ReplyKeyboardMarkup:
     return b.as_markup(resize_keyboard=True)
 
 def model_kb() -> ReplyKeyboardMarkup:
-    """Выбор модели"""
     b = ReplyKeyboardBuilder()
     b.row(KeyboardButton(text="🅰 Claude Sonnet — 10 кр."))
     b.row(KeyboardButton(text="🐋 DeepSeek V3 — 5 кр."))
@@ -633,6 +612,18 @@ def ref_inline_kb():
     )
     return b.as_markup()
 
+def audio_kb() -> ReplyKeyboardMarkup:
+    b = ReplyKeyboardBuilder()
+    b.row(KeyboardButton(text="🎵 Сгенерировать музыку"))
+    b.row(KeyboardButton(text="🏠 В главное меню"))
+    return b.as_markup(resize_keyboard=True)
+
+def video_kb() -> ReplyKeyboardMarkup:
+    b = ReplyKeyboardBuilder()
+    b.row(KeyboardButton(text="🎬 Создать видео Kling"))
+    b.row(KeyboardButton(text="🏠 В главное меню"))
+    return b.as_markup(resize_keyboard=True)
+
 # ══════════════════════════════════════════════════════
 #  РОУТЕР И FSM
 # ══════════════════════════════════════════════════════
@@ -640,19 +631,15 @@ def ref_inline_kb():
 router = Router()
 
 class State_(StatesGroup):
-    # Текстовые инструменты
     choose_model  = State()
     waiting_text  = State()
-    # Картинки
     waiting_image = State()
-    # Редактирование фото
     waiting_photo      = State()
     waiting_photo_text = State()
 
 user_tool:  dict[int, str] = {}
 user_model: dict[int, str] = {}
 user_image_model: dict[int, str] = {}
-# История чатов — последние 10 сообщений на пользователя
 chat_history: dict[int, list] = {}
 
 def get_history(uid: int) -> list:
@@ -662,7 +649,6 @@ def add_to_history(uid: int, role: str, content: str):
     if uid not in chat_history:
         chat_history[uid] = []
     chat_history[uid].append({"role": role, "content": content})
-    # Держать только последние 30 сообщений
     if len(chat_history[uid]) > 30:
         chat_history[uid] = chat_history[uid][-30:]
 
@@ -763,24 +749,12 @@ async def section_design(message: Message):
         parse_mode="Markdown", reply_markup=design_kb()
     )
 
-def audio_kb() -> ReplyKeyboardMarkup:
-    b = ReplyKeyboardBuilder()
-    b.row(KeyboardButton(text="🎵 Сгенерировать музыку"))
-    b.row(KeyboardButton(text="🏠 В главное меню"))
-    return b.as_markup(resize_keyboard=True)
-
 @router.message(F.text == "🎙 Аудио с ИИ")
 async def section_audio(message: Message):
     await message.answer(
         "🎙 *Аудио с ИИ*\n\n🎵 Suno v4 — генерация музыки по описанию\n💎 50 кредитов за трек",
         parse_mode="Markdown", reply_markup=audio_kb()
     )
-
-def video_kb() -> ReplyKeyboardMarkup:
-    b = ReplyKeyboardBuilder()
-    b.row(KeyboardButton(text="🎬 Создать видео Kling"))
-    b.row(KeyboardButton(text="🏠 В главное меню"))
-    return b.as_markup(resize_keyboard=True)
 
 @router.message(F.text == "🎬 Видео будущего")
 async def section_video(message: Message):
@@ -868,7 +842,7 @@ async def tx_history(message: Message):
     await message.answer("\n".join(lines), parse_mode="Markdown", reply_markup=profile_kb())
 
 # ══════════════════════════════════════════════════════
-#  ТЕКСТОВЫЕ ИНСТРУМЕНТЫ — ВЫБОР МОДЕЛИ
+#  ТЕКСТОВЫЕ ИНСТРУМЕНТЫ
 # ══════════════════════════════════════════════════════
 
 @router.message(lambda m: m.text in TOOL_MAP)
@@ -978,7 +952,7 @@ async def process_text(message: Message, state: FSMContext):
         try:
             await thinking.edit_text(f"⚠️ Ошибка AI. Кредиты возвращены.\n\n{str(e)[:100]}")
         except Exception:
-            await message.answer(f"⚠️ Ошибка AI. Кредиты возвращены.")
+            await message.answer("⚠️ Ошибка AI. Кредиты возвращены.")
         await message.answer("Попробуй ещё раз:", reply_markup=text_tools_kb())
         logging.error(f"Text AI error [{tool_id}/{model_id}]: {e}")
 
@@ -1102,14 +1076,13 @@ async def process_image(message: Message, state: FSMContext):
 
     except Exception as e:
         await add_credits(message.from_user.id, cost, "bonus", "Возврат: ошибка")
-    await message.answer(f"⚠️ Ошибка. Кредиты возвращены.")
-{str(e)[:150]}")
+        await message.answer(f"⚠️ Ошибка. Кредиты возвращены.\n{str(e)[:150]}")
         kb = audio_kb() if model == "music" else (video_kb() if model == "video" else design_kb())
         await message.answer("Попробуй снова:", reply_markup=kb)
         logging.error(f"Media generation error [{model}]: {e}")
 
 # ══════════════════════════════════════════════════════
-#  РЕФЕРАЛЫ
+#  МУЗЫКА И ВИДЕО
 # ══════════════════════════════════════════════════════
 
 @router.message(F.text == "🎵 Сгенерировать музыку")
@@ -1144,7 +1117,9 @@ async def video_generate(message: Message, state: FSMContext):
         parse_mode="Markdown", reply_markup=cancel_kb()
     )
 
-# ── РЕДАКТИРОВАНИЕ ФОТО ───────────────────────────────
+# ══════════════════════════════════════════════════════
+#  РЕДАКТИРОВАНИЕ ФОТО
+# ══════════════════════════════════════════════════════
 
 user_photo_urls: dict[int, str] = {}
 
@@ -1158,36 +1133,25 @@ async def img2img_start(message: Message, state: FSMContext):
     await state.set_state(State_.waiting_photo)
     await state.update_data(cost=cost)
     await message.answer(
-        "✏️ *Редактировать фото*  ·  💎 70 кредитов
-
-"
+        "✏️ *Редактировать фото*  ·  💎 70 кредитов\n\n"
         "1️⃣ Отправь фото которое хочешь изменить:",
         parse_mode="Markdown", reply_markup=cancel_kb()
     )
 
 @router.message(State_.waiting_photo, F.photo)
 async def img2img_photo_received(message: Message, state: FSMContext):
-    # Получить наибольшее фото
     photo = message.photo[-1]
     file = await message.bot.get_file(photo.file_id)
     file_url = f"https://api.telegram.org/file/bot{message.bot.token}/{file.file_path}"
     user_photo_urls[message.from_user.id] = file_url
     await state.set_state(State_.waiting_photo_text)
     await message.answer(
-        "✅ Фото получено!
-
-"
-        "2️⃣ Теперь опиши что хочешь изменить:
-
-"
-        "Примеры:
-"
-        "• *сделай фон розовым*
-"
-        "• *добавь снег*
-"
-        "• *измени стиль на аниме*
-"
+        "✅ Фото получено!\n\n"
+        "2️⃣ Теперь опиши что хочешь изменить:\n\n"
+        "Примеры:\n"
+        "• *сделай фон розовым*\n"
+        "• *добавь снег*\n"
+        "• *измени стиль на аниме*\n"
         "• *убери фон*",
         parse_mode="Markdown", reply_markup=cancel_kb()
     )
@@ -1227,9 +1191,7 @@ async def img2img_process(message: Message, state: FSMContext):
         await thinking.delete()
         await message.answer_photo(
             BufferedInputFile(img_bytes, filename="edited.png"),
-            caption=f"✏️ *Редактирование фото*
-
-💎 Потрачено: *{cost} кр.* · Остаток: *{bal} кр.*",
+            caption=f"✏️ *Редактирование фото*\n\n💎 Потрачено: *{cost} кр.* · Остаток: *{bal} кр.*",
             parse_mode="Markdown"
         )
         await message.answer("Что дальше?", reply_markup=design_kb())
@@ -1246,12 +1208,15 @@ async def img2img_process(message: Message, state: FSMContext):
     except Exception as e:
         await add_credits(message.from_user.id, cost, "bonus", "Возврат: ошибка")
         try:
-            await thinking.edit_text(f"⚠️ Ошибка. Кредиты возвращены.
-{str(e)[:100]}")
+            await thinking.edit_text(f"⚠️ Ошибка. Кредиты возвращены.\n{str(e)[:100]}")
         except Exception:
             await message.answer("⚠️ Ошибка. Кредиты возвращены.")
         await message.answer("Попробуй снова:", reply_markup=design_kb())
         logging.error(f"img2img error: {e}")
+
+# ══════════════════════════════════════════════════════
+#  РЕФЕРАЛЫ
+# ══════════════════════════════════════════════════════
 
 @router.message(F.text == "🔗 Рефералы")
 async def section_referral(message: Message):

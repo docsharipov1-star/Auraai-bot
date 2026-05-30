@@ -49,7 +49,7 @@ DEEPSEEK_KEY  = os.getenv("DEEPSEEK_KEY", "")
 AIML_KEY      = os.getenv("AIML_KEY", "")
 ADMIN_ID      = int(os.getenv("ADMIN_ID", "0"))
 BOT_USERNAME  = os.getenv("BOT_USERNAME", "GetAuraAI_bot")
-DB_PATH       = "auraai.db"
+DB_PATH = "/app/data/auraai.db"
 FREE_CREDITS  = 100
 REFERRAL_BONUS = 50
 

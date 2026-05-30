@@ -446,13 +446,31 @@ async def generate_nano_banana(prompt: str) -> bytes:
         return r.content
 
 async def generate_img2img(image_url: str, prompt: str) -> bytes:
-    data = await aiml_request("v1/images/generations", {
-        "model": "google/nano-banana-2",
-        "prompt": prompt,
-        "image_urls": [image_url],
-        "aspect_ratio": "1:1",
-        "resolution": "1K"
-    })
+    """Редактирование фото — скачиваем и передаём как base64"""
+    if not AIML_KEY:
+        raise Exception("AIML_KEY не настроен")
+    # Скачать фото
+    async with httpx.AsyncClient(timeout=60) as client:
+        r = await client.get(image_url)
+        r.raise_for_status()
+        img_b64 = base64.b64encode(r.content).decode()
+        content_type = r.headers.get("content-type", "image/jpeg").split(";")[0]
+
+        # Отправить через API с base64
+        resp = await client.post(
+            "https://api.aimlapi.com/v1/images/generations",
+            headers={"Authorization": f"Bearer {AIML_KEY}", "Content-Type": "application/json"},
+            json={
+                "model": "google/nano-banana-2",
+                "prompt": prompt,
+                "image": f"data:{content_type};base64,{img_b64}",
+                "aspect_ratio": "1:1",
+                "resolution": "1K"
+            }
+        )
+        resp.raise_for_status()
+        data = resp.json()
+
     url = ""
     if data.get("images"):
         url = data["images"][0].get("url", "")

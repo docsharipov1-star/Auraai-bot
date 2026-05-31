@@ -498,7 +498,7 @@ async def generate_img2img(image_url: str, prompt: str, aspect: str = "1:1") -> 
         r.raise_for_status()
         return r.content, result_url
 
-async def generate_video_seedance(prompt: str) -> str:
+async def generate_video_seedance(prompt: str, aspect: str = "16:9") -> str:
     """Seedance 2.0 от ByteDance через aimlapi.com"""
     if not AIML_KEY:
         raise Exception("AIML_KEY не настроен")
@@ -510,7 +510,7 @@ async def generate_video_seedance(prompt: str) -> str:
                 "model": "bytedance/seedance-2-0",
                 "prompt": prompt,
                 "duration": "5",
-                "aspect_ratio": "16:9"
+                "aspect_ratio": aspect
             }
         )
         resp.raise_for_status()
@@ -615,7 +615,7 @@ async def generate_music_suno(prompt: str) -> str:
 
     raise Exception(f"Все модели музыки недоступны. {last_error}")
 
-async def generate_video_kling(prompt: str) -> str:
+async def generate_video_kling(prompt: str, aspect: str = "16:9") -> str:
     """Kling через aimlapi.com"""
     if not AIML_KEY:
         raise Exception("AIML_KEY не настроен")
@@ -627,7 +627,7 @@ async def generate_video_kling(prompt: str) -> str:
                 "model": "kling-video/v1.6/standard/text-to-video",
                 "prompt": prompt,
                 "duration": "5",
-                "aspect_ratio": "16:9"
+                "aspect_ratio": aspect
             }
         )
         resp.raise_for_status()
@@ -1309,12 +1309,22 @@ async def image_from_scratch(message: Message, state: FSMContext):
 async def image_aspect_selected(message: Message, state: FSMContext):
     aspect = ASPECT_MAP[message.text]
     await state.update_data(aspect=aspect)
-    await message.answer(
-        f"Формат: *{aspect}* ✅\n\n"
-        "Теперь опиши картинку которую хочешь создать:\n\n"
-        "Пример: *красивый закат над горами, фотореализм, 4K*",
-        parse_mode="Markdown", reply_markup=cancel_kb()
-    )
+    data = await state.get_data()
+    model = data.get("image_model", "dalle")
+    if model in ("video", "kling"):
+        await message.answer(
+            f"Формат: *{aspect}* ✅\n\n"
+            "Теперь опиши видео которое хочешь создать:\n\n"
+            "Пример: *закат над морем, волны, кинематографичная съёмка*",
+            parse_mode="Markdown", reply_markup=cancel_kb()
+        )
+    else:
+        await message.answer(
+            f"Формат: *{aspect}* ✅\n\n"
+            "Теперь опиши картинку которую хочешь создать:\n\n"
+            "Пример: *красивый закат над горами, фотореализм, 4K*",
+            parse_mode="Markdown", reply_markup=cancel_kb()
+        )
 
 @router.message(State_.waiting_image, F.text == "🖼 На основе моего фото")
 async def image_from_photo_prompt(message: Message, state: FSMContext):
@@ -1356,6 +1366,7 @@ async def process_image(message: Message, state: FSMContext):
     model = data.get("image_model", "dalle")
     cost  = data.get("cost", 50)
     base_photo = data.get("base_photo")
+    aspect = data.get("aspect", "16:9" if model in ("video", "kling") else "1:1")
 
     # Если ждём фото — пропустить текст
     if data.get("waiting_base_photo") and not message.photo:
@@ -1430,7 +1441,7 @@ async def process_image(message: Message, state: FSMContext):
 
             async def kling_task():
                 try:
-                    url = await generate_video_kling(message.text)
+                    url = await generate_video_kling(message.text, aspect)
                     async with httpx.AsyncClient(timeout=180) as client:
                         vr = await client.get(url)
                         vr.raise_for_status()
@@ -1482,10 +1493,11 @@ async def process_image(message: Message, state: FSMContext):
             except Exception:
                 pass
             _prompt = message.text
+            _aspect = aspect
 
             async def seedance_task():
                 try:
-                    url = await generate_video_seedance(_prompt)
+                    url = await generate_video_seedance(_prompt, _aspect)
                     async with httpx.AsyncClient(timeout=180) as client:
                         vr = await client.get(url)
                         vr.raise_for_status()
@@ -1581,9 +1593,8 @@ async def video_generate(message: Message, state: FSMContext):
     await state.update_data(image_model="video", cost=cost)
     await message.answer(
         f"🎬 *Seedance 2.0*  ·  💎 {cost} кредитов\n\n"
-        f"Опиши видео которое хочешь создать:\n\n"
-        f"Пример: *закат над морем, волны, кинематографичная съёмка*",
-        parse_mode="Markdown", reply_markup=cancel_kb()
+        f"Выбери формат видео:",
+        parse_mode="Markdown", reply_markup=aspect_kb()
     )
 @router.message(F.text == "🔊 Озвучить текст")
 async def tts_start(message: Message, state: FSMContext):
@@ -1611,9 +1622,8 @@ async def kling_generate(message: Message, state: FSMContext):
     await state.update_data(image_model="kling", cost=cost)
     await message.answer(
         f"🎥 *Kling 1.6*  ·  💎 {cost} кредитов\n\n"
-        f"Опиши видео которое хочешь создать:\n\n"
-        f"Пример: *закат над морем, волны, кинематографичная съёмка*",
-        parse_mode="Markdown", reply_markup=cancel_kb()
+        f"Выбери формат видео:",
+        parse_mode="Markdown", reply_markup=aspect_kb()
     )
 
 

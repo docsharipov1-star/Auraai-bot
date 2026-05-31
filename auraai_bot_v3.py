@@ -832,6 +832,7 @@ class State_(StatesGroup):
     waiting_image = State()
     waiting_photo      = State()
     waiting_photo_text = State()
+    editing_more       = State()  # продолжение редактирования того же результата
     waiting_video_photo = State()
     waiting_video_photo_text = State()
 
@@ -1585,6 +1586,7 @@ async def kling_generate(message: Message, state: FSMContext):
 # ══════════════════════════════════════════════════════
 
 user_photo_urls: dict[int, str] = {}
+user_last_edited: dict[int, str] = {}  # последний результат редактирования (URL)
 user_video_photo_urls: dict[int, str] = {}
 
 @router.message(F.text == "✏️ Редактировать фото")
@@ -1682,11 +1684,25 @@ async def _do_img2img(message: Message, state: FSMContext, image_url: str, promp
             parse_mode="Markdown",
             disable_web_page_preview=False
         )
-        # Снова ждём фото для редактирования
-        await state.set_state(State_.waiting_photo)
+        # Сохраняем результат для продолжения редактирования
+        user_last_edited[message.from_user.id] = result_url
+        # Инфо и ссылка отдельным сообщением
+        await message.answer(
+            f"📌 Запрос: _{prompt_text}_\n\n"
+            f"💎 Потрачено: *{cost} кр.* · Остаток: *{bal} кр.*\n\n"
+            f"[📥 Скачать в высоком качестве]({result_url})",
+            parse_mode="Markdown",
+            disable_web_page_preview=False
+        )
+        # Режим продолжения: можно менять этот же результат текстом
+        await state.set_state(State_.editing_more)
         await state.update_data(cost=cost)
         await message.answer(
-            "📸 Отправь следующее фото для редактирования (или ❌ Отмена):",
+            "✏️ *Что дальше?*\n\n"
+            "• Напиши новое изменение — применю к *этому же* результату\n"
+            "• Или отправь *новое фото* чтобы начать заново\n"
+            "• ❌ Отмена — выйти",
+            parse_mode="Markdown",
             reply_markup=cancel_kb()
         )
         await log_request(message.from_user.id, "img2img", "nano-banana-pro", cost)
@@ -1707,6 +1723,44 @@ async def _do_img2img(message: Message, state: FSMContext, image_url: str, promp
             await message.answer("⚠️ Ошибка. Кредиты возвращены.")
         await message.answer("Попробуй снова:", reply_markup=design_kb())
         logging.error(f"img2img error: {e}")
+
+
+@router.message(State_.editing_more, F.photo)
+async def editing_more_new_photo(message: Message, state: FSMContext):
+    """В режиме продолжения пришло новое фото — начинаем заново с него"""
+    photo = message.photo[-1]
+    file = await message.bot.get_file(photo.file_id)
+    file_url = f"https://api.telegram.org/file/bot{message.bot.token}/{file.file_path}"
+    user_photo_urls[message.from_user.id] = file_url
+
+    if message.caption:
+        # Фото с подписью — сразу редактируем
+        await _do_img2img(message, state, file_url, message.caption)
+        return
+
+    await state.set_state(State_.waiting_photo_text)
+    await message.answer(
+        "✅ Новое фото получено!\n\nОпиши что изменить:",
+        reply_markup=cancel_kb()
+    )
+
+
+@router.message(State_.editing_more, F.text)
+async def editing_more_text(message: Message, state: FSMContext):
+    """В режиме продолжения пришёл текст — применяем к последнему результату"""
+    if message.text == "❌ Отмена":
+        await state.clear()
+        await message.answer("Готово! Возвращаю в меню.", reply_markup=design_kb())
+        return
+
+    last_url = user_last_edited.get(message.from_user.id)
+    if not last_url:
+        await message.answer("❌ Нет предыдущего результата. Отправь фото заново.", reply_markup=design_kb())
+        await state.clear()
+        return
+
+    # Редактируем последний результат новым промтом
+    await _do_img2img(message, state, last_url, message.text)
 
 @router.message(F.text == "🖼➡️🎬 Фото в видео")
 async def img2video_video_start(message: Message, state: FSMContext):

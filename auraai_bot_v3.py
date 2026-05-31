@@ -530,7 +530,9 @@ async def generate_music_suno(prompt: str) -> str:
     """Google Lyria 2 через aimlapi.com"""
     if not AIML_KEY:
         raise Exception("AIML_KEY не настроен")
-    async with httpx.AsyncClient(timeout=300) as client:
+
+    # Запуск генерации
+    async with httpx.AsyncClient(timeout=120) as client:
         resp = await client.post(
             "https://api.aimlapi.com/v2/generate/audio",
             headers={"Authorization": f"Bearer {AIML_KEY}", "Content-Type": "application/json"},
@@ -539,34 +541,46 @@ async def generate_music_suno(prompt: str) -> str:
         resp.raise_for_status()
         data = resp.json()
 
-        # Если сразу готово
-        if data.get("status") == "completed":
-            url = data.get("audio_file", {}).get("url", "")
+    # Если сразу готово
+    if data.get("status") == "completed":
+        url = data.get("audio_file", {}).get("url", "")
+        if url:
+            return url
+
+    task_id = data.get("id")
+    if not task_id:
+        raise Exception(f"Нет id в ответе: {list(data.keys())}")
+
+    # Polling до ~8 минут (96 попыток × 5 сек)
+    for _ in range(96):
+        await asyncio.sleep(5)
+        try:
+            async with httpx.AsyncClient(timeout=60) as client:
+                r = await client.get(
+                    f"https://api.aimlapi.com/v2/generate/audio?id={task_id}",
+                    headers={"Authorization": f"Bearer {AIML_KEY}"}
+                )
+                result = r.json()
+        except Exception:
+            continue  # временная ошибка сети — продолжаем опрос
+
+        status = result.get("status", "")
+        if status == "completed":
+            # URL может быть в разных местах
+            url = ""
+            if result.get("audio_file"):
+                url = result["audio_file"].get("url", "")
+            if not url and result.get("audio"):
+                url = result["audio"].get("url", "") if isinstance(result["audio"], dict) else result["audio"]
+            if not url and result.get("url"):
+                url = result["url"]
             if url:
                 return url
+            raise Exception("Нет URL аудио в ответе")
+        elif status in ("error", "failed"):
+            raise Exception(f"Lyria2 failed: {str(result)[:150]}")
 
-        # Polling по id
-        task_id = data.get("id")
-        if not task_id:
-            raise Exception(f"Нет id в ответе: {list(data.keys())}")
-
-        for _ in range(40):
-            await asyncio.sleep(5)
-            r = await client.get(
-                f"https://api.aimlapi.com/v2/generate/audio?id={task_id}",
-                headers={"Authorization": f"Bearer {AIML_KEY}"}
-            )
-            result = r.json()
-            status = result.get("status", "")
-            if status == "completed":
-                url = result.get("audio_file", {}).get("url", "")
-                if url:
-                    return url
-                raise Exception("Нет URL аудио в ответе")
-            elif status == "error":
-                raise Exception(f"Lyria2 failed: {result}")
-
-        raise Exception("Таймаут генерации музыки")
+    raise Exception("Таймаут генерации музыки (8 мин)")
 
 async def generate_video_kling(prompt: str) -> str:
     """Kling через aimlapi.com"""

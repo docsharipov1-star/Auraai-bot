@@ -1354,10 +1354,17 @@ async def process_image(message: Message, state: FSMContext):
             async def music_task():
                 try:
                     url = await generate_music_suno(message.text)
+                    # Скачиваем аудио сами (Telegram не может качать с CDN aimlapi)
+                    async with httpx.AsyncClient(timeout=120) as client:
+                        ar = await client.get(url)
+                        ar.raise_for_status()
+                        audio_bytes = ar.content
+                    # Определяем расширение
+                    ext = "wav" if url.lower().endswith(".wav") else "mp3"
                     b = await get_balance(message.from_user.id)
                     await message.answer_audio(
-                        url,
-                        caption=f"🎵 *Google Lyria 2*\n\n💎 Потрачено: *{cost} кр.* · Остаток: *{b} кр.*",
+                        BufferedInputFile(audio_bytes, filename=f"track.{ext}"),
+                        caption=f"🎵 *Музыка готова!*\n\n💎 Потрачено: *{cost} кр.* · Остаток: *{b} кр.*",
                         parse_mode="Markdown"
                     )
                     await message.answer("Что дальше?", reply_markup=audio_kb())
@@ -1387,9 +1394,13 @@ async def process_image(message: Message, state: FSMContext):
             async def kling_task():
                 try:
                     url = await generate_video_kling(message.text)
+                    async with httpx.AsyncClient(timeout=180) as client:
+                        vr = await client.get(url)
+                        vr.raise_for_status()
+                        video_bytes = vr.content
                     b = await get_balance(message.from_user.id)
                     await message.answer_video(
-                        url,
+                        BufferedInputFile(video_bytes, filename="video.mp4"),
                         caption=f"🎥 *Kling 1.6*\n\n💎 Потрачено: *{cost} кр.* · Остаток: *{b} кр.*",
                         parse_mode="Markdown"
                     )
@@ -1438,9 +1449,13 @@ async def process_image(message: Message, state: FSMContext):
             async def seedance_task():
                 try:
                     url = await generate_video_seedance(_prompt)
+                    async with httpx.AsyncClient(timeout=180) as client:
+                        vr = await client.get(url)
+                        vr.raise_for_status()
+                        video_bytes = vr.content
                     b = await get_balance(message.from_user.id)
                     await message.answer_video(
-                        url,
+                        BufferedInputFile(video_bytes, filename="video.mp4"),
                         caption=f"🎬 *Seedance 2.0*\n\n💎 Потрачено: *{cost} кр.* · Остаток: *{b} кр.*",
                         parse_mode="Markdown"
                     )
@@ -1765,9 +1780,13 @@ async def img2video_video_process(message: Message, state: FSMContext):
     async def img2video_task():
         try:
             url = await generate_img2video(image_url, prompt)
+            async with httpx.AsyncClient(timeout=180) as client:
+                vr = await client.get(url)
+                vr.raise_for_status()
+                video_bytes = vr.content
             bal = await get_balance(uid)
             await message.answer_video(
-                url,
+                BufferedInputFile(video_bytes, filename="video.mp4"),
                 caption=f"🖼➡️🎬 *Фото в видео*\n\n💎 Потрачено: *{cost} кр.* · Остаток: *{bal} кр.*",
                 parse_mode="Markdown"
             )

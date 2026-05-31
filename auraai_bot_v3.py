@@ -498,8 +498,50 @@ async def generate_img2img(image_url: str, prompt: str, aspect: str = "1:1") -> 
         r.raise_for_status()
         return r.content, result_url
 
-async def generate_video_seedance(prompt: str, aspect: str = "16:9") -> str:
-    """Seedance 2.0 от ByteDance через aimlapi.com"""
+async def generate_combine(image_urls: list, prompt: str, aspect: str = "1:1") -> tuple:
+    """Соединение нескольких фото через Nano Banana PRO Edit — возвращает (bytes, url)"""
+    if not AIML_KEY:
+        raise Exception("AIML_KEY не настроен")
+
+    # Скачать все фото и закодировать в base64
+    data_uris = []
+    async with httpx.AsyncClient(timeout=60) as client:
+        for u in image_urls[:4]:  # максимум 4 фото
+            r = await client.get(u)
+            r.raise_for_status()
+            b64 = base64.b64encode(r.content).decode()
+            ct = r.headers.get("content-type", "image/jpeg").split(";")[0]
+            data_uris.append(f"data:{ct};base64,{b64}")
+
+    async with httpx.AsyncClient(timeout=180) as client:
+        resp = await client.post(
+            "https://api.aimlapi.com/v1/images/generations",
+            headers={"Authorization": f"Bearer {AIML_KEY}", "Content-Type": "application/json"},
+            json={
+                "model": "google/nano-banana-pro-edit",
+                "prompt": prompt,
+                "image_urls": data_uris,
+                "aspect_ratio": aspect,
+                "resolution": "1K"
+            }
+        )
+        resp.raise_for_status()
+        data = resp.json()
+
+    result_url = ""
+    if data.get("images"):
+        result_url = data["images"][0].get("url", "")
+    elif data.get("data"):
+        result_url = data["data"][0].get("url", "")
+    if not result_url:
+        raise Exception(f"Нет URL в ответе: {list(data.keys())}")
+
+    async with httpx.AsyncClient(timeout=60) as client:
+        r = await client.get(result_url)
+        r.raise_for_status()
+        return r.content, result_url
+
+
     if not AIML_KEY:
         raise Exception("AIML_KEY не настроен")
     async with httpx.AsyncClient(timeout=60) as client:
@@ -765,6 +807,7 @@ def design_kb() -> ReplyKeyboardMarkup:
     b.row(KeyboardButton(text="🖼 GPT Image 2"))
     b.row(KeyboardButton(text="🎨 DALL-E 3"))
     b.row(KeyboardButton(text="✏️ Редактировать фото"))
+    b.row(KeyboardButton(text="🔗 Соединить фото"))
     b.row(KeyboardButton(text="🏠 В главное меню"))
     return b.as_markup(resize_keyboard=True)
 
@@ -843,6 +886,7 @@ class State_(StatesGroup):
     waiting_photo      = State()
     waiting_photo_text = State()
     editing_more       = State()  # продолжение редактирования того же результата
+    waiting_combine    = State()  # ожидание фото для соединения
     waiting_video_photo = State()
     waiting_video_photo_text = State()
 
@@ -1305,6 +1349,13 @@ async def image_from_scratch(message: Message, state: FSMContext):
         reply_markup=aspect_kb()
     )
 
+def video_mode_kb() -> ReplyKeyboardMarkup:
+    b = ReplyKeyboardBuilder()
+    b.row(KeyboardButton(text="📝 По тексту"))
+    b.row(KeyboardButton(text="🖼 На основе фото"))
+    b.row(KeyboardButton(text="❌ Отмена"))
+    return b.as_markup(resize_keyboard=True)
+
 @router.message(State_.waiting_image, F.text.in_(ASPECT_MAP.keys()))
 async def image_aspect_selected(message: Message, state: FSMContext):
     aspect = ASPECT_MAP[message.text]
@@ -1314,9 +1365,8 @@ async def image_aspect_selected(message: Message, state: FSMContext):
     if model in ("video", "kling"):
         await message.answer(
             f"Формат: *{aspect}* ✅\n\n"
-            "Теперь опиши видео которое хочешь создать:\n\n"
-            "Пример: *закат над морем, волны, кинематографичная съёмка*",
-            parse_mode="Markdown", reply_markup=cancel_kb()
+            "Как создать видео?",
+            parse_mode="Markdown", reply_markup=video_mode_kb()
         )
     else:
         await message.answer(
@@ -1325,6 +1375,23 @@ async def image_aspect_selected(message: Message, state: FSMContext):
             "Пример: *красивый закат над горами, фотореализм, 4K*",
             parse_mode="Markdown", reply_markup=cancel_kb()
         )
+
+@router.message(State_.waiting_image, F.text == "📝 По тексту")
+async def video_mode_text(message: Message, state: FSMContext):
+    await state.update_data(waiting_base_photo=False, base_photo=None)
+    await message.answer(
+        "Опиши видео которое хочешь создать:\n\n"
+        "Пример: *закат над морем, волны, кинематографичная съёмка*",
+        parse_mode="Markdown", reply_markup=cancel_kb()
+    )
+
+@router.message(State_.waiting_image, F.text == "🖼 На основе фото")
+async def video_mode_photo(message: Message, state: FSMContext):
+    await state.update_data(waiting_base_photo=True)
+    await message.answer(
+        "📸 Отправь фото которое хочешь оживить в видео:",
+        reply_markup=cancel_kb()
+    )
 
 @router.message(State_.waiting_image, F.text == "🖼 На основе моего фото")
 async def image_from_photo_prompt(message: Message, state: FSMContext):
@@ -1342,15 +1409,27 @@ async def image_base_photo_received(message: Message, state: FSMContext):
         file = await message.bot.get_file(photo.file_id)
         file_url = f"https://api.telegram.org/file/bot{message.bot.token}/{file.file_path}"
         await state.update_data(base_photo=file_url, waiting_base_photo=False)
-        await message.answer(
-            "✅ Фото получено!\n\n"
-            "Теперь опиши что хочешь изменить или создать на основе этого фото:\n\n"
-            "Примеры:\n"
-            "• *сделай фон космическим*\n"
-            "• *измени стиль на аниме*\n"
-            "• *добавь снег*",
-            parse_mode="Markdown", reply_markup=cancel_kb()
-        )
+        model = data.get("image_model", "dalle")
+        if model in ("video", "kling"):
+            await message.answer(
+                "✅ Фото получено!\n\n"
+                "Теперь опиши что должно происходить в видео:\n\n"
+                "Примеры:\n"
+                "• *плавное движение камеры вперёд*\n"
+                "• *волосы развеваются на ветру*\n"
+                "• *облака медленно плывут*",
+                parse_mode="Markdown", reply_markup=cancel_kb()
+            )
+        else:
+            await message.answer(
+                "✅ Фото получено!\n\n"
+                "Теперь опиши что хочешь изменить или создать на основе этого фото:\n\n"
+                "Примеры:\n"
+                "• *сделай фон космическим*\n"
+                "• *измени стиль на аниме*\n"
+                "• *добавь снег*",
+                parse_mode="Markdown", reply_markup=cancel_kb()
+            )
 
 @router.message(State_.waiting_image)
 async def process_image(message: Message, state: FSMContext):
@@ -1430,6 +1509,9 @@ async def process_image(message: Message, state: FSMContext):
             return
 
         elif model == "kling":
+            _kling_base = base_photo
+            _kling_prompt = message.text
+            _kling_aspect = aspect
             try:
                 await thinking.edit_text(
                     "🎥 *Генерирую видео Kling...*\n\n"
@@ -1441,7 +1523,10 @@ async def process_image(message: Message, state: FSMContext):
 
             async def kling_task():
                 try:
-                    url = await generate_video_kling(message.text, aspect)
+                    if _kling_base:
+                        url = await generate_img2video(_kling_base, _kling_prompt)
+                    else:
+                        url = await generate_video_kling(_kling_prompt, _kling_aspect)
                     async with httpx.AsyncClient(timeout=180) as client:
                         vr = await client.get(url)
                         vr.raise_for_status()
@@ -1494,10 +1579,14 @@ async def process_image(message: Message, state: FSMContext):
                 pass
             _prompt = message.text
             _aspect = aspect
+            _seed_base = base_photo
 
             async def seedance_task():
                 try:
-                    url = await generate_video_seedance(_prompt, _aspect)
+                    if _seed_base:
+                        url = await generate_img2video(_seed_base, _prompt)
+                    else:
+                        url = await generate_video_seedance(_prompt, _aspect)
                     async with httpx.AsyncClient(timeout=180) as client:
                         vr = await client.get(url)
                         vr.raise_for_status()
@@ -1919,6 +2008,122 @@ async def img2video_video_process(message: Message, state: FSMContext):
                 pass
 
     asyncio.create_task(img2video_task())
+
+
+# ── Соединение нескольких фото ──
+combine_buffer: dict[int, dict] = {}  # uid -> {"photos": [...], "caption": str, "task": bool}
+
+@router.message(F.text == "🔗 Соединить фото")
+async def combine_start(message: Message, state: FSMContext):
+    cost = 70
+    bal = await get_balance(message.from_user.id)
+    if bal < cost:
+        await message.answer(f"❌ Нужно *{cost} кр.* · У тебя *{bal} кр.*", parse_mode="Markdown", reply_markup=profile_kb())
+        return
+    await state.set_state(State_.waiting_combine)
+    await state.update_data(cost=cost)
+    combine_buffer.pop(message.from_user.id, None)
+    await message.answer(
+        "🔗 *Соединить фото*  ·  💎 70 кредитов\n\n"
+        "Отправь *2-4 фото одним альбомом* (выбери несколько сразу), "
+        "и в подписи к ним напиши что сделать.\n\n"
+        "Примеры подписи:\n"
+        "• *посади этого человека на этот фон*\n"
+        "• *объедини обоих людей на одном фото*\n"
+        "• *надень одежду со второго фото на человека с первого*",
+        parse_mode="Markdown", reply_markup=cancel_kb()
+    )
+
+@router.message(State_.waiting_combine, F.text == "❌ Отмена")
+async def combine_cancel(message: Message, state: FSMContext):
+    combine_buffer.pop(message.from_user.id, None)
+    await state.clear()
+    await message.answer("Отменено.", reply_markup=design_kb())
+
+@router.message(State_.waiting_combine, F.photo)
+async def combine_photo_received(message: Message, state: FSMContext):
+    uid = message.from_user.id
+    photo = message.photo[-1]
+    file = await message.bot.get_file(photo.file_id)
+    file_url = f"https://api.telegram.org/file/bot{message.bot.token}/{file.file_path}"
+
+    if uid not in combine_buffer:
+        combine_buffer[uid] = {"photos": [], "caption": "", "processing": False}
+    combine_buffer[uid]["photos"].append(file_url)
+    if message.caption:
+        combine_buffer[uid]["caption"] = message.caption
+
+    # Запустить отложенную обработку (ждём пока придут все фото альбома)
+    if not combine_buffer[uid]["processing"]:
+        combine_buffer[uid]["processing"] = True
+
+        async def process_after_delay():
+            await asyncio.sleep(2.5)  # ждём остальные фото альбома
+            buf = combine_buffer.get(uid)
+            if not buf:
+                return
+            photos = buf["photos"]
+            caption = buf["caption"]
+            combine_buffer.pop(uid, None)
+
+            if len(photos) < 2:
+                await message.answer(
+                    "❌ Нужно минимум 2 фото. Отправь несколько фото одним альбомом.",
+                    reply_markup=cancel_kb()
+                )
+                return
+
+            if not caption:
+                await message.answer(
+                    "❌ Не вижу подписи. Отправь фото ещё раз и добавь в подписи что сделать "
+                    "(например: *объедини этих людей*).",
+                    parse_mode="Markdown", reply_markup=cancel_kb()
+                )
+                return
+
+            data = await state.get_data()
+            cost = data.get("cost", 70)
+            ok = await use_credits(uid, "combine", cost)
+            if not ok:
+                await message.answer("❌ Недостаточно кредитов.", reply_markup=profile_kb())
+                await state.clear()
+                return
+            await state.clear()
+
+            thinking = await message.answer(
+                f"🔗 Соединяю {len(photos)} фото... (~20-40 сек)",
+                reply_markup=ReplyKeyboardRemove()
+            )
+            try:
+                img_bytes, result_url = await generate_combine(photos, caption)
+                bal = await get_balance(uid)
+                try:
+                    await thinking.delete()
+                except Exception:
+                    pass
+                await message.answer_photo(
+                    BufferedInputFile(img_bytes, filename="combined.png"),
+                    caption="✅ Готово! NanoBanana PRO"
+                )
+                await message.answer(
+                    f"📌 Запрос: _{caption}_\n\n"
+                    f"💎 Потрачено: *{cost} кр.* · Остаток: *{bal} кр.*\n\n"
+                    f"[📥 Скачать в высоком качестве]({result_url})",
+                    parse_mode="Markdown", disable_web_page_preview=False
+                )
+                await message.answer("Что дальше?", reply_markup=design_kb())
+                await log_request(uid, "combine", "nano-banana-pro-edit", cost)
+            except Exception as e:
+                await add_credits(uid, cost, "bonus", "Возврат: ошибка соединения")
+                await message.answer(f"⚠️ Ошибка. Кредиты возвращены.\n{str(e)[:100]}", reply_markup=design_kb())
+                logging.error(f"Combine error: {e}")
+
+        asyncio.create_task(process_after_delay())
+
+@router.message(State_.waiting_combine, F.text != "❌ Отмена")
+async def combine_no_photo(message: Message):
+    await message.answer("📸 Отправь 2-4 фото одним альбомом с подписью что сделать.")
+
 
 @router.message(StateFilter(None), F.photo & F.caption, ~F.from_user.is_bot)
 async def remix_photo_caption(message: Message, state: FSMContext):

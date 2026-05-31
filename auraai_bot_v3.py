@@ -1661,14 +1661,24 @@ async def img2img_photo_received(message: Message, state: FSMContext):
     # Если фото пришло с подписью — сразу редактируем
     if message.caption:
         await state.set_state(State_.waiting_photo_text)
-        # message.text у фото пустой, поэтому подменяем через прямой вызов
         await _do_img2img(message, state, file_url, message.caption)
         return
 
+    # Спросить формат
     await state.set_state(State_.waiting_photo_text)
+    await state.update_data(need_aspect=True)
     await message.answer(
-        "✅ Фото получено!\n\n"
-        "2️⃣ Теперь опиши что хочешь изменить:\n\n"
+        "✅ Фото получено!\n\nВыбери формат результата:",
+        reply_markup=aspect_kb()
+    )
+
+@router.message(State_.waiting_photo_text, F.text.in_(ASPECT_MAP.keys()))
+async def img2img_aspect_selected(message: Message, state: FSMContext):
+    aspect = ASPECT_MAP[message.text]
+    await state.update_data(aspect=aspect, need_aspect=False)
+    await message.answer(
+        f"Формат: *{aspect}* ✅\n\n"
+        "Теперь опиши что хочешь изменить:\n\n"
         "Примеры:\n"
         "• *сделай фон розовым*\n"
         "• *добавь снег*\n"
@@ -1688,6 +1698,11 @@ async def img2img_process(message: Message, state: FSMContext):
         await message.answer("Отменено.", reply_markup=design_kb())
         return
 
+    data = await state.get_data()
+    if data.get("need_aspect"):
+        await message.answer("👆 Сначала выбери формат кнопкой выше:")
+        return
+
     image_url = user_photo_urls.get(message.from_user.id)
     if not image_url:
         await message.answer("❌ Фото не найдено. Начни заново.", reply_markup=design_kb())
@@ -1701,6 +1716,7 @@ async def _do_img2img(message: Message, state: FSMContext, image_url: str, promp
     """Общая логика редактирования фото"""
     data = await state.get_data()
     cost = data.get("cost", 70)
+    aspect = data.get("aspect", "1:1")
 
     ok = await use_credits(message.from_user.id, "img2img", cost)
     if not ok:
@@ -1712,7 +1728,7 @@ async def _do_img2img(message: Message, state: FSMContext, image_url: str, promp
     thinking = await message.answer("✏️ Редактирую фото... (~15-30 сек)", reply_markup=ReplyKeyboardRemove())
 
     try:
-        img_bytes, result_url = await generate_img2img(image_url, prompt_text)
+        img_bytes, result_url = await generate_img2img(image_url, prompt_text, aspect)
         bal = await get_balance(message.from_user.id)
         try:
             await thinking.delete()
@@ -1743,7 +1759,7 @@ async def _do_img2img(message: Message, state: FSMContext, image_url: str, promp
         )
         # Режим продолжения: можно менять этот же результат текстом
         await state.set_state(State_.editing_more)
-        await state.update_data(cost=cost)
+        await state.update_data(cost=cost, aspect=aspect)
         await message.answer(
             "✏️ *Что дальше?*\n\n"
             "• Напиши новое изменение — применю к *этому же* результату\n"
@@ -2299,7 +2315,8 @@ async def main():
     dp  = Dispatcher(storage=MemoryStorage())
     dp.include_router(router)
 
-    logging.info(f"🚀 AuraAI Bot v3.0 запущен | @{BOT_USERNAME}")
+    logging.info(f"🚀 AuraAI Bot v3.1 ФОРМАТЫ запущен | @{BOT_USERNAME}")
+    logging.info("✅ ВЕРСИЯ С ВЫБОРОМ ФОРМАТА 9:16 16:9 — если видишь это, новый код работает")
     await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
 
 if __name__ == "__main__":

@@ -1294,7 +1294,12 @@ async def process_image(message: Message, state: FSMContext):
         await state.clear(); return
 
     await state.clear()
-    thinking = await message.answer("🎨 Генерирую картинку... (~15-30 сек)", reply_markup=ReplyKeyboardRemove())
+    # Для фоновых задач (музыка/видео) оставляем меню чтобы можно было запускать другое
+    if model in ("music", "kling", "video"):
+        initial_text = "⏳ Запускаю генерацию..."
+        thinking = await message.answer(initial_text, reply_markup=main_kb())
+    else:
+        thinking = await message.answer("🎨 Генерирую картинку... (~15-30 сек)", reply_markup=ReplyKeyboardRemove())
 
     try:
         bal = await get_balance(message.from_user.id)
@@ -1384,20 +1389,37 @@ async def process_image(message: Message, state: FSMContext):
 
         elif model == "video":
             try:
-                await thinking.edit_text("🎬 Генерирую видео... (~60-180 сек)")
+                await thinking.edit_text(
+                    "🎬 *Генерирую видео Seedance...*\n\n"
+                    "⏱ Это займёт ~1-3 минуты\n"
+                    "✅ Можешь пользоваться ботом — результат придёт автоматически!"
+                )
             except Exception:
                 pass
-            url = await generate_video_kling(message.text)
-            try:
-                await thinking.delete()
-            except Exception:
-                pass
-            await message.answer_video(
-                url,
-                caption=f"🎬 *Seedance 2.0*\n\n💎 Потрачено: *{cost} кр.* · Остаток: *{bal} кр.*",
-                parse_mode="Markdown"
-            )
-            await message.answer("Что дальше?", reply_markup=video_kb())
+            _prompt = message.text
+
+            async def seedance_task():
+                try:
+                    url = await generate_video_seedance(_prompt)
+                    b = await get_balance(message.from_user.id)
+                    await message.answer_video(
+                        url,
+                        caption=f"🎬 *Seedance 2.0*\n\n💎 Потрачено: *{cost} кр.* · Остаток: *{b} кр.*",
+                        parse_mode="Markdown"
+                    )
+                    await message.answer("Что дальше?", reply_markup=video_kb())
+                except Exception as e:
+                    await add_credits(message.from_user.id, cost, "bonus", "Возврат: ошибка видео")
+                    await message.answer(f"⚠️ Ошибка генерации видео. Кредиты возвращены.\n{str(e)[:100]}", reply_markup=video_kb())
+                    logging.error(f"Seedance task error: {e}")
+                finally:
+                    try:
+                        await thinking.delete()
+                    except Exception:
+                        pass
+
+            asyncio.create_task(seedance_task())
+            return
 
         else:
             prompt = message.text or ""

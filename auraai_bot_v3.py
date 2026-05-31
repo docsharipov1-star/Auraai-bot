@@ -385,25 +385,35 @@ async def call_text_ai(prompt: str, system: str, model_id: str, uid: int = 0, us
 
 import base64
 
-async def generate_image_dalle(prompt: str) -> bytes:
+def _aspect_to_size(aspect: str) -> str:
+    """Конвертирует формат в размер для OpenAI"""
+    return {
+        "1:1": "1024x1024",
+        "16:9": "1792x1024",
+        "9:16": "1024x1792",
+        "4:3": "1792x1024",
+        "3:4": "1024x1792",
+    }.get(aspect, "1024x1024")
+
+async def generate_image_dalle(prompt: str, aspect: str = "1:1") -> bytes:
     if not openai_client:
         raise Exception("OpenAI ключ не настроен")
     resp = await asyncio.wait_for(
         openai_client.images.generate(
             model="dall-e-3", prompt=prompt,
-            n=1, size="1024x1024", quality="standard",
+            n=1, size=_aspect_to_size(aspect), quality="standard",
             response_format="b64_json"
         ), timeout=30
     )
     return base64.b64decode(resp.data[0].b64_json)
 
-async def generate_image_gpt(prompt: str) -> bytes:
+async def generate_image_gpt(prompt: str, aspect: str = "1:1") -> bytes:
     if not openai_client:
         raise Exception("OpenAI ключ не настроен")
     resp = await asyncio.wait_for(
         openai_client.images.generate(
             model="gpt-image-1", prompt=prompt,
-            n=1, size="1024x1024"
+            n=1, size=_aspect_to_size(aspect)
         ), timeout=30
     )
     if resp.data[0].b64_json:
@@ -426,11 +436,11 @@ async def aiml_request(endpoint: str, payload: dict) -> dict:
         resp.raise_for_status()
         return resp.json()
 
-async def generate_nano_banana(prompt: str) -> bytes:
+async def generate_nano_banana(prompt: str, aspect: str = "1:1") -> bytes:
     data = await aiml_request("v1/images/generations", {
         "model": "google/nano-banana-pro",
         "prompt": prompt,
-        "aspect_ratio": "1:1",
+        "aspect_ratio": aspect,
         "resolution": "1K"
     })
     url = ""
@@ -445,7 +455,7 @@ async def generate_nano_banana(prompt: str) -> bytes:
         r.raise_for_status()
         return r.content
 
-async def generate_img2img(image_url: str, prompt: str) -> tuple:
+async def generate_img2img(image_url: str, prompt: str, aspect: str = "1:1") -> tuple:
     """Редактирование фото через Nano Banana PRO Edit — возвращает (bytes, url)"""
     if not AIML_KEY:
         raise Exception("AIML_KEY не настроен")
@@ -467,7 +477,7 @@ async def generate_img2img(image_url: str, prompt: str) -> tuple:
                 "model": "google/nano-banana-pro-edit",
                 "prompt": prompt,
                 "image_urls": [data_uri],
-                "aspect_ratio": "1:1",
+                "aspect_ratio": aspect,
                 "resolution": "1K"
             }
         )
@@ -1240,6 +1250,22 @@ def image_mode_kb() -> ReplyKeyboardMarkup:
     b.row(KeyboardButton(text="❌ Отмена"))
     return b.as_markup(resize_keyboard=True)
 
+def aspect_kb() -> ReplyKeyboardMarkup:
+    b = ReplyKeyboardBuilder()
+    b.row(KeyboardButton(text="⬛ 1:1 Квадрат"))
+    b.row(KeyboardButton(text="📱 9:16 Вертикальное"), KeyboardButton(text="🖥 16:9 Горизонтальное"))
+    b.row(KeyboardButton(text="🖼 4:3"), KeyboardButton(text="📷 3:4"))
+    b.row(KeyboardButton(text="❌ Отмена"))
+    return b.as_markup(resize_keyboard=True)
+
+ASPECT_MAP = {
+    "⬛ 1:1 Квадрат": "1:1",
+    "📱 9:16 Вертикальное": "9:16",
+    "🖥 16:9 Горизонтальное": "16:9",
+    "🖼 4:3": "4:3",
+    "📷 3:4": "3:4",
+}
+
 @router.message(F.text.in_({"🖼 GPT Image 2", "🎨 DALL-E 3", "🍌 Nano Banana"}))
 async def image_tool_selected(message: Message, state: FSMContext):
     if "Nano Banana" in message.text:
@@ -1275,7 +1301,17 @@ async def image_tool_selected(message: Message, state: FSMContext):
 async def image_from_scratch(message: Message, state: FSMContext):
     await state.update_data(base_photo=None)
     await message.answer(
-        "Опиши картинку которую хочешь создать:\n\n"
+        "Выбери формат изображения:",
+        reply_markup=aspect_kb()
+    )
+
+@router.message(State_.waiting_image, F.text.in_(ASPECT_MAP.keys()))
+async def image_aspect_selected(message: Message, state: FSMContext):
+    aspect = ASPECT_MAP[message.text]
+    await state.update_data(aspect=aspect)
+    await message.answer(
+        f"Формат: *{aspect}* ✅\n\n"
+        "Теперь опиши картинку которую хочешь создать:\n\n"
         "Пример: *красивый закат над горами, фотореализм, 4K*",
         parse_mode="Markdown", reply_markup=cancel_kb()
     )
@@ -1476,15 +1512,16 @@ async def process_image(message: Message, state: FSMContext):
 
         else:
             prompt = message.text or ""
+            aspect = data.get("aspect", "1:1")
             if base_photo:
                 # Использовать img2img с базовым фото
-                img_bytes = await generate_img2img(base_photo, prompt)
+                img_bytes, _ = await generate_img2img(base_photo, prompt)
             elif model == "nano":
-                img_bytes = await generate_nano_banana(prompt)
+                img_bytes = await generate_nano_banana(prompt, aspect)
             elif model == "gpt":
-                img_bytes = await generate_image_gpt(prompt)
+                img_bytes = await generate_image_gpt(prompt, aspect)
             else:
-                img_bytes = await generate_image_dalle(prompt)
+                img_bytes = await generate_image_dalle(prompt, aspect)
 
             model_name = {"nano": "🍌 Nano Banana", "gpt": "GPT Image 2", "dalle": "DALL-E 3"}.get(model, model)
             try:
@@ -1493,7 +1530,7 @@ async def process_image(message: Message, state: FSMContext):
                 pass
             await message.answer_photo(
                 BufferedInputFile(img_bytes, filename="image.png"),
-                caption=f"🎨 *{model_name}*\n\n💎 Потрачено: *{cost} кр.* · Остаток: *{bal} кр.*",
+                caption=f"🎨 *{model_name}*  ·  Формат {aspect}\n\n💎 Потрачено: *{cost} кр.* · Остаток: *{bal} кр.*",
                 parse_mode="Markdown"
             )
             await message.answer("Что дальше?", reply_markup=design_kb())

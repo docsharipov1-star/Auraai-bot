@@ -446,19 +446,27 @@ async def generate_nano_banana(prompt: str) -> bytes:
         return r.content
 
 async def generate_img2img(image_url: str, prompt: str) -> tuple:
-    """Редактирование фото через Nano Banana PRO — возвращает (bytes, url)"""
+    """Редактирование фото через Nano Banana PRO Edit — возвращает (bytes, url)"""
     if not AIML_KEY:
         raise Exception("AIML_KEY не настроен")
 
-    # Nano Banana PRO принимает прямой URL
-    async with httpx.AsyncClient(timeout=120) as client:
+    # Скачать фото и закодировать в base64 (надёжнее чем Telegram URL)
+    async with httpx.AsyncClient(timeout=60) as client:
+        r = await client.get(image_url)
+        r.raise_for_status()
+        img_b64 = base64.b64encode(r.content).decode()
+        ct = r.headers.get("content-type", "image/jpeg").split(";")[0]
+    data_uri = f"data:{ct};base64,{img_b64}"
+
+    # Модель -EDIT использует загруженное фото как основу
+    async with httpx.AsyncClient(timeout=180) as client:
         resp = await client.post(
             "https://api.aimlapi.com/v1/images/generations",
             headers={"Authorization": f"Bearer {AIML_KEY}", "Content-Type": "application/json"},
             json={
-                "model": "google/nano-banana-pro",
+                "model": "google/nano-banana-pro-edit",
                 "prompt": prompt,
-                "image_urls": [image_url],
+                "image_urls": [data_uri],
                 "aspect_ratio": "1:1",
                 "resolution": "1K"
             }

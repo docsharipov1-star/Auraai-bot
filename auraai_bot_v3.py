@@ -526,32 +526,30 @@ async def generate_video_seedance(prompt: str) -> str:
                 raise Exception(f"Seedance failed: {result}")
         raise Exception("Таймаут генерации видео (3 мин)")
 
-async def generate_music_suno(prompt: str) -> str:
-    """Google Lyria 2 через aimlapi.com"""
-    if not AIML_KEY:
-        raise Exception("AIML_KEY не настроен")
+async def _try_one_music_model(model: str, prompt: str, extra: dict = None) -> str:
+    """Пробует одну модель музыки. Возвращает URL или бросает исключение."""
+    payload = {"model": model, "prompt": prompt[:600]}
+    if extra:
+        payload.update(extra)
 
-    # Запуск генерации
     async with httpx.AsyncClient(timeout=120) as client:
         resp = await client.post(
             "https://api.aimlapi.com/v2/generate/audio",
             headers={"Authorization": f"Bearer {AIML_KEY}", "Content-Type": "application/json"},
-            json={"model": "google/lyria2", "prompt": prompt[:600]}
+            json=payload
         )
         resp.raise_for_status()
         data = resp.json()
 
-    # Если сразу готово
     if data.get("status") == "completed":
-        url = data.get("audio_file", {}).get("url", "")
+        url = (data.get("audio_file") or {}).get("url", "")
         if url:
             return url
 
     task_id = data.get("id")
     if not task_id:
-        raise Exception(f"Нет id в ответе: {list(data.keys())}")
+        raise Exception(f"нет id: {list(data.keys())}")
 
-    # Polling до ~3 минут (Lyria2 обычно 10-20 сек)
     for _ in range(36):
         await asyncio.sleep(5)
         try:
@@ -562,7 +560,7 @@ async def generate_music_suno(prompt: str) -> str:
                 )
                 result = r.json()
         except Exception:
-            continue  # временная ошибка сети — продолжаем опрос
+            continue
 
         status = result.get("status", "")
         if status == "completed":
@@ -575,12 +573,37 @@ async def generate_music_suno(prompt: str) -> str:
                 url = result["url"]
             if url:
                 return url
-            raise Exception("Нет URL аудио в ответе")
+            raise Exception("нет URL аудио")
         elif status in ("error", "failed"):
-            raise Exception(f"Lyria2 failed: {str(result)[:150]}")
-        # queued / generating — продолжаем ждать
+            raise Exception(f"{model} failed")
 
-    raise Exception("Таймаут генерации музыки")
+    raise Exception(f"{model} таймаут")
+
+
+async def generate_music_suno(prompt: str) -> str:
+    """Генерация музыки с перебором моделей (если одна падает — пробуем следующую)"""
+    if not AIML_KEY:
+        raise Exception("AIML_KEY не настроен")
+
+    # Модели по приоритету: (название, доп.параметры)
+    models = [
+        ("google/lyria2", None),
+        ("stable-audio", {"seconds_total": 30}),
+        ("minimax/music-2.0", None),
+    ]
+
+    last_error = ""
+    for model, extra in models:
+        try:
+            url = await _try_one_music_model(model, prompt, extra)
+            if url:
+                return url
+        except Exception as e:
+            last_error = str(e)
+            logging.warning(f"Музыка {model} не сработала: {e}, пробую следующую")
+            continue
+
+    raise Exception(f"Все модели музыки недоступны. {last_error}")
 
 async def generate_video_kling(prompt: str) -> str:
     """Kling через aimlapi.com"""

@@ -49,6 +49,7 @@ DEEPSEEK_KEY  = os.getenv("DEEPSEEK_KEY", "")
 AIML_KEY      = os.getenv("AIML_KEY", "")
 ADMIN_ID      = int(os.getenv("ADMIN_ID", "0"))
 BOT_USERNAME  = os.getenv("BOT_USERNAME", "GetAuraAI_bot")
+YOOKASSA_TOKEN = os.getenv("YOOKASSA_TOKEN", "")  # provider token из BotFather (ЮKassa)
 DB_PATH       = "/app/data/auraai.db"
 FREE_CREDITS  = 100
 REFERRAL_BONUS = 50
@@ -59,15 +60,16 @@ deepseek_client  = None
 kie_client       = None
 
 PLANS = {
-    "pro":  {"name": "Pro",  "emoji": "👑", "stars": 500,  "credits": 5000,  "days": 30, "description": "5 000 кредитов на 30 дней"},
-    "team": {"name": "Team", "emoji": "💎", "stars": 1200, "credits": 15000, "days": 30, "description": "15 000 кредитов на 30 дней"},
+    "basic":   {"name": "Basic",   "emoji": "⭐️", "stars": 325,  "rub": 390,  "credits": 2000, "days": 30, "unlimited": False, "description": "2 000 кредитов на 30 дней"},
+    "pro":     {"name": "Pro",     "emoji": "👑", "stars": 900,  "rub": 1090, "credits": 4500, "days": 30, "unlimited": False, "description": "4 500 кредитов на 30 дней"},
+    "premium": {"name": "Premium", "emoji": "💎", "stars": 1900, "rub": 2290, "credits": 9000, "days": 30, "unlimited": False, "description": "9 000 кредитов на 30 дней"},
 }
 
 CREDIT_PACKS = {
-    "pack_500":   {"name": "500 кредитов",    "stars": 100,  "credits": 500},
-    "pack_2000":  {"name": "2 000 кредитов",  "stars": 350,  "credits": 2000},
-    "pack_5000":  {"name": "5 000 кредитов",  "stars": 800,  "credits": 5000},
-    "pack_15000": {"name": "15 000 кредитов", "stars": 2000, "credits": 15000},
+    "pack_500":   {"name": "500 кредитов",    "stars": 80,   "rub": 99,   "credits": 500},
+    "pack_2000":  {"name": "2 000 кредитов",  "stars": 290,  "rub": 349,  "credits": 2000},
+    "pack_5000":  {"name": "5 000 кредитов",  "stars": 650,  "rub": 799,  "credits": 5000},
+    "pack_15000": {"name": "15 000 кредитов", "stars": 1800, "rub": 2199, "credits": 15000},
 }
 
 TEXT_MODELS = {
@@ -210,7 +212,29 @@ async def add_credits(uid, amount, tx_type, desc) -> int:
         await db.execute("INSERT INTO transactions (user_id,amount,type,description,balance) VALUES (?,?,?,?,?)", (uid, amount, tx_type, desc, new))
         await db.commit(); return new
 
+# Инструменты которые бесплатны для Premium (безлимит)
+UNLIMITED_TOOLS = {"chat", "img2img", "img2img_remix", "combine", "image_nano"}
+
+async def is_premium(uid) -> bool:
+    """Проверка активной Premium-подписки"""
+    user = await db_get("SELECT plan, plan_expires FROM users WHERE id=?", (uid,))
+    if not user or user["plan"] != "premium":
+        return False
+    if not user["plan_expires"]:
+        return False
+    try:
+        if datetime.fromisoformat(user["plan_expires"]) < datetime.now():
+            return False
+    except Exception:
+        return False
+    return True
+
 async def use_credits(uid, tool, cost) -> bool:
+    # Premium — безлимит на чат и фото Nano Banana
+    if tool in UNLIMITED_TOOLS and await is_premium(uid):
+        await db_run("INSERT INTO transactions (user_id,amount,type,description,balance) VALUES (?,?,'usage',?,?)",
+                     (uid, 0, f"Premium безлимит: {tool}", await get_balance(uid)))
+        return True
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute("SELECT credits FROM users WHERE id=?", (uid,)) as c: row = await c.fetchone()
@@ -837,13 +861,26 @@ def profile_kb() -> ReplyKeyboardMarkup:
 def credits_pack_kb():
     b = InlineKeyboardBuilder()
     for pid, pack in CREDIT_PACKS.items():
-        b.row(InlineKeyboardButton(text=f"{pack['name']}  ·  ⭐️ {pack['stars']}", callback_data=f"buy_credits_{pid}"))
+        b.row(InlineKeyboardButton(
+            text=f"{pack['name']}  ·  {pack['rub']}₽ / ⭐️{pack['stars']}",
+            callback_data=f"buy_credits_{pid}"
+        ))
     return b.as_markup()
 
 def plans_inline_kb():
     b = InlineKeyboardBuilder()
     for pid, p in PLANS.items():
-        b.row(InlineKeyboardButton(text=f"{p['emoji']} {p['name']}  ·  ⭐️ {p['stars']}/мес", callback_data=f"buy_plan_{pid}"))
+        b.row(InlineKeyboardButton(
+            text=f"{p['emoji']} {p['name']}  ·  {p['rub']}₽ / ⭐️{p['stars']} в мес",
+            callback_data=f"buy_plan_{pid}"
+        ))
+    return b.as_markup()
+
+def pay_method_kb(kind: str, item_id: str):
+    """Выбор способа оплаты: Stars или рубли"""
+    b = InlineKeyboardBuilder()
+    b.row(InlineKeyboardButton(text="💳 Картой (рубли)", callback_data=f"payrub_{kind}_{item_id}"))
+    b.row(InlineKeyboardButton(text="⭐️ Telegram Stars", callback_data=f"paystars_{kind}_{item_id}"))
     return b.as_markup()
 
 def ref_inline_kb():
@@ -1087,7 +1124,8 @@ async def buy_plans(message: Message):
     lines = ["👑 *Подписки AuraAI*\n"]
     for pid, p in PLANS.items():
         active = "✅ " if plan == pid else ""
-        lines.append(f"{active}*{p['emoji']} {p['name']}* — ⭐️ {p['stars']}/мес\n  {p['description']}\n")
+        unlim = "  🔥 БЕЗЛИМИТ фото+чат" if p.get("unlimited") else ""
+        lines.append(f"{active}*{p['emoji']} {p['name']}* — {p['rub']}₽ / ⭐️{p['stars']} в мес{unlim}\n  {p['description']}\n")
     await message.answer("\n".join(lines), parse_mode="Markdown", reply_markup=plans_inline_kb())
 
 @router.message(F.text == "📋 История транзакций")
@@ -1313,7 +1351,7 @@ ASPECT_MAP = {
 @router.message(F.text.in_({"🖼 GPT Image 2", "🎨 DALL-E 3", "🍌 Nano Banana"}))
 async def image_tool_selected(message: Message, state: FSMContext):
     if "Nano Banana" in message.text:
-        cost = 60
+        cost = 110
     elif "GPT Image 2" in message.text:
         cost = 80
     else:
@@ -1673,7 +1711,7 @@ async def music_generate(message: Message, state: FSMContext):
 
 @router.message(F.text == "🎬 Создать видео Seedance")
 async def video_generate(message: Message, state: FSMContext):
-    cost = 150
+    cost = 400
     bal  = await get_balance(message.from_user.id)
     if bal < cost:
         await message.answer(f"❌ Нужно *{cost} кр.* · У тебя *{bal} кр.*", parse_mode="Markdown", reply_markup=profile_kb())
@@ -1702,7 +1740,7 @@ async def tts_start(message: Message, state: FSMContext):
     )
 @router.message(F.text == "🎥 Создать видео Kling")
 async def kling_generate(message: Message, state: FSMContext):
-    cost = 150
+    cost = 400
     bal  = await get_balance(message.from_user.id)
     if bal < cost:
         await message.answer(f"❌ Нужно *{cost} кр.* · У тебя *{bal} кр.*", parse_mode="Markdown", reply_markup=profile_kb())
@@ -1727,7 +1765,7 @@ user_video_photo_urls: dict[int, str] = {}
 
 @router.message(F.text == "✏️ Редактировать фото")
 async def img2img_start(message: Message, state: FSMContext):
-    cost = 70
+    cost = 120
     bal = await get_balance(message.from_user.id)
     if bal < cost:
         await message.answer(f"❌ Нужно *{cost} кр.* · У тебя *{bal} кр.*", parse_mode="Markdown", reply_markup=profile_kb())
@@ -1804,7 +1842,7 @@ async def img2img_process(message: Message, state: FSMContext):
 async def _do_img2img(message: Message, state: FSMContext, image_url: str, prompt_text: str):
     """Общая логика редактирования фото"""
     data = await state.get_data()
-    cost = data.get("cost", 70)
+    cost = data.get("cost", 120)
     aspect = data.get("aspect", "1:1")
 
     ok = await use_credits(message.from_user.id, "img2img", cost)
@@ -2015,7 +2053,7 @@ combine_buffer: dict[int, dict] = {}  # uid -> {"photos": [...], "caption": str,
 
 @router.message(F.text == "🔗 Соединить фото")
 async def combine_start(message: Message, state: FSMContext):
-    cost = 70
+    cost = 120
     bal = await get_balance(message.from_user.id)
     if bal < cost:
         await message.answer(f"❌ Нужно *{cost} кр.* · У тебя *{bal} кр.*", parse_mode="Markdown", reply_markup=profile_kb())
@@ -2082,7 +2120,7 @@ async def combine_photo_received(message: Message, state: FSMContext):
                 return
 
             data = await state.get_data()
-            cost = data.get("cost", 70)
+            cost = data.get("cost", 120)
             ok = await use_credits(uid, "combine", cost)
             if not ok:
                 await message.answer("❌ Недостаточно кредитов.", reply_markup=profile_kb())
@@ -2128,7 +2166,7 @@ async def combine_no_photo(message: Message):
 @router.message(StateFilter(None), F.photo & F.caption, ~F.from_user.is_bot)
 async def remix_photo_caption(message: Message, state: FSMContext):
     """Remix режим — фото + подпись сразу редактируется"""    
-    cost = 70
+    cost = 120
     bal = await get_balance(message.from_user.id)
     if bal < cost:
         await message.answer(f"❌ Нужно *{cost} кр.* для редактирования фото · У тебя *{bal} кр.*", parse_mode="Markdown")
@@ -2274,31 +2312,89 @@ async def cb_ref_howto(callback: CallbackQuery):
 # ══════════════════════════════════════════════════════
 
 @router.callback_query(F.data.startswith("buy_credits_"))
-async def cb_invoice_credits(callback: CallbackQuery):
-    pack = CREDIT_PACKS.get(callback.data.replace("buy_credits_", ""))
+async def cb_choose_credits_method(callback: CallbackQuery):
+    pid = callback.data.replace("buy_credits_", "")
+    pack = CREDIT_PACKS.get(pid)
     if not pack: return
-    await callback.bot.send_invoice(
-        chat_id=callback.from_user.id,
-        title=f"AuraAI — {pack['name']}",
-        description=f"Пополнение: {pack['credits']} кредитов",
-        payload=f"credits_{callback.data.replace('buy_credits_', '')}",
-        currency="XTR",
-        prices=[LabeledPrice(label=pack["name"], amount=pack["stars"])],
+    await callback.message.answer(
+        f"💎 *{pack['name']}*\n\nВыбери способ оплаты:",
+        parse_mode="Markdown",
+        reply_markup=pay_method_kb("credits", pid)
     )
     await callback.answer()
 
 @router.callback_query(F.data.startswith("buy_plan_"))
-async def cb_invoice_plan(callback: CallbackQuery):
-    plan = PLANS.get(callback.data.replace("buy_plan_", ""))
+async def cb_choose_plan_method(callback: CallbackQuery):
+    pid = callback.data.replace("buy_plan_", "")
+    plan = PLANS.get(pid)
     if not plan: return
-    await callback.bot.send_invoice(
-        chat_id=callback.from_user.id,
-        title=f"AuraAI {plan['name']} — 30 дней",
-        description=plan["description"],
-        payload=f"plan_{callback.data.replace('buy_plan_', '')}",
-        currency="XTR",
-        prices=[LabeledPrice(label=f"AuraAI {plan['name']}", amount=plan["stars"])],
+    await callback.message.answer(
+        f"{plan['emoji']} *{plan['name']}* — {plan['description']}\n\nВыбери способ оплаты:",
+        parse_mode="Markdown",
+        reply_markup=pay_method_kb("plan", pid)
     )
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("paystars_"))
+async def cb_pay_stars(callback: CallbackQuery):
+    _, kind, item_id = callback.data.split("_", 2)
+    if kind == "credits":
+        pack = CREDIT_PACKS.get(item_id)
+        if not pack: return
+        await callback.bot.send_invoice(
+            chat_id=callback.from_user.id,
+            title=f"AuraAI — {pack['name']}",
+            description=f"Пополнение: {pack['credits']} кредитов",
+            payload=f"credits_{item_id}",
+            currency="XTR",
+            prices=[LabeledPrice(label=pack["name"], amount=pack["stars"])],
+        )
+    else:
+        plan = PLANS.get(item_id)
+        if not plan: return
+        await callback.bot.send_invoice(
+            chat_id=callback.from_user.id,
+            title=f"AuraAI {plan['name']} — 30 дней",
+            description=plan["description"],
+            payload=f"plan_{item_id}",
+            currency="XTR",
+            prices=[LabeledPrice(label=f"AuraAI {plan['name']}", amount=plan["stars"])],
+        )
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("payrub_"))
+async def cb_pay_rub(callback: CallbackQuery):
+    if not YOOKASSA_TOKEN:
+        await callback.message.answer(
+            "💳 Оплата картой скоро будет доступна. Пока используй ⭐️ Telegram Stars.",
+        )
+        await callback.answer()
+        return
+    _, kind, item_id = callback.data.split("_", 2)
+    if kind == "credits":
+        pack = CREDIT_PACKS.get(item_id)
+        if not pack: return
+        await callback.bot.send_invoice(
+            chat_id=callback.from_user.id,
+            title=f"AuraAI — {pack['name']}",
+            description=f"Пополнение: {pack['credits']} кредитов",
+            payload=f"credits_{item_id}",
+            provider_token=YOOKASSA_TOKEN,
+            currency="RUB",
+            prices=[LabeledPrice(label=pack["name"], amount=pack["rub"] * 100)],  # в копейках
+        )
+    else:
+        plan = PLANS.get(item_id)
+        if not plan: return
+        await callback.bot.send_invoice(
+            chat_id=callback.from_user.id,
+            title=f"AuraAI {plan['name']} — 30 дней",
+            description=plan["description"],
+            payload=f"plan_{item_id}",
+            provider_token=YOOKASSA_TOKEN,
+            currency="RUB",
+            prices=[LabeledPrice(label=f"AuraAI {plan['name']}", amount=plan["rub"] * 100)],
+        )
     await callback.answer()
 
 @router.pre_checkout_query()

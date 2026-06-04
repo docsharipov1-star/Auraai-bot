@@ -51,7 +51,7 @@ ADMIN_ID      = int(os.getenv("ADMIN_ID", "0"))
 BOT_USERNAME  = os.getenv("BOT_USERNAME", "GetAuraAI_bot")
 YOOKASSA_TOKEN = os.getenv("YOOKASSA_TOKEN", "")  # provider token из BotFather (ЮKassa)
 DB_PATH       = "/app/data/auraai.db"
-FREE_CREDITS  = 100
+FREE_CREDITS  = 150
 REFERRAL_BONUS = 50
 
 anthropic_client = None
@@ -61,8 +61,15 @@ kie_client       = None
 
 PLANS = {
     "basic":   {"name": "Basic",   "emoji": "⭐️", "stars": 325,  "rub": 390,  "credits": 2000, "days": 30, "unlimited": False, "description": "2 000 кредитов на 30 дней"},
-    "pro":     {"name": "Pro",     "emoji": "👑", "stars": 900,  "rub": 1090, "credits": 4500, "days": 30, "unlimited": False, "description": "4 500 кредитов на 30 дней"},
-    "premium": {"name": "Premium", "emoji": "💎", "stars": 1900, "rub": 2290, "credits": 9000, "days": 30, "unlimited": False, "description": "9 000 кредитов на 30 дней"},
+    "pro":     {"name": "Pro",     "emoji": "👑", "stars": 900,  "rub": 1090, "credits": 4500, "days": 30, "unlimited": False, "discount": 25, "description": "4 500 кредитов + скидка 25% на фото и картинки"},
+    "premium": {"name": "Premium", "emoji": "💎", "stars": 1900, "rub": 2290, "credits": 9000, "days": 30, "unlimited": True, "discount": 50, "description": "9 000 кредитов + БЕЗЛИМИТ на AI-чат + скидка 50% на фото и картинки"},
+}
+
+# Годовые подписки — 2 месяца в подарок (платишь ~за 10, кредиты сразу за год)
+PLANS_ANNUAL = {
+    "basic":   {"name": "Basic год",   "emoji": "⭐️", "stars": 3250,  "rub": 3900,  "credits": 24000,  "days": 365, "base": "basic"},
+    "pro":     {"name": "Pro год",     "emoji": "👑", "stars": 9000,  "rub": 10900, "credits": 54000,  "days": 365, "base": "pro"},
+    "premium": {"name": "Premium год", "emoji": "💎", "stars": 19000, "rub": 22900, "credits": 108000, "days": 365, "base": "premium"},
 }
 
 CREDIT_PACKS = {
@@ -213,7 +220,8 @@ async def add_credits(uid, amount, tx_type, desc) -> int:
         await db.commit(); return new
 
 # Инструменты которые бесплатны для Premium (безлимит)
-UNLIMITED_TOOLS = {"chat", "img2img", "img2img_remix", "combine", "image_nano"}
+UNLIMITED_TOOLS = {"chat"}  # Premium: безлимит только на чат (дёшево и безопасно)
+PREMIUM_DISCOUNT_TOOLS = {"img2img", "img2img_remix", "combine", "image_nano", "image_gpt", "image_dalle"}  # Premium: -50%
 
 async def is_premium(uid) -> bool:
     """Проверка активной Premium-подписки"""
@@ -229,12 +237,33 @@ async def is_premium(uid) -> bool:
         return False
     return True
 
+async def get_active_plan(uid) -> str:
+    """Возвращает активный план: free / basic / pro / premium"""
+    user = await db_get("SELECT plan, plan_expires FROM users WHERE id=?", (uid,))
+    if not user or not user["plan"] or user["plan"] == "free":
+        return "free"
+    if not user["plan_expires"]:
+        return "free"
+    try:
+        if datetime.fromisoformat(user["plan_expires"]) < datetime.now():
+            return "free"
+    except Exception:
+        return "free"
+    return user["plan"]
+
 async def use_credits(uid, tool, cost) -> bool:
-    # Premium — безлимит на чат и фото Nano Banana
-    if tool in UNLIMITED_TOOLS and await is_premium(uid):
+    plan = await get_active_plan(uid)
+    # Premium — безлимит на чат
+    if tool in UNLIMITED_TOOLS and plan == "premium":
         await db_run("INSERT INTO transactions (user_id,amount,type,description,balance) VALUES (?,?,'usage',?,?)",
                      (uid, 0, f"Premium безлимит: {tool}", await get_balance(uid)))
         return True
+    # Скидка на изображения и фото: Premium -50%, Pro -25%
+    if tool in PREMIUM_DISCOUNT_TOOLS:
+        if plan == "premium":
+            cost = max(1, cost // 2)
+        elif plan == "pro":
+            cost = max(1, int(cost * 0.75))
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute("SELECT credits FROM users WHERE id=?", (uid,)) as c: row = await c.fetchone()
@@ -871,9 +900,20 @@ def plans_inline_kb():
     b = InlineKeyboardBuilder()
     for pid, p in PLANS.items():
         b.row(InlineKeyboardButton(
-            text=f"{p['emoji']} {p['name']}  ·  {p['rub']}₽ / ⭐️{p['stars']} в мес",
+            text=f"{p['emoji']} {p['name']}  ·  {p['rub']}₽/мес",
             callback_data=f"buy_plan_{pid}"
         ))
+    b.row(InlineKeyboardButton(text="📅 Годовые подписки (−2 месяца)", callback_data="show_annual"))
+    return b.as_markup()
+
+def plans_annual_inline_kb():
+    b = InlineKeyboardBuilder()
+    for pid, p in PLANS_ANNUAL.items():
+        b.row(InlineKeyboardButton(
+            text=f"{p['emoji']} {p['name']}  ·  {p['rub']}₽/год",
+            callback_data=f"buyyear_{pid}"
+        ))
+    b.row(InlineKeyboardButton(text="📅 Помесячно", callback_data="show_monthly"))
     return b.as_markup()
 
 def pay_method_kb(kind: str, item_id: str):
@@ -1121,12 +1161,32 @@ async def buy_credits(message: Message):
 async def buy_plans(message: Message):
     user = await get_user(message.from_user.id)
     plan = user["plan"] if user else "free"
-    lines = ["👑 *Подписки AuraAI*\n"]
-    for pid, p in PLANS.items():
-        active = "✅ " if plan == pid else ""
-        unlim = "  🔥 БЕЗЛИМИТ фото+чат" if p.get("unlimited") else ""
-        lines.append(f"{active}*{p['emoji']} {p['name']}* — {p['rub']}₽ / ⭐️{p['stars']} в мес{unlim}\n  {p['description']}\n")
-    await message.answer("\n".join(lines), parse_mode="Markdown", reply_markup=plans_inline_kb())
+
+    text = (
+        "👑 *Подписки AuraAI*\n"
+        "_Чем выше тариф — тем дешевле каждая генерация._\n\n"
+
+        f"{'✅ ' if plan=='basic' else ''}⭐️ *Basic — 390₽/мес*\n"
+        "• 2 000 кредитов\n"
+        "• Хватит на ~16 фото или 5 видео\n"
+        "• Все функции бота\n\n"
+
+        f"{'✅ ' if plan=='pro' else ''}👑 *Pro — 1 090₽/мес*  🔥 выгодно\n"
+        "• 4 500 кредитов\n"
+        "• 🏷 Скидка *25%* на фото и картинки\n"
+        "• Хватит на ~50 фото или 11 видео\n"
+        "• Все функции бота\n\n"
+
+        f"{'✅ ' if plan=='premium' else ''}💎 *Premium — 2 290₽/мес*  ⭐️ максимум\n"
+        "• 9 000 кредитов\n"
+        "• ♾ *Безлимит на AI-чат* (пиши сколько хочешь)\n"
+        "• 🏷 Скидка *50%* на фото и картинки\n"
+        "• Хватит на ~150 фото или 22 видео\n"
+        "• Приоритетная генерация\n\n"
+
+        "💡 _Кредиты не сгорают. Скидки применяются автоматически._"
+    )
+    await message.answer(text, parse_mode="Markdown", reply_markup=plans_inline_kb())
 
 @router.message(F.text == "📋 История транзакций")
 async def tx_history(message: Message):
@@ -2323,6 +2383,49 @@ async def cb_choose_credits_method(callback: CallbackQuery):
     )
     await callback.answer()
 
+@router.callback_query(F.data == "show_annual")
+async def cb_show_annual(callback: CallbackQuery):
+    text = (
+        "📅 *Годовые подписки* — выгоднее на 2 месяца!\n"
+        "_Платишь сразу за год, кредиты зачисляются полностью._\n\n"
+        "⭐️ *Basic год — 3 900₽* (вместо 4 680₽)\n• 24 000 кредитов\n\n"
+        "👑 *Pro год — 10 900₽* (вместо 13 080₽)  🔥\n• 54 000 кредитов + скидка 25% на фото\n\n"
+        "💎 *Premium год — 22 900₽* (вместо 27 480₽)  ⭐️\n• 108 000 кредитов + безлимит чат + скидка 50% на фото\n\n"
+        "💡 _Экономия ~2 300–4 600₽ в год._"
+    )
+    try:
+        await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=plans_annual_inline_kb())
+    except Exception:
+        await callback.message.answer(text, parse_mode="Markdown", reply_markup=plans_annual_inline_kb())
+    await callback.answer()
+
+@router.callback_query(F.data == "show_monthly")
+async def cb_show_monthly(callback: CallbackQuery):
+    text = (
+        "👑 *Подписки AuraAI* (помесячно)\n\n"
+        "⭐️ *Basic — 390₽/мес* · 2 000 кр\n"
+        "👑 *Pro — 1 090₽/мес* · 4 500 кр + скидка 25% 🔥\n"
+        "💎 *Premium — 2 290₽/мес* · 9 000 кр + безлимит чат + скидка 50% ⭐️\n\n"
+        "_Или выбери годовую — 2 месяца в подарок._"
+    )
+    try:
+        await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=plans_inline_kb())
+    except Exception:
+        await callback.message.answer(text, parse_mode="Markdown", reply_markup=plans_inline_kb())
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("buyyear_"))
+async def cb_choose_year_method(callback: CallbackQuery):
+    pid = callback.data.replace("buyyear_", "")
+    plan = PLANS_ANNUAL.get(pid)
+    if not plan: return
+    await callback.message.answer(
+        f"{plan['emoji']} *{plan['name']}* — {plan['credits']} кредитов на год\n\nВыбери способ оплаты:",
+        parse_mode="Markdown",
+        reply_markup=pay_method_kb("planyear", pid)
+    )
+    await callback.answer()
+
 @router.callback_query(F.data.startswith("buy_plan_"))
 async def cb_choose_plan_method(callback: CallbackQuery):
     pid = callback.data.replace("buy_plan_", "")
@@ -2348,6 +2451,17 @@ async def cb_pay_stars(callback: CallbackQuery):
             payload=f"credits_{item_id}",
             currency="XTR",
             prices=[LabeledPrice(label=pack["name"], amount=pack["stars"])],
+        )
+    elif kind == "planyear":
+        plan = PLANS_ANNUAL.get(item_id)
+        if not plan: return
+        await callback.bot.send_invoice(
+            chat_id=callback.from_user.id,
+            title=f"AuraAI {plan['name']}",
+            description=f"{plan['credits']} кредитов на год",
+            payload=f"planyear_{item_id}",
+            currency="XTR",
+            prices=[LabeledPrice(label=plan["name"], amount=plan["stars"])],
         )
     else:
         plan = PLANS.get(item_id)
@@ -2383,6 +2497,18 @@ async def cb_pay_rub(callback: CallbackQuery):
             currency="RUB",
             prices=[LabeledPrice(label=pack["name"], amount=pack["rub"] * 100)],  # в копейках
         )
+    elif kind == "planyear":
+        plan = PLANS_ANNUAL.get(item_id)
+        if not plan: return
+        await callback.bot.send_invoice(
+            chat_id=callback.from_user.id,
+            title=f"AuraAI {plan['name']}",
+            description=f"{plan['credits']} кредитов на год",
+            payload=f"planyear_{item_id}",
+            provider_token=YOOKASSA_TOKEN,
+            currency="RUB",
+            prices=[LabeledPrice(label=plan["name"], amount=plan["rub"] * 100)],
+        )
     else:
         plan = PLANS.get(item_id)
         if not plan: return
@@ -2411,6 +2537,12 @@ async def on_payment(message: Message):
         if pack:
             new_bal = await add_credits(uid, pack["credits"], "purchase", f"Покупка: {pack['name']}")
             await message.answer(f"✅ *Оплата прошла!*\n\n💎 +{pack['credits']} кредитов\n💰 Баланс: *{new_bal} кр.*", parse_mode="Markdown", reply_markup=main_kb())
+    elif payload.startswith("planyear_"):
+        plan = PLANS_ANNUAL.get(payload.replace("planyear_", ""))
+        if plan:
+            await set_plan(uid, plan["base"], plan["credits"], plan["days"])
+            bal = await get_balance(uid)
+            await message.answer(f"✅ *{plan['name']} активирован на год!*\n\n💎 +{plan['credits']} кредитов\n💰 Баланс: *{bal} кр.*", parse_mode="Markdown", reply_markup=main_kb())
     elif payload.startswith("plan_"):
         plan = PLANS.get(payload.replace("plan_", ""))
         if plan:

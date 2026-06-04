@@ -2495,7 +2495,8 @@ async def cb_pay_rub(callback: CallbackQuery):
             payload=f"credits_{item_id}",
             provider_token=YOOKASSA_TOKEN,
             currency="RUB",
-            prices=[LabeledPrice(label=pack["name"], amount=pack["rub"] * 100)],  # в копейках
+            prices=[LabeledPrice(label=pack["name"], amount=pack["rub"] * 100)],
+            need_email=True, send_email_to_provider=True,
         )
     elif kind == "planyear":
         plan = PLANS_ANNUAL.get(item_id)
@@ -2508,6 +2509,7 @@ async def cb_pay_rub(callback: CallbackQuery):
             provider_token=YOOKASSA_TOKEN,
             currency="RUB",
             prices=[LabeledPrice(label=plan["name"], amount=plan["rub"] * 100)],
+            need_email=True, send_email_to_provider=True,
         )
     else:
         plan = PLANS.get(item_id)
@@ -2520,6 +2522,7 @@ async def cb_pay_rub(callback: CallbackQuery):
             provider_token=YOOKASSA_TOKEN,
             currency="RUB",
             prices=[LabeledPrice(label=f"AuraAI {plan['name']}", amount=plan["rub"] * 100)],
+            need_email=True, send_email_to_provider=True,
         )
     await callback.answer()
 

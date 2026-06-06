@@ -86,10 +86,12 @@ SALES_PROMPT = (
     "• Результат: после курса человек умеет делать ИИ-визуал и может брать заказы или делать визуал для своего бизнеса без дизайнера.\n"
     "• Бонус: при покупке курса начисляется 1 000 кредитов на бота AuraAI, чтобы сразу практиковаться.\n\n"
     "КАК ОБЩАТЬСЯ:\n"
-    "• Отвечай коротко, тепло, по-человечески, на «ты». 2-4 предложения.\n"
-    "• Отрабатывай возражения честно: «дорого» — покажи ценность и сколько можно заработать; «не получится» — успокой, всё на телефоне в пару нажатий; «это развод?» — объясни что это реальная новая профессия.\n"
+    "• Отвечай коротко, тепло, по-человечески, на «ты». 2-4 предложения. Не повторяй один и тот же текст — каждый ответ разный.\n"
+    "• ВСЕГДА заканчивай ответ встречным вопросом, чтобы продолжить диалог (например: «А ты для себя хочешь освоить или для заработка?», «Какой у тебя сейчас доход хочешь добавить?»). Это помогает дожимать.\n"
+    "• Отрабатывай возражения честно: «дорого» — покажи ценность и сколько можно заработать, окупится с первых заказов; «не получится» — успокой, всё на телефоне в пару нажатий, поддержка есть; «это развод?» — объясни что это реальная новая профессия, покажи логику.\n"
+    "• Веди как живой менеджер: интересуйся ситуацией человека, и под неё показывай выгоду курса.\n"
     "• Никогда не ври и не обещай гарантированных доходов. Будь честным.\n"
-    "• В конце каждого ответа мягко подталкивай нажать кнопку «Купить курс» или задать ещё вопрос.\n"
+    "• Когда чувствуешь интерес — прямо предлагай нажать кнопку «Купить курс» внизу.\n"
     "• Если спрашивают не про курс — кратко ответь и верни разговор к курсу.\n"
     "• Пиши на том языке, на котором пишет человек (русский или таджикский)."
 )
@@ -506,7 +508,7 @@ async def admin_stats():
 #  AI ФУНКЦИИ
 # ══════════════════════════════════════════════════════
 
-async def call_text_ai(prompt: str, system: str, model_id: str, uid: int = 0, use_history: bool = False, image_url: str = None) -> str:
+async def call_text_ai(prompt: str, system: str, model_id: str, uid: int = 0, use_history: bool = False, image_url: str = None, history_msgs: list = None, timeout_s: int = 15) -> str:
     model_info = TEXT_MODELS.get(model_id, TEXT_MODELS["claude"])
     provider = model_info["provider"]
 
@@ -530,7 +532,9 @@ async def call_text_ai(prompt: str, system: str, model_id: str, uid: int = 0, us
     else:
         user_content = prompt
 
-    if use_history and uid:
+    if history_msgs is not None:
+        messages = history_msgs + [{"role": "user", "content": user_content}]
+    elif use_history and uid:
         history = await get_history(uid)
         messages = history + [{"role": "user", "content": user_content}]
     else:
@@ -542,7 +546,7 @@ async def call_text_ai(prompt: str, system: str, model_id: str, uid: int = 0, us
                 anthropic_client.messages.create(
                     model="claude-sonnet-4-20250514", max_tokens=1024,
                     system=system, messages=messages),
-                timeout=15
+                timeout=timeout_s
             )
             result = resp.content[0].text
         elif provider == "deepseek" and deepseek_client:
@@ -550,7 +554,7 @@ async def call_text_ai(prompt: str, system: str, model_id: str, uid: int = 0, us
                 deepseek_client.chat.completions.create(
                     model="deepseek-chat", max_tokens=1024,
                     messages=[{"role": "system", "content": system}] + messages),
-                timeout=15
+                timeout=timeout_s
             )
             result = resp.choices[0].message.content
         elif provider == "openai" and openai_client:
@@ -558,13 +562,13 @@ async def call_text_ai(prompt: str, system: str, model_id: str, uid: int = 0, us
                 openai_client.chat.completions.create(
                     model="gpt-4o", max_tokens=1024,
                     messages=[{"role": "system", "content": system}] + messages),
-                timeout=15
+                timeout=timeout_s
             )
             result = resp.choices[0].message.content
         else:
             return "❌ Модель недоступна. Проверь API ключи."
 
-        if use_history and uid:
+        if history_msgs is None and use_history and uid:
             await add_to_history(uid, "user", prompt)
             await add_to_history(uid, "assistant", result)
 
@@ -1314,15 +1318,39 @@ async def course_chat_exit(message: Message, state: FSMContext):
 
 @router.message(State_.course_chat)
 async def course_chat_answer(message: Message, state: FSMContext):
+    data = await state.get_data()
+    history = data.get("course_history", [])
     thinking = await message.answer("✍️ ...")
-    try:
-        reply = await call_text_ai(message.text or "", SALES_PROMPT, "claude", uid=message.from_user.id, use_history=False)
-    except Exception:
-        reply = "Курс стоит 2 900₽, внутри всё для заработка на ИИ-картинках с нуля. Хочешь — жми «Купить курс» ниже, и начнём!"
+    reply = None
+    for mid in ("claude", "gpt4o", "deepseek"):
+        try:
+            r = await call_text_ai(
+                message.text or "", SALES_PROMPT, mid,
+                history_msgs=history, timeout_s=30
+            )
+            if r and not r.startswith("❌"):
+                reply = r
+                break
+        except Exception as e:
+            logging.error(f"Sales chat [{mid}] error: {e}")
+            continue
     try:
         await thinking.delete()
     except Exception:
         pass
+    if not reply:
+        await message.answer(
+            "Сейчас не могу ответить — попробуй ещё раз через минуту 🙏 "
+            "А пока можешь сразу оформить курс кнопкой ниже 👇",
+            reply_markup=course_inline_kb()
+        )
+        return
+    # сохранить диалог (последние 12 реплик)
+    history = history + [
+        {"role": "user", "content": message.text or ""},
+        {"role": "assistant", "content": reply},
+    ]
+    await state.update_data(course_history=history[-12:])
     await message.answer(reply, reply_markup=course_inline_kb())
 
 @router.message(Command("set_course_link"))

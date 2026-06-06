@@ -72,6 +72,28 @@ PLANS_ANNUAL = {
     "premium": {"name": "Premium год", "emoji": "💎", "stars": 19000, "rub": 22900, "credits": 108000, "days": 365, "base": "premium"},
 }
 
+# Курс по нейросетям
+COURSE = {"name": "Курс «Заработок на ИИ-картинках»", "rub": 2900, "stars": 2400, "credits": 1000}
+
+SALES_PROMPT = (
+    "Ты — дружелюбный и уверенный менеджер по продажам онлайн-курса AuraAI. "
+    "Твоя задача — помочь человеку и мягко довести его до покупки курса.\n\n"
+    "О КУРСЕ:\n"
+    "• Название: курс «Заработок на ИИ-картинках».\n"
+    "• Цена: 2 900₽. Можно оплатить картой (рубли) или Telegram Stars прямо в боте.\n"
+    "• Для кого: для новичков с нуля — студентов, предпринимателей, всех кто хочет новую профессию или подработку из дома. Опыт и диплом не нужны, нужен только телефон.\n"
+    "• Что внутри: как обрабатывать фото, делать рекламу и карточки товаров, оживлять снимки в видео, и как брать на этом платные заказы.\n"
+    "• Результат: после курса человек умеет делать ИИ-визуал и может брать заказы или делать визуал для своего бизнеса без дизайнера.\n"
+    "• Бонус: при покупке курса начисляется 1 000 кредитов на бота AuraAI, чтобы сразу практиковаться.\n\n"
+    "КАК ОБЩАТЬСЯ:\n"
+    "• Отвечай коротко, тепло, по-человечески, на «ты». 2-4 предложения.\n"
+    "• Отрабатывай возражения честно: «дорого» — покажи ценность и сколько можно заработать; «не получится» — успокой, всё на телефоне в пару нажатий; «это развод?» — объясни что это реальная новая профессия.\n"
+    "• Никогда не ври и не обещай гарантированных доходов. Будь честным.\n"
+    "• В конце каждого ответа мягко подталкивай нажать кнопку «Купить курс» или задать ещё вопрос.\n"
+    "• Если спрашивают не про курс — кратко ответь и верни разговор к курсу.\n"
+    "• Пиши на том языке, на котором пишет человек (русский или таджикский)."
+)
+
 CREDIT_PACKS = {
     "pack_500":   {"name": "500 кредитов",    "stars": 80,   "rub": 99,   "credits": 500},
     "pack_2000":  {"name": "2 000 кредитов",  "stars": 290,  "rub": 349,  "credits": 2000},
@@ -177,8 +199,127 @@ async def init_db():
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             );
             CREATE INDEX IF NOT EXISTS idx_chat_history_user ON chat_history(user_id);
+            CREATE TABLE IF NOT EXISTS app_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            );
         """)
         await db.commit()
+
+async def setting_get(key, default=None):
+    row = await db_get("SELECT value FROM app_settings WHERE key=?", (key,))
+    return row["value"] if row else default
+
+async def setting_set(key, value):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("INSERT INTO app_settings (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=?", (key, value, value))
+        await db.commit()
+
+# ══════════════════════════════════════════════════════
+#  API «МОЙ НАЛОГ» (НПД) — автоматическая регистрация чеков
+#  Неофициальный API lknpd.nalog.ru. Токен живёт ~1 час, обновляется по refreshToken.
+# ══════════════════════════════════════════════════════
+NALOG_API = "https://lknpd.nalog.ru/api/v1"
+NALOG_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36"
+
+async def nalog_device_info():
+    dev_id = await setting_get("nalog_device_id")
+    if not dev_id:
+        import uuid as _uuid
+        dev_id = _uuid.uuid4().hex
+        await setting_set("nalog_device_id", dev_id)
+    return {
+        "sourceDeviceId": dev_id,
+        "sourceType": "WEB",
+        "appVersion": "1.0.0",
+        "metaDetails": {"userAgent": NALOG_UA},
+    }
+
+async def nalog_request_sms(phone: str) -> str:
+    """Шаг 1: запросить SMS-код. Возвращает challengeToken."""
+    dev = await nalog_device_info()
+    now = datetime.now().isoformat()[:-3] + "Z"
+    async with httpx.AsyncClient(timeout=60) as client:
+        r = await client.post(f"{NALOG_API}/auth/challenge", json={
+            "phone": phone, "requestTime": now, "deviceInfo": dev,
+        }, headers={"User-Agent": NALOG_UA})
+        r.raise_for_status()
+        data = r.json()
+    return data["challengeToken"]
+
+async def nalog_verify_sms(phone: str, code: str, challenge_token: str):
+    """Шаг 2: подтвердить код. Сохраняет refreshToken и ИНН."""
+    dev = await nalog_device_info()
+    async with httpx.AsyncClient(timeout=60) as client:
+        r = await client.post(f"{NALOG_API}/auth/challenge/verify", json={
+            "phone": phone, "code": code, "challengeToken": challenge_token, "deviceInfo": dev,
+        }, headers={"User-Agent": NALOG_UA})
+        r.raise_for_status()
+        data = r.json()
+    refresh = data.get("refreshToken")
+    if not refresh:
+        raise Exception(f"Нет refreshToken в ответе: {list(data.keys())}")
+    await setting_set("nalog_refresh_token", refresh)
+    inn = (data.get("profile") or {}).get("inn")
+    if inn:
+        await setting_set("nalog_inn", str(inn))
+    await setting_set("nalog_phone", phone)
+    return inn
+
+async def nalog_access_token() -> str:
+    """Возвращает действующий access token (обновляет по refreshToken при необходимости)."""
+    import time as _time
+    cached = await setting_get("nalog_access_token")
+    expires = await setting_get("nalog_token_expires")
+    if cached and expires and float(expires) > _time.time() + 60:
+        return cached
+    refresh = await setting_get("nalog_refresh_token")
+    if not refresh:
+        raise Exception("Не авторизован в «Мой налог». Выполни /nalog_login")
+    dev = await nalog_device_info()
+    async with httpx.AsyncClient(timeout=60) as client:
+        r = await client.post(f"{NALOG_API}/auth/token", json={
+            "refreshToken": refresh, "deviceInfo": dev,
+        }, headers={"User-Agent": NALOG_UA})
+        r.raise_for_status()
+        data = r.json()
+    token = data.get("token")
+    if not token:
+        raise Exception("Не удалось обновить токен «Мой налог»")
+    if data.get("refreshToken"):
+        await setting_set("nalog_refresh_token", data["refreshToken"])
+    await setting_set("nalog_access_token", token)
+    await setting_set("nalog_token_expires", str(_time.time() + 50 * 60))  # ~50 мин
+    return token
+
+async def nalog_add_income(name: str, amount: float) -> str:
+    """Регистрирует доход в «Мой налог», возвращает ссылку на чек (или '' при ошибке)."""
+    token = await nalog_access_token()
+    inn = await setting_get("nalog_inn")
+    dev = await nalog_device_info()
+    now = datetime.now().isoformat()[:-3] + "+03:00"
+    body = {
+        "operationTime": now,
+        "requestTime": now,
+        "services": [{"name": name, "amount": round(float(amount), 2), "quantity": 1}],
+        "totalAmount": str(round(float(amount), 2)),
+        "client": {"contactPhone": None, "displayName": None, "incomeType": "FROM_INDIVIDUAL", "inn": None},
+        "paymentType": "CASH",
+        "ignoreMaxTotalIncomeRestriction": False,
+        "deviceInfo": dev,
+    }
+    async with httpx.AsyncClient(timeout=60) as client:
+        r = await client.post(f"{NALOG_API}/income", json=body,
+                              headers={"Authorization": f"Bearer {token}", "User-Agent": NALOG_UA})
+        r.raise_for_status()
+        data = r.json()
+    uuid_r = data.get("approvedReceiptUuid")
+    if not uuid_r or not inn:
+        return ""
+    return f"{NALOG_API}/receipt/{inn}/{uuid_r}/print"
+
+async def nalog_is_connected() -> bool:
+    return bool(await setting_get("nalog_refresh_token"))
 
 async def db_get(q, p=()):
     async with aiosqlite.connect(DB_PATH) as db:
@@ -805,6 +946,40 @@ async def generate_tts(text: str, voice: str = "Nicole") -> bytes:
         return resp.content
 
 
+async def generate_avatar(image_url: str, audio_url: str, model_id: str = "klingai/avatar-standard") -> str:
+    """ИИ-аватар (Kling Avatar) через aimlapi — фото + аудио → говорящий аватар (липсинк). Возвращает URL видео."""
+    if not AIML_KEY:
+        raise Exception("AIML_KEY не настроен")
+    async with httpx.AsyncClient(timeout=120) as client:
+        resp = await client.post(
+            "https://api.aimlapi.com/v2/video/generations",
+            headers={"Authorization": f"Bearer {AIML_KEY}", "Content-Type": "application/json"},
+            json={"model": model_id, "image_url": image_url, "audio_url": audio_url},
+        )
+        resp.raise_for_status()
+        gen_id = resp.json().get("id")
+    if not gen_id:
+        raise Exception("Нет id генерации аватара")
+    for _ in range(72):
+        await asyncio.sleep(5)
+        async with httpx.AsyncClient(timeout=60) as client:
+            r = await client.get(
+                f"https://api.aimlapi.com/v2/video/generations?generation_id={gen_id}",
+                headers={"Authorization": f"Bearer {AIML_KEY}"},
+            )
+            r.raise_for_status()
+            data = r.json()
+        status = data.get("status")
+        if status == "completed":
+            url = (data.get("video") or {}).get("url")
+            if url:
+                return url
+            raise Exception("Видео готово, но нет URL")
+        if status == "error":
+            raise Exception(str(data.get("error", "ошибка генерации")))
+    raise Exception("Таймаут генерации аватара")
+
+
 # ══════════════════════════════════════════════════════
 #  КЛАВИАТУРЫ
 # ══════════════════════════════════════════════════════
@@ -824,6 +999,7 @@ def main_kb() -> ReplyKeyboardMarkup:
         KeyboardButton(text="👤 Профиль"),
         KeyboardButton(text="🔗 Рефералы"),
     )
+    b.row(KeyboardButton(text="🎓 Обучение"))
     b.row(
         KeyboardButton(text="❓ Помощь"),
         KeyboardButton(text="📕 База знаний"),
@@ -947,6 +1123,7 @@ def video_kb() -> ReplyKeyboardMarkup:
     b.row(KeyboardButton(text="🎬 Создать видео Seedance"))
     b.row(KeyboardButton(text="🎥 Создать видео Kling"))
     b.row(KeyboardButton(text="🖼➡️🎬 Фото в видео"))
+    b.row(KeyboardButton(text="🗣 ИИ-аватар (липсинк)"))
     b.row(KeyboardButton(text="🏠 В главное меню"))
     return b.as_markup(resize_keyboard=True)
 
@@ -966,6 +1143,11 @@ class State_(StatesGroup):
     waiting_combine    = State()  # ожидание фото для соединения
     waiting_video_photo = State()
     waiting_video_photo_text = State()
+    nalog_phone = State()  # админ: ввод телефона для входа в «Мой налог»
+    nalog_code  = State()  # админ: ввод SMS-кода
+    course_chat = State()  # чат с ИИ-менеджером курса
+    avatar_photo = State()  # ИИ-аватар: ожидание фото
+    avatar_audio = State()  # ИИ-аватар: ожидание аудио или текста
 
 user_tool:  dict[int, str] = {}
 user_model: dict[int, str] = {}
@@ -1052,9 +1234,107 @@ async def cmd_start(message: Message):
 
     await message.answer(text, parse_mode="Markdown", reply_markup=main_kb())
 
+    # Пришёл по ссылке с рекламы курса
+    if len(args) > 1 and args[1] == "course":
+        await show_course_landing(message)
+
 # ══════════════════════════════════════════════════════
-#  ГЛАВНЫЕ РАЗДЕЛЫ
+#  ОБУЧЕНИЕ / КУРС (ИИ-менеджер продаж)
 # ══════════════════════════════════════════════════════
+
+def course_inline_kb():
+    b = InlineKeyboardBuilder()
+    b.row(InlineKeyboardButton(text=f"💳 Купить курс — {COURSE['rub']}₽", callback_data="buy_course"))
+    b.row(InlineKeyboardButton(text="❓ Задать вопрос менеджеру", callback_data="course_ask"))
+    b.row(InlineKeyboardButton(text="🎁 Бесплатный мини-урок", callback_data="course_free"))
+    return b.as_markup()
+
+def course_chat_kb() -> ReplyKeyboardMarkup:
+    b = ReplyKeyboardBuilder()
+    b.row(KeyboardButton(text="🏠 В главное меню"))
+    return b.as_markup(resize_keyboard=True)
+
+async def show_course_landing(message: Message):
+    text = (
+        "🎓 *Курс «Заработок на ИИ-картинках»*\n\n"
+        "Научись делать деньги на нейросетях за несколько дней — без навыков дизайна и опыта. Нужен только телефон.\n\n"
+        "*Что внутри:*\n"
+        "• Обработка фото и портреты\n"
+        "• Реклама и карточки товаров\n"
+        "• Оживление фото в видео\n"
+        "• Как брать платные заказы\n\n"
+        f"💎 Цена: *{COURSE['rub']}₽* (или ⭐️{COURSE['stars']})\n"
+        "🎁 Бонус: 1 000 кредитов на бота для практики\n\n"
+        "Остались вопросы? Жми «Задать вопрос менеджеру» — отвечу 24/7."
+    )
+    await message.answer(text, parse_mode="Markdown", reply_markup=course_inline_kb())
+
+@router.message(F.text == "🎓 Обучение")
+async def course_menu(message: Message, state: FSMContext):
+    await state.clear()
+    await show_course_landing(message)
+
+@router.callback_query(F.data == "buy_course")
+async def cb_buy_course(callback: CallbackQuery):
+    await callback.message.answer(
+        f"🎓 *{COURSE['name']}*\n\nВыбери способ оплаты:",
+        parse_mode="Markdown", reply_markup=pay_method_kb("course", "main")
+    )
+    await callback.answer()
+
+@router.callback_query(F.data == "course_free")
+async def cb_course_free(callback: CallbackQuery):
+    await callback.message.answer(
+        "🎁 *Бесплатный мини-урок*\n\n"
+        "Давай прямо сейчас сделаешь первую ИИ-картинку:\n\n"
+        "1️⃣ Зайди в «🎨 Дизайн с ИИ» → «🍌 Nano Banana»\n"
+        "2️⃣ Загрузи любое своё фото\n"
+        "3️⃣ Напиши, что изменить (например: «сделай студийный портрет»)\n"
+        "4️⃣ Получи результат за секунды!\n\n"
+        "У тебя уже есть бесплатные кредиты на старте. Попробуй — а потом возвращайся за полным курсом 😉",
+        parse_mode="Markdown", reply_markup=course_inline_kb()
+    )
+    await callback.answer()
+
+@router.callback_query(F.data == "course_ask")
+async def cb_course_ask(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(State_.course_chat)
+    await callback.message.answer(
+        "💬 Спрашивай что угодно про курс — отвечу честно. Например: «сколько можно заработать?», «а если не получится?», «как проходит обучение?»\n\n"
+        "Чтобы выйти — нажми «🏠 В главное меню».",
+        reply_markup=course_chat_kb()
+    )
+    await callback.answer()
+
+@router.message(State_.course_chat, F.text == "🏠 В главное меню")
+async def course_chat_exit(message: Message, state: FSMContext):
+    await state.clear()
+    bal = await get_balance(message.from_user.id)
+    await message.answer(f"🏠 *Главное меню*\n\n💎 Кредиты: *{bal}*", parse_mode="Markdown", reply_markup=main_kb())
+
+@router.message(State_.course_chat)
+async def course_chat_answer(message: Message, state: FSMContext):
+    thinking = await message.answer("✍️ ...")
+    try:
+        reply = await call_text_ai(message.text or "", SALES_PROMPT, "claude", uid=message.from_user.id, use_history=False)
+    except Exception:
+        reply = "Курс стоит 2 900₽, внутри всё для заработка на ИИ-картинках с нуля. Хочешь — жми «Купить курс» ниже, и начнём!"
+    try:
+        await thinking.delete()
+    except Exception:
+        pass
+    await message.answer(reply, reply_markup=course_inline_kb())
+
+@router.message(Command("set_course_link"))
+async def cmd_set_course_link(message: Message):
+    if message.from_user.id != ADMIN_ID: return
+    parts = (message.text or "").split(maxsplit=1)
+    if len(parts) < 2:
+        cur = await setting_get("course_link", "не задана")
+        await message.answer(f"Текущая ссылка на курс: {cur}\n\nЧтобы задать: /set_course_link https://t.me/+ссылка_на_закрытый_канал")
+        return
+    await setting_set("course_link", parts[1].strip())
+    await message.answer("✅ Ссылка на курс сохранена. После оплаты бот будет присылать её покупателю.")
 
 @router.message(F.text == "🏠 В главное меню")
 async def to_main(message: Message, state: FSMContext):
@@ -1153,7 +1433,7 @@ async def section_profile(message: Message):
 @router.message(F.text == "💎 Купить кредиты")
 async def buy_credits(message: Message):
     await message.answer(
-        "⭐️ *Купить кредиты за Telegram Stars*\n\nКредиты зачисляются мгновенно и не сгорают.",
+        "💎 *Купить кредиты*\n\nОплата картой (рубли) или Telegram Stars.\nКредиты зачисляются мгновенно и не сгорают.\n\nВыбери пакет:",
         parse_mode="Markdown", reply_markup=credits_pack_kb()
     )
 
@@ -2108,6 +2388,138 @@ async def img2video_video_process(message: Message, state: FSMContext):
     asyncio.create_task(img2video_task())
 
 
+# ── ИИ-аватар (липсинк, Kling Avatar) ──
+AVATAR_MODELS = {
+    "🟢 Kling Standard — 800 кр": {"model": "klingai/avatar-standard", "cost": 800,  "label": "Kling Standard"},
+    "🔵 Kling Pro — 1800 кр":     {"model": "klingai/avatar-pro",      "cost": 1800, "label": "Kling Pro"},
+}
+
+def avatar_model_kb() -> ReplyKeyboardMarkup:
+    b = ReplyKeyboardBuilder()
+    b.row(KeyboardButton(text="🟢 Kling Standard — 800 кр"))
+    b.row(KeyboardButton(text="🔵 Kling Pro — 1800 кр"))
+    b.row(KeyboardButton(text="❌ Отмена"))
+    return b.as_markup(resize_keyboard=True)
+
+@router.message(F.text == "🗣 ИИ-аватар (липсинк)")
+async def avatar_start(message: Message, state: FSMContext):
+    bal = await get_balance(message.from_user.id)
+    if bal < 800:
+        await message.answer(f"❌ Нужно минимум *800 кр.* · У тебя *{bal} кр.*", parse_mode="Markdown", reply_markup=profile_kb())
+        return
+    await state.set_state(State_.avatar_photo)
+    await message.answer(
+        "🗣 *ИИ-аватар (синхронизация губ)*\n\n"
+        "Выбери модель:\n"
+        "🟢 *Kling Standard* — дешевле, быстрая, отличный липсинк\n"
+        "🔵 *Kling Pro* — выше качество, мимика и движения\n\n"
+        "_Аудио/текст — до 30 секунд._",
+        parse_mode="Markdown", reply_markup=avatar_model_kb()
+    )
+
+@router.message(State_.avatar_photo, F.text.in_(AVATAR_MODELS.keys()))
+async def avatar_choose_model(message: Message, state: FSMContext):
+    m = AVATAR_MODELS[message.text]
+    bal = await get_balance(message.from_user.id)
+    if bal < m["cost"]:
+        await state.clear()
+        await message.answer(f"❌ Нужно *{m['cost']} кр.* · У тебя *{bal} кр.*", parse_mode="Markdown", reply_markup=profile_kb())
+        return
+    await state.update_data(avatar_model=m["model"], avatar_label=m["label"], cost=m["cost"])
+    await message.answer(
+        f"Модель: *{m['label']}* ✅  ·  💎 {m['cost']} кр.\n\n"
+        "Отправь *фото лица* (чёткий портрет анфас) — оно «заговорит».",
+        parse_mode="Markdown", reply_markup=cancel_kb()
+    )
+
+@router.message(State_.avatar_photo, F.photo)
+async def avatar_photo_received(message: Message, state: FSMContext):
+    data = await state.get_data()
+    if not data.get("avatar_model"):
+        await message.answer("Сначала выбери модель кнопкой выше 🙂", reply_markup=avatar_model_kb())
+        return
+    photo = message.photo[-1]
+    file = await message.bot.get_file(photo.file_id)
+    url = f"https://api.telegram.org/file/bot{message.bot.token}/{file.file_path}"
+    await state.update_data(avatar_image=url)
+    await state.set_state(State_.avatar_audio)
+    await message.answer(
+        "✅ Фото получено!\n\n"
+        "Теперь — два варианта:\n"
+        "🎤 Отправь *голосовое или аудио* (до 30 сек), ИЛИ\n"
+        "✍️ *Напиши текст* — я озвучу его голосом ИИ.",
+        parse_mode="Markdown", reply_markup=cancel_kb()
+    )
+
+async def _run_avatar(message: Message, state: FSMContext, audio_url: str):
+    data = await state.get_data()
+    image_url = data.get("avatar_image")
+    cost = data.get("cost", 800)
+    model_id = data.get("avatar_model", "klingai/avatar-standard")
+    label = data.get("avatar_label", "Kling Avatar")
+    if not image_url:
+        await state.clear()
+        await message.answer("Сначала отправь фото. Начни заново.", reply_markup=video_kb())
+        return
+    ok = await use_credits(message.from_user.id, "avatar", cost)
+    if not ok:
+        await state.clear()
+        await message.answer("❌ Недостаточно кредитов.", reply_markup=profile_kb())
+        return
+    await state.clear()
+    thinking = await message.answer(
+        "🗣 Создаю говорящего аватара... (~2–4 мин)\n✅ Можешь пользоваться ботом — пришлю автоматически!",
+        reply_markup=main_kb()
+    )
+    async def task():
+        try:
+            url = await generate_avatar(image_url, audio_url, model_id)
+            async with httpx.AsyncClient(timeout=180) as client:
+                vr = await client.get(url); vr.raise_for_status(); vid_bytes = vr.content
+            b = await get_balance(message.from_user.id)
+            await message.answer_video(
+                BufferedInputFile(vid_bytes, filename="avatar.mp4"),
+                caption=f"🗣 *ИИ-аватар готов!* ({label})\n\n💎 Потрачено: *{cost} кр.* · Остаток: *{b} кр.*",
+                parse_mode="Markdown"
+            )
+            await message.answer("Что дальше?", reply_markup=video_kb())
+        except Exception as e:
+            await add_credits(message.from_user.id, cost, "bonus", "Возврат: ошибка аватара")
+            await message.answer(f"⚠️ Ошибка генерации аватара. Кредиты возвращены.\n{str(e)[:120]}", reply_markup=video_kb())
+            logging.error(f"Avatar error: {e}")
+        finally:
+            try: await thinking.delete()
+            except Exception: pass
+    asyncio.create_task(task())
+
+@router.message(State_.avatar_audio, F.voice | F.audio)
+async def avatar_audio_received(message: Message, state: FSMContext):
+    obj = message.voice or message.audio
+    file = await message.bot.get_file(obj.file_id)
+    audio_url = f"https://api.telegram.org/file/bot{message.bot.token}/{file.file_path}"
+    await _run_avatar(message, state, audio_url)
+
+@router.message(State_.avatar_audio, F.text)
+async def avatar_text_received(message: Message, state: FSMContext):
+    if message.text and message.text.startswith("❌"):
+        return  # отмену обработает общий хендлер
+    thinking = await message.answer("🎙 Озвучиваю текст голосом ИИ...")
+    try:
+        audio_bytes = await generate_tts(message.text[:600])
+    except Exception as e:
+        try: await thinking.delete()
+        except Exception: pass
+        await message.answer(f"⚠️ Ошибка озвучки: {str(e)[:100]}", reply_markup=cancel_kb())
+        return
+    sent = await message.answer_audio(BufferedInputFile(audio_bytes, filename="voice.mp3"))
+    obj = sent.audio or sent.voice
+    file = await message.bot.get_file(obj.file_id)
+    audio_url = f"https://api.telegram.org/file/bot{message.bot.token}/{file.file_path}"
+    try: await thinking.delete()
+    except Exception: pass
+    await _run_avatar(message, state, audio_url)
+
+
 # ── Соединение нескольких фото ──
 combine_buffer: dict[int, dict] = {}  # uid -> {"photos": [...], "caption": str, "task": bool}
 
@@ -2463,6 +2875,15 @@ async def cb_pay_stars(callback: CallbackQuery):
             currency="XTR",
             prices=[LabeledPrice(label=plan["name"], amount=plan["stars"])],
         )
+    elif kind == "course":
+        await callback.bot.send_invoice(
+            chat_id=callback.from_user.id,
+            title=COURSE["name"],
+            description="Доступ к курсу + 1000 кредитов",
+            payload="course_main",
+            currency="XTR",
+            prices=[LabeledPrice(label=COURSE["name"], amount=COURSE["stars"])],
+        )
     else:
         plan = PLANS.get(item_id)
         if not plan: return
@@ -2511,6 +2932,17 @@ async def cb_pay_rub(callback: CallbackQuery):
             prices=[LabeledPrice(label=plan["name"], amount=plan["rub"] * 100)],
             need_email=True, send_email_to_provider=True,
         )
+    elif kind == "course":
+        await callback.bot.send_invoice(
+            chat_id=callback.from_user.id,
+            title=COURSE["name"],
+            description="Доступ к курсу + 1000 кредитов",
+            payload="course_main",
+            provider_token=YOOKASSA_TOKEN,
+            currency="RUB",
+            prices=[LabeledPrice(label=COURSE["name"], amount=COURSE["rub"] * 100)],
+            need_email=True, send_email_to_provider=True,
+        )
     else:
         plan = PLANS.get(item_id)
         if not plan: return
@@ -2533,25 +2965,67 @@ async def pre_checkout(query: PreCheckoutQuery): await query.answer(ok=True)
 async def on_payment(message: Message):
     payload = message.successful_payment.invoice_payload
     stars   = message.successful_payment.total_amount
+    currency = message.successful_payment.currency
     uid     = message.from_user.id
 
+    item_name = "Доступ к сервису AuraAI"
     if payload.startswith("credits_"):
         pack = CREDIT_PACKS.get(payload.replace("credits_", ""))
         if pack:
+            item_name = f"AuraAI — {pack['name']}"
             new_bal = await add_credits(uid, pack["credits"], "purchase", f"Покупка: {pack['name']}")
             await message.answer(f"✅ *Оплата прошла!*\n\n💎 +{pack['credits']} кредитов\n💰 Баланс: *{new_bal} кр.*", parse_mode="Markdown", reply_markup=main_kb())
     elif payload.startswith("planyear_"):
         plan = PLANS_ANNUAL.get(payload.replace("planyear_", ""))
         if plan:
+            item_name = f"AuraAI {plan['name']}"
             await set_plan(uid, plan["base"], plan["credits"], plan["days"])
             bal = await get_balance(uid)
             await message.answer(f"✅ *{plan['name']} активирован на год!*\n\n💎 +{plan['credits']} кредитов\n💰 Баланс: *{bal} кр.*", parse_mode="Markdown", reply_markup=main_kb())
     elif payload.startswith("plan_"):
         plan = PLANS.get(payload.replace("plan_", ""))
         if plan:
+            item_name = f"AuraAI {plan['name']}"
             await set_plan(uid, payload.replace("plan_", ""), plan["credits"], plan["days"])
             bal = await get_balance(uid)
             await message.answer(f"✅ *{plan['name']} активирован!*\n\n💎 +{plan['credits']} кредитов\n💰 Баланс: *{bal} кр.*", parse_mode="Markdown", reply_markup=main_kb())
+    elif payload.startswith("course"):
+        item_name = COURSE["name"]
+        await add_credits(uid, COURSE["credits"], "purchase", "Бонус за курс")
+        link = await setting_get("course_link", "")
+        if link:
+            await message.answer(
+                f"✅ *Доступ к курсу открыт!*\n\n🎓 Заходи в закрытый канал с уроками:\n{link}\n\n🎁 Также начислено {COURSE['credits']} кредитов для практики. Удачи в обучении!",
+                parse_mode="Markdown", reply_markup=main_kb()
+            )
+        else:
+            await message.answer(
+                f"✅ *Оплата курса прошла!*\n\n🎁 Начислено {COURSE['credits']} кредитов. Доступ к урокам пришлю в ближайшее время.",
+                parse_mode="Markdown", reply_markup=main_kb()
+            )
+            try:
+                await message.bot.send_message(ADMIN_ID, f"🎓 Новая покупка КУРСА! @{message.from_user.username or uid} ({uid}). Выдай доступ — ссылка не задана (/set_course_link).")
+            except Exception:
+                pass
+
+    # Автоматическая регистрация чека в «Мой налог» — только для рублёвых платежей
+    if currency == "RUB":
+        try:
+            if await nalog_is_connected():
+                amount_rub = stars / 100  # сумма в копейках -> рубли
+                receipt_url = await nalog_add_income(item_name, amount_rub)
+                if receipt_url:
+                    await message.answer(
+                        f"🧾 Чек сформирован и отправлен в налоговую.\n[Открыть чек]({receipt_url})",
+                        parse_mode="Markdown", disable_web_page_preview=True
+                    )
+        except Exception as e:
+            logging.error(f"Nalog income error: {e}")
+            # Уведомить админа, чтобы не потерять чек
+            try:
+                await message.bot.send_message(ADMIN_ID, f"⚠️ Не удалось зарегистрировать чек в «Мой налог» (платёж {stars/100}₽). Зарегистрируй вручную. Ошибка: {str(e)[:150]}")
+            except Exception:
+                pass
 
     commission = await process_commission(uid, stars)
     if commission:
@@ -2566,6 +3040,80 @@ async def on_payment(message: Message):
 # ══════════════════════════════════════════════════════
 #  АДМИН
 # ══════════════════════════════════════════════════════
+
+@router.message(Command("nalog_login"))
+async def cmd_nalog_login(message: Message, state: FSMContext):
+    if message.from_user.id != ADMIN_ID: return
+    connected = await nalog_is_connected()
+    status = "✅ уже подключён" if connected else "❌ не подключён"
+    await state.set_state(State_.nalog_phone)
+    await message.answer(
+        f"🧾 *Вход в «Мой налог»* ({status})\n\n"
+        "Введи номер телефона, привязанный к «Мой налог», в формате *79991234567* "
+        "(11 цифр, без + и пробелов):",
+        parse_mode="Markdown"
+    )
+
+@router.message(Command("nalog_status"))
+async def cmd_nalog_status(message: Message):
+    if message.from_user.id != ADMIN_ID: return
+    if await nalog_is_connected():
+        inn = await setting_get("nalog_inn", "—")
+        phone = await setting_get("nalog_phone", "—")
+        await message.answer(f"🧾 «Мой налог»: ✅ подключён\nИНН: {inn}\nТелефон: {phone}\n\nЧеки регистрируются автоматически после каждой оплаты картой.")
+    else:
+        await message.answer("🧾 «Мой налог»: ❌ не подключён.\nВыполни /nalog_login")
+
+@router.message(Command("nalog_logout"))
+async def cmd_nalog_logout(message: Message):
+    if message.from_user.id != ADMIN_ID: return
+    for k in ("nalog_refresh_token", "nalog_access_token", "nalog_token_expires"):
+        await setting_set(k, "")
+    await message.answer("🧾 «Мой налог» отключён. Авторегистрация чеков остановлена.")
+
+@router.message(State_.nalog_phone)
+async def nalog_phone_entered(message: Message, state: FSMContext):
+    if message.from_user.id != ADMIN_ID:
+        await state.clear(); return
+    phone = "".join(ch for ch in (message.text or "") if ch.isdigit())
+    if len(phone) != 11:
+        await message.answer("❌ Нужно 11 цифр, например 79991234567. Попробуй ещё раз:")
+        return
+    try:
+        challenge = await nalog_request_sms(phone)
+    except Exception as e:
+        await state.clear()
+        await message.answer(f"❌ Не удалось запросить SMS. Проверь номер и попробуй снова (/nalog_login).\n{str(e)[:150]}")
+        return
+    await state.update_data(nalog_phone=phone, nalog_challenge=challenge)
+    await state.set_state(State_.nalog_code)
+    await message.answer("📲 Отправил запрос. Введи *код из SMS*:", parse_mode="Markdown")
+
+@router.message(State_.nalog_code)
+async def nalog_code_entered(message: Message, state: FSMContext):
+    if message.from_user.id != ADMIN_ID:
+        await state.clear(); return
+    code = "".join(ch for ch in (message.text or "") if ch.isdigit())
+    data = await state.get_data()
+    phone = data.get("nalog_phone"); challenge = data.get("nalog_challenge")
+    if not code:
+        await message.answer("❌ Введи код из SMS (только цифры):")
+        return
+    try:
+        inn = await nalog_verify_sms(phone, code, challenge)
+        await nalog_access_token()  # сразу получим рабочий токен
+    except Exception as e:
+        await state.clear()
+        await message.answer(f"❌ Не подтвердилось. Начни заново: /nalog_login\n{str(e)[:150]}")
+        return
+    await state.clear()
+    await message.answer(
+        f"✅ *«Мой налог» подключён!*\nИНН: {inn}\n\n"
+        "Теперь после каждой оплаты картой бот будет сам регистрировать доход и отправлять чек покупателю. "
+        "Налог посчитается в приложении «Мой налог».\n\n"
+        "Проверить статус: /nalog_status\nОтключить: /nalog_logout",
+        parse_mode="Markdown"
+    )
 
 @router.message(Command("admin"))
 async def cmd_admin(message: Message):

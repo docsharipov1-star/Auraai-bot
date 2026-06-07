@@ -1,6 +1,6 @@
 """
 ╔══════════════════════════════════════════════════════╗
-║          AuraAI Bot v3.0 — Syntx AI Style            ║
+║          Vatan AI Bot v3.0 — Syntx AI Style            ║
 ║  Reply Keyboard + все разделы + починенные картинки  ║
 ╚══════════════════════════════════════════════════════╝
 
@@ -76,7 +76,7 @@ PLANS_ANNUAL = {
 COURSE = {"name": "Курс «Заработок на ИИ-картинках»", "rub": 2900, "stars": 2400, "credits": 1000}
 
 SALES_PROMPT = (
-    "Ты — дружелюбный и уверенный менеджер по продажам онлайн-курса AuraAI. "
+    "Ты — дружелюбный и уверенный менеджер по продажам онлайн-курса Vatan AI. "
     "Твоя задача — помочь человеку и мягко довести его до покупки курса.\n\n"
     "О КУРСЕ:\n"
     "• Название: курс «Заработок на ИИ-картинках».\n"
@@ -84,7 +84,7 @@ SALES_PROMPT = (
     "• Для кого: для новичков с нуля — студентов, предпринимателей, всех кто хочет новую профессию или подработку из дома. Опыт и диплом не нужны, нужен только телефон.\n"
     "• Что внутри: как обрабатывать фото, делать рекламу и карточки товаров, оживлять снимки в видео, и как брать на этом платные заказы.\n"
     "• Результат: после курса человек умеет делать ИИ-визуал и может брать заказы или делать визуал для своего бизнеса без дизайнера.\n"
-    "• Бонус: при покупке курса начисляется 1 000 кредитов на бота AuraAI, чтобы сразу практиковаться.\n\n"
+    "• Бонус: при покупке курса начисляется 1 000 кредитов на бота Vatan AI, чтобы сразу практиковаться.\n\n"
     "КАК ОБЩАТЬСЯ:\n"
     "• Отвечай коротко, тепло, по-человечески, на «ты». 2-4 предложения. Не повторяй один и тот же текст — каждый ответ разный.\n"
     "• ВСЕГДА заканчивай ответ встречным вопросом, чтобы продолжить диалог (например: «А ты для себя хочешь освоить или для заработка?», «Какой у тебя сейчас доход хочешь добавить?»). Это помогает дожимать.\n"
@@ -94,6 +94,34 @@ SALES_PROMPT = (
     "• Когда чувствуешь интерес — прямо предлагай нажать кнопку «Купить курс» внизу.\n"
     "• Если спрашивают не про курс — кратко ответь и верни разговор к курсу.\n"
     "• Пиши на том языке, на котором пишет человек (русский или таджикский)."
+)
+
+SUPPORT_PROMPT = (
+    "Ты — дружелюбный агент поддержки Telegram-бота Vatan AI. Отвечай тепло, коротко и по делу, на «ты», на языке пользователя (русский или таджикский).\n\n"
+    "ЧТО УМЕЕТ БОТ Vatan AI:\n"
+    "• 💡 Текстовый AI-чат (Claude, GPT-4o, DeepSeek) — вопросы, тексты, помощь.\n"
+    "• 🎨 Дизайн с ИИ — генерация картинок (Nano Banana, GPT Image, DALL-E), редактирование фото, соединение нескольких фото.\n"
+    "• 🎬 Видео будущего — генерация видео (Seedance, Kling), оживление фото в видео, ИИ-аватар с синхронизацией губ (Kling Avatar).\n"
+    "• 🎙 Аудио с ИИ — генерация музыки (Lyria) и озвучка текста голосом (TTS).\n"
+    "• 🗂 Хранитель изображений — сохранение работ.\n"
+    "• 🎓 Обучение — курс по заработку на нейросетях.\n"
+    "• 🔗 Рефералы — приглашаешь друзей и получаешь бонусы.\n\n"
+    "КРЕДИТЫ И ОПЛАТА:\n"
+    "• Всё работает на кредитах, они списываются за каждую генерацию. На старте даются бесплатные кредиты.\n"
+    "• Пополнить: Профиль → 💎 Купить кредиты. Оплата картой (рубли) или Telegram Stars.\n"
+    "• Есть пакеты кредитов и подписки (Basic, Pro, Premium), а также годовые тарифы со скидкой.\n"
+    "• Кредиты не сгорают.\n\n"
+    "ЧАСТЫЕ ВОПРОСЫ:\n"
+    "• Генерация видео/музыки/аватара идёт в фоне 2-4 минуты — можно пользоваться ботом, результат придёт сам.\n"
+    "• Если генерация не удалась — кредиты автоматически возвращаются.\n"
+    "• Чтобы отредактировать фото: Дизайн с ИИ → Редактировать фото → отправить фото → описать что изменить.\n"
+    "• Видео из фото: Видео будущего → Фото в видео → отправить фото → выбрать формат → описать движение.\n"
+    "• Закончились кредиты — пополни в Профиле.\n\n"
+    "ПРАВИЛА:\n"
+    "• Помогай решить проблему пошагово и просто.\n"
+    "• Если вопрос про оплату/возврат, который ты не можешь решить сам, или серьёзная техническая проблема — скажи, что передашь вопрос администратору, и предложи написать ему.\n"
+    "• Не выдумывай функции, которых нет. Если не знаешь — честно скажи и предложи связаться с админом.\n"
+    "• Будь кратким: 2-4 предложения."
 )
 
 CREDIT_PACKS = {
@@ -1151,6 +1179,7 @@ class State_(StatesGroup):
     nalog_phone = State()  # админ: ввод телефона для входа в «Мой налог»
     nalog_code  = State()  # админ: ввод SMS-кода
     course_chat = State()  # чат с ИИ-менеджером курса
+    support_chat = State()  # чат с ИИ-поддержкой
     avatar_photo = State()  # ИИ-аватар: ожидание фото
     avatar_audio = State()  # ИИ-аватар: ожидание аудио или текста
 
@@ -1232,7 +1261,7 @@ async def cmd_start(message: Message):
                     try: await message.bot.send_message(referrer["id"], "🎉 По твоей ссылке зарегистрировался новый пользователь!")
                     except: pass
         bal = await get_balance(message.from_user.id)
-        text = f"✨ *Добро пожаловать в AuraAI!*\n\n🎁 Тебе начислено *{bal} кредитов* для старта\n\nВыбери раздел:"
+        text = f"✨ *Добро пожаловать в Vatan AI!*\n\n🎁 Тебе начислено *{bal} кредитов* для старта\n\nВыбери раздел:"
     else:
         bal = await get_balance(message.from_user.id)
         text = f"👋 С возвращением, *{message.from_user.first_name}*!\n\n💎 Кредиты: *{bal}*\n\nВыбери раздел:"
@@ -1453,17 +1482,76 @@ async def section_knowledge(message: Message):
 
 @router.message(F.text == "❓ Помощь")
 async def section_help(message: Message):
+    b = InlineKeyboardBuilder()
+    b.row(InlineKeyboardButton(text="💬 Чат с поддержкой", callback_data="support_chat"))
     await message.answer(
         "❓ *Помощь*\n\n"
         "💡 *GPTs/Claude/Gemini* — текстовые AI инструменты\n"
-        "🎨 *Дизайн с ИИ* — генерация картинок\n"
-        "🎙 *Аудио с ИИ* — музыка и голос (скоро)\n"
-        "🎬 *Видео будущего* — AI видео (скоро)\n\n"
-        "💎 Кредиты списываются за каждый запрос\n"
-        "🔗 Рефералы — приглашай и зарабатывай Stars\n\n"
-        "🆘 Поддержка: @support",
-        parse_mode="Markdown", reply_markup=main_kb()
+        "🎨 *Дизайн с ИИ* — картинки, обработка и соединение фото\n"
+        "🎙 *Аудио с ИИ* — музыка и озвучка голосом\n"
+        "🎬 *Видео будущего* — видео, фото в видео, говорящие аватары\n"
+        "🎓 *Обучение* — курс по заработку на ИИ\n\n"
+        "💎 Кредиты списываются за каждый запрос (на старте дают бесплатные)\n"
+        "💳 Пополнить: Профиль → Купить кредиты (карта или Stars)\n"
+        "🔗 Рефералы — приглашай и зарабатывай\n\n"
+        "Есть вопрос? Нажми кнопку ниже — отвечу 👇",
+        parse_mode="Markdown", reply_markup=b.as_markup()
     )
+
+def support_chat_kb() -> ReplyKeyboardMarkup:
+    b = ReplyKeyboardBuilder()
+    b.row(KeyboardButton(text="🏠 В главное меню"))
+    return b.as_markup(resize_keyboard=True)
+
+@router.callback_query(F.data == "support_chat")
+async def cb_support_chat(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(State_.support_chat)
+    await callback.message.answer(
+        "💬 Я — поддержка Vatan AI. Опиши свой вопрос или проблему — помогу разобраться.\n\n"
+        "Например: «как пополнить кредиты?», «не пришло видео», «как редактировать фото?»\n\n"
+        "Чтобы выйти — нажми «🏠 В главное меню».",
+        reply_markup=support_chat_kb()
+    )
+    await callback.answer()
+
+@router.message(State_.support_chat, F.text == "🏠 В главное меню")
+async def support_chat_exit(message: Message, state: FSMContext):
+    await state.clear()
+    bal = await get_balance(message.from_user.id)
+    await message.answer(f"🏠 *Главное меню*\n\n💎 Кредиты: *{bal}*", parse_mode="Markdown", reply_markup=main_kb())
+
+@router.message(State_.support_chat)
+async def support_chat_answer(message: Message, state: FSMContext):
+    data = await state.get_data()
+    history = data.get("support_history", [])
+    thinking = await message.answer("✍️ ...")
+    reply = None
+    for mid in ("claude", "gpt4o", "deepseek"):
+        try:
+            r = await call_text_ai(message.text or "", SUPPORT_PROMPT, mid, history_msgs=history, timeout_s=30)
+            if r and not r.startswith("❌"):
+                reply = r
+                break
+        except Exception as e:
+            logging.error(f"Support chat [{mid}] error: {e}")
+            continue
+    try:
+        await thinking.delete()
+    except Exception:
+        pass
+    if not reply:
+        await message.answer(
+            "Сейчас не могу ответить — попробуй ещё раз через минуту 🙏\n"
+            "Если вопрос срочный — напиши администратору.",
+            reply_markup=support_chat_kb()
+        )
+        return
+    history = history + [
+        {"role": "user", "content": message.text or ""},
+        {"role": "assistant", "content": reply},
+    ]
+    await state.update_data(support_history=history[-12:])
+    await message.answer(reply, reply_markup=support_chat_kb())
 
 # ══════════════════════════════════════════════════════
 #  ПРОФИЛЬ
@@ -1500,7 +1588,7 @@ async def buy_plans(message: Message):
     plan = user["plan"] if user else "free"
 
     text = (
-        "👑 *Подписки AuraAI*\n"
+        "👑 *Подписки Vatan AI*\n"
         "_Чем выше тариф — тем дешевле каждая генерация._\n\n"
 
         f"{'✅ ' if plan=='basic' else ''}⭐️ *Basic — 390₽/мес*\n"
@@ -2132,7 +2220,7 @@ async def tts_start(message: Message, state: FSMContext):
     await message.answer(
         f"🔊 *ElevenLabs TTS*  ·  💎 {cost} кредитов\n\n"
         f"Введи текст который хочешь озвучить:\n\n"
-        f"Пример: *Привет! Добро пожаловать в AuraAI*",
+        f"Пример: *Привет! Добро пожаловать в Vatan AI*",
         parse_mode="Markdown", reply_markup=cancel_kb()
     )
 @router.message(F.text == "🎥 Создать видео Kling")
@@ -2898,7 +2986,7 @@ async def cb_show_annual(callback: CallbackQuery):
 @router.callback_query(F.data == "show_monthly")
 async def cb_show_monthly(callback: CallbackQuery):
     text = (
-        "👑 *Подписки AuraAI* (помесячно)\n\n"
+        "👑 *Подписки Vatan AI* (помесячно)\n\n"
         "⭐️ *Basic — 390₽/мес* · 2 000 кр\n"
         "👑 *Pro — 1 090₽/мес* · 4 500 кр + скидка 25% 🔥\n"
         "💎 *Premium — 2 290₽/мес* · 9 000 кр + безлимит чат + скидка 50% ⭐️\n\n"
@@ -2942,7 +3030,7 @@ async def cb_pay_stars(callback: CallbackQuery):
         if not pack: return
         await callback.bot.send_invoice(
             chat_id=callback.from_user.id,
-            title=f"AuraAI — {pack['name']}",
+            title=f"Vatan AI — {pack['name']}",
             description=f"Пополнение: {pack['credits']} кредитов",
             payload=f"credits_{item_id}",
             currency="XTR",
@@ -2953,7 +3041,7 @@ async def cb_pay_stars(callback: CallbackQuery):
         if not plan: return
         await callback.bot.send_invoice(
             chat_id=callback.from_user.id,
-            title=f"AuraAI {plan['name']}",
+            title=f"Vatan AI {plan['name']}",
             description=f"{plan['credits']} кредитов на год",
             payload=f"planyear_{item_id}",
             currency="XTR",
@@ -2973,11 +3061,11 @@ async def cb_pay_stars(callback: CallbackQuery):
         if not plan: return
         await callback.bot.send_invoice(
             chat_id=callback.from_user.id,
-            title=f"AuraAI {plan['name']} — 30 дней",
+            title=f"Vatan AI {plan['name']} — 30 дней",
             description=plan["description"],
             payload=f"plan_{item_id}",
             currency="XTR",
-            prices=[LabeledPrice(label=f"AuraAI {plan['name']}", amount=plan["stars"])],
+            prices=[LabeledPrice(label=f"Vatan AI {plan['name']}", amount=plan["stars"])],
         )
     await callback.answer()
 
@@ -2995,7 +3083,7 @@ async def cb_pay_rub(callback: CallbackQuery):
         if not pack: return
         await callback.bot.send_invoice(
             chat_id=callback.from_user.id,
-            title=f"AuraAI — {pack['name']}",
+            title=f"Vatan AI — {pack['name']}",
             description=f"Пополнение: {pack['credits']} кредитов",
             payload=f"credits_{item_id}",
             provider_token=YOOKASSA_TOKEN,
@@ -3008,7 +3096,7 @@ async def cb_pay_rub(callback: CallbackQuery):
         if not plan: return
         await callback.bot.send_invoice(
             chat_id=callback.from_user.id,
-            title=f"AuraAI {plan['name']}",
+            title=f"Vatan AI {plan['name']}",
             description=f"{plan['credits']} кредитов на год",
             payload=f"planyear_{item_id}",
             provider_token=YOOKASSA_TOKEN,
@@ -3032,12 +3120,12 @@ async def cb_pay_rub(callback: CallbackQuery):
         if not plan: return
         await callback.bot.send_invoice(
             chat_id=callback.from_user.id,
-            title=f"AuraAI {plan['name']} — 30 дней",
+            title=f"Vatan AI {plan['name']} — 30 дней",
             description=plan["description"],
             payload=f"plan_{item_id}",
             provider_token=YOOKASSA_TOKEN,
             currency="RUB",
-            prices=[LabeledPrice(label=f"AuraAI {plan['name']}", amount=plan["rub"] * 100)],
+            prices=[LabeledPrice(label=f"Vatan AI {plan['name']}", amount=plan["rub"] * 100)],
             need_email=True, send_email_to_provider=True,
         )
     await callback.answer()
@@ -3052,24 +3140,24 @@ async def on_payment(message: Message):
     currency = message.successful_payment.currency
     uid     = message.from_user.id
 
-    item_name = "Доступ к сервису AuraAI"
+    item_name = "Доступ к сервису Vatan AI"
     if payload.startswith("credits_"):
         pack = CREDIT_PACKS.get(payload.replace("credits_", ""))
         if pack:
-            item_name = f"AuraAI — {pack['name']}"
+            item_name = f"Vatan AI — {pack['name']}"
             new_bal = await add_credits(uid, pack["credits"], "purchase", f"Покупка: {pack['name']}")
             await message.answer(f"✅ *Оплата прошла!*\n\n💎 +{pack['credits']} кредитов\n💰 Баланс: *{new_bal} кр.*", parse_mode="Markdown", reply_markup=main_kb())
     elif payload.startswith("planyear_"):
         plan = PLANS_ANNUAL.get(payload.replace("planyear_", ""))
         if plan:
-            item_name = f"AuraAI {plan['name']}"
+            item_name = f"Vatan AI {plan['name']}"
             await set_plan(uid, plan["base"], plan["credits"], plan["days"])
             bal = await get_balance(uid)
             await message.answer(f"✅ *{plan['name']} активирован на год!*\n\n💎 +{plan['credits']} кредитов\n💰 Баланс: *{bal} кр.*", parse_mode="Markdown", reply_markup=main_kb())
     elif payload.startswith("plan_"):
         plan = PLANS.get(payload.replace("plan_", ""))
         if plan:
-            item_name = f"AuraAI {plan['name']}"
+            item_name = f"Vatan AI {plan['name']}"
             await set_plan(uid, payload.replace("plan_", ""), plan["credits"], plan["days"])
             bal = await get_balance(uid)
             await message.answer(f"✅ *{plan['name']} активирован!*\n\n💎 +{plan['credits']} кредитов\n💰 Баланс: *{bal} кр.*", parse_mode="Markdown", reply_markup=main_kb())
@@ -3204,7 +3292,7 @@ async def cmd_admin(message: Message):
     if message.from_user.id != ADMIN_ID: return
     total, paid, today, stars = await admin_stats()
     await message.answer(
-        f"🔐 *Админ AuraAI v3*\n\n👥 Всего: *{total}*\n👑 Платных: *{paid}*\n📨 Сегодня: *{today}*\n⭐️ Stars: *{stars}*",
+        f"🔐 *Админ Vatan AI v3*\n\n👥 Всего: *{total}*\n👑 Платных: *{paid}*\n📨 Сегодня: *{today}*\n⭐️ Stars: *{stars}*",
         parse_mode="Markdown"
     )
 
@@ -3383,7 +3471,7 @@ async def main():
     dp  = Dispatcher(storage=MemoryStorage())
     dp.include_router(router)
 
-    logging.info(f"🚀 AuraAI Bot v3.1 ФОРМАТЫ запущен | @{BOT_USERNAME}")
+    logging.info(f"🚀 Vatan AI Bot v3.1 ФОРМАТЫ запущен | @{BOT_USERNAME}")
     logging.info("✅ ВЕРСИЯ С ВЫБОРОМ ФОРМАТА 9:16 16:9 — если видишь это, новый код работает")
     await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
 

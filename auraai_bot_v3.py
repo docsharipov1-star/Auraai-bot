@@ -893,7 +893,7 @@ async def generate_video_kling(prompt: str, aspect: str = "16:9") -> str:
                 raise Exception(f"Kling failed: {result}")
         raise Exception("Таймаут генерации видео (3 мин)")
 
-async def generate_img2video(image_url: str, prompt: str) -> str:
+async def generate_img2video(image_url: str, prompt: str, aspect: str = "16:9") -> str:
     """Kling img2video — фото в видео через aimlapi.com"""
     if not AIML_KEY:
         raise Exception("AIML_KEY не настроен")
@@ -906,7 +906,7 @@ async def generate_img2video(image_url: str, prompt: str) -> str:
                 "image_url": image_url,
                 "prompt": prompt,
                 "duration": "5",
-                "aspect_ratio": "16:9"
+                "aspect_ratio": aspect
             }
         )
         resp.raise_for_status()
@@ -1055,7 +1055,7 @@ def model_kb() -> ReplyKeyboardMarkup:
 def cancel_kb() -> ReplyKeyboardMarkup:
     b = ReplyKeyboardBuilder()
     b.row(KeyboardButton(text="❌ Отмена"))
-    return b.as_markup(resize_keyboard=True)
+    return b.as_markup(resize_keyboard=True, input_field_placeholder="Введи текст или отправь фото…")
 
 def profile_kb() -> ReplyKeyboardMarkup:
     b = ReplyKeyboardBuilder()
@@ -1146,6 +1146,7 @@ class State_(StatesGroup):
     editing_more       = State()  # продолжение редактирования того же результата
     waiting_combine    = State()  # ожидание фото для соединения
     waiting_video_photo = State()
+    waiting_video_photo_aspect = State()
     waiting_video_photo_text = State()
     nalog_phone = State()  # админ: ввод телефона для входа в «Мой налог»
     nalog_code  = State()  # админ: ввод SMS-кода
@@ -1372,8 +1373,36 @@ async def to_main(message: Message, state: FSMContext):
 
 @router.message(F.text == "❌ Отмена")
 async def cancel(message: Message, state: FSMContext):
+    cur = await state.get_state()
+    if cur is None:
+        await message.answer("Главное меню 👇", reply_markup=main_kb())
+        return
+    b = InlineKeyboardBuilder()
+    b.row(InlineKeyboardButton(text="✅ Да, отменить", callback_data="do_cancel"))
+    b.row(InlineKeyboardButton(text="↩️ Нет, продолжить", callback_data="resume_flow"))
+    await message.answer("Точно отменить? Текущий прогресс сбросится.", reply_markup=b.as_markup())
+
+@router.callback_query(F.data == "do_cancel")
+async def cb_do_cancel(callback: CallbackQuery, state: FSMContext):
     await state.clear()
-    await message.answer("Отменено.", reply_markup=main_kb())
+    try:
+        combine_buffer.pop(callback.from_user.id, None)
+    except Exception:
+        pass
+    try:
+        await callback.message.edit_text("❌ Отменено.")
+    except Exception:
+        pass
+    await callback.message.answer("Главное меню 👇", reply_markup=main_kb())
+    await callback.answer()
+
+@router.callback_query(F.data == "resume_flow")
+async def cb_resume_flow(callback: CallbackQuery, state: FSMContext):
+    try:
+        await callback.message.edit_text("👍 Продолжаем — отправь данные дальше.")
+    except Exception:
+        pass
+    await callback.answer("Продолжаем")
 
 @router.message(F.text == "🗑 Очистить историю чата")
 async def clear_chat_history(message: Message):
@@ -2341,16 +2370,42 @@ async def img2video_photo_received(message: Message, state: FSMContext):
     file = await message.bot.get_file(photo.file_id)
     file_url = f"https://api.telegram.org/file/bot{message.bot.token}/{file.file_path}"
     user_video_photo_urls[message.from_user.id] = file_url
-    await state.set_state(State_.waiting_video_photo_text)
+    await state.set_state(State_.waiting_video_photo_aspect)
+    b = ReplyKeyboardBuilder()
+    b.row(KeyboardButton(text="📱 9:16 Вертикальное"))
+    b.row(KeyboardButton(text="🖥 16:9 Горизонтальное"))
+    b.row(KeyboardButton(text="📷 3:4"))
+    b.row(KeyboardButton(text="❌ Отмена"))
     await message.answer(
         "✅ Фото получено!\n\n"
-        "2️⃣ Опиши что должно происходить в видео:\n\n"
+        "2️⃣ Выбери формат видео:",
+        reply_markup=b.as_markup(resize_keyboard=True)
+    )
+
+VIDEO_PHOTO_ASPECTS = {
+    "📱 9:16 Вертикальное": "9:16",
+    "🖥 16:9 Горизонтальное": "16:9",
+    "📷 3:4": "3:4",
+}
+
+@router.message(State_.waiting_video_photo_aspect, F.text.in_(VIDEO_PHOTO_ASPECTS.keys()))
+async def img2video_aspect_received(message: Message, state: FSMContext):
+    aspect = VIDEO_PHOTO_ASPECTS[message.text]
+    await state.update_data(video_aspect=aspect)
+    await state.set_state(State_.waiting_video_photo_text)
+    await message.answer(
+        f"Формат: *{aspect}* ✅\n\n"
+        "3️⃣ Опиши что должно происходить в видео:\n\n"
         "Примеры:\n"
         "• *плавное движение камеры вперёд*\n"
         "• *волосы развеваются на ветру*\n"
         "• *облака медленно плывут*",
         parse_mode="Markdown", reply_markup=cancel_kb()
     )
+
+@router.message(State_.waiting_video_photo_aspect, F.text != "❌ Отмена")
+async def img2video_aspect_invalid(message: Message):
+    await message.answer("📐 Выбери формат кнопкой: 9:16, 16:9 или 3:4")
 
 @router.message(State_.waiting_video_photo, F.text != "❌ Отмена")
 async def img2video_no_photo(message: Message):
@@ -2365,6 +2420,7 @@ async def img2video_video_process(message: Message, state: FSMContext):
 
     data = await state.get_data()
     cost = data.get("cost", 100)
+    aspect = data.get("video_aspect", "16:9")
     image_url = user_video_photo_urls.get(message.from_user.id)
 
     if not image_url:
@@ -2391,7 +2447,7 @@ async def img2video_video_process(message: Message, state: FSMContext):
 
     async def img2video_task():
         try:
-            url = await generate_img2video(image_url, prompt)
+            url = await generate_img2video(image_url, prompt, aspect)
             async with httpx.AsyncClient(timeout=180) as client:
                 vr = await client.get(url)
                 vr.raise_for_status()

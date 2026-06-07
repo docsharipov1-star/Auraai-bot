@@ -921,6 +921,10 @@ async def generate_video_kling(prompt: str, aspect: str = "16:9") -> str:
                 raise Exception(f"Kling failed: {result}")
         raise Exception("Таймаут генерации видео (3 мин)")
 
+async def generate_video_seedance(prompt: str, aspect: str = "16:9") -> str:
+    """Генерация видео по тексту (через надёжный движок Kling)."""
+    return await generate_video_kling(prompt, aspect)
+
 async def generate_img2video(image_url: str, prompt: str, aspect: str = "16:9") -> str:
     """Kling img2video — фото в видео через aimlapi.com"""
     if not AIML_KEY:

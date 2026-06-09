@@ -18,6 +18,7 @@ import hashlib
 import logging
 import os
 import json
+import uuid
 import httpx
 from datetime import datetime, timedelta
 
@@ -51,6 +52,8 @@ AIML_KEY      = os.getenv("AIML_KEY", "")
 ADMIN_ID      = int(os.getenv("ADMIN_ID", "0"))
 BOT_USERNAME  = os.getenv("BOT_USERNAME", "GetAuraAI_bot")
 YOOKASSA_TOKEN = os.getenv("YOOKASSA_TOKEN", "")  # provider token из BotFather (ЮKassa)
+YOOKASSA_SHOP_ID = os.getenv("YOOKASSA_SHOP_ID", "")      # ShopID из кабинета ЮKassa (для оплаты по ссылке)
+YOOKASSA_SECRET_KEY = os.getenv("YOOKASSA_SECRET_KEY", "")  # секретный ключ ЮKassa (для оплаты по ссылке)
 DB_PATH       = "/app/data/auraai.db"
 FREE_CREDITS  = 150
 REFERRAL_BONUS = 50
@@ -3074,76 +3077,200 @@ async def cb_pay_stars(callback: CallbackQuery):
         )
     await callback.answer()
 
-@router.callback_query(F.data.startswith("payrub_"))
-def yk_receipt(label: str, rub: int) -> str:
-    """Данные чека для ЮKassa (54-ФЗ), самозанятый — без НДС (vat_code=1)."""
-    return json.dumps({
-        "receipt": {
-            "items": [{
-                "description": label[:128],
-                "quantity": "1.00",
-                "amount": {"value": f"{rub}.00", "currency": "RUB"},
-                "vat_code": 1,
-                "payment_mode": "full_payment",
-                "payment_subject": "service"
-            }]
-        }
-    }, ensure_ascii=False)
+async def yk_create_payment(amount_rub: int, description: str, metadata: dict) -> tuple:
+    """Создаёт платёж в ЮKassa по API. Возвращает (payment_id, confirmation_url)."""
+    if not (YOOKASSA_SHOP_ID and YOOKASSA_SECRET_KEY):
+        raise Exception("YOOKASSA_SHOP_ID / YOOKASSA_SECRET_KEY не настроены")
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(
+            "https://api.yookassa.ru/v3/payments",
+            auth=(YOOKASSA_SHOP_ID, YOOKASSA_SECRET_KEY),
+            headers={"Idempotence-Key": str(uuid.uuid4()), "Content-Type": "application/json"},
+            json={
+                "amount": {"value": f"{amount_rub}.00", "currency": "RUB"},
+                "capture": True,
+                "confirmation": {"type": "redirect", "return_url": f"https://t.me/{BOT_USERNAME}"},
+                "description": description[:128],
+                "metadata": metadata,
+            },
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    return data["id"], data["confirmation"]["confirmation_url"]
 
+async def yk_check_payment(payment_id: str) -> dict:
+    """Возвращает данные платежа ЮKassa (status, metadata и т.д.)."""
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.get(
+            f"https://api.yookassa.ru/v3/payments/{payment_id}",
+            auth=(YOOKASSA_SHOP_ID, YOOKASSA_SECRET_KEY),
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+async def grant_purchase(bot, uid: int, kind: str, item_id: str) -> str:
+    """Начисляет покупку пользователю. Возвращает текст для пользователя."""
+    item_name = "Доступ к сервису Vatan AI"
+    amount_rub = 0
+    text = "✅ Оплата прошла!"
+    if kind == "credits":
+        pack = CREDIT_PACKS.get(item_id)
+        if not pack:
+            return "✅ Оплата прошла."
+        item_name = f"Vatan AI — {pack['name']}"; amount_rub = pack["rub"]
+        new_bal = await add_credits(uid, pack["credits"], "purchase", f"Покупка: {pack['name']}")
+        text = f"✅ *Оплата прошла!*\n\n💎 +{pack['credits']} кредитов\n💰 Баланс: *{new_bal} кр.*"
+    elif kind == "planyear":
+        plan = PLANS_ANNUAL.get(item_id)
+        if not plan:
+            return "✅ Оплата прошла."
+        item_name = f"Vatan AI {plan['name']}"; amount_rub = plan["rub"]
+        await set_plan(uid, plan["base"], plan["credits"], plan["days"])
+        bal = await get_balance(uid)
+        text = f"✅ *{plan['name']} активирован на год!*\n\n💎 +{plan['credits']} кредитов\n💰 Баланс: *{bal} кр.*"
+    elif kind == "plan":
+        plan = PLANS.get(item_id)
+        if not plan:
+            return "✅ Оплата прошла."
+        item_name = f"Vatan AI {plan['name']}"; amount_rub = plan["rub"]
+        await set_plan(uid, item_id, plan["credits"], plan["days"])
+        bal = await get_balance(uid)
+        text = f"✅ *{plan['name']} активирован!*\n\n💎 +{plan['credits']} кредитов\n💰 Баланс: *{bal} кр.*"
+    elif kind == "course":
+        item_name = COURSE["name"]; amount_rub = COURSE["rub"]
+        await add_credits(uid, COURSE["credits"], "purchase", "Бонус за курс")
+        link = await setting_get("course_link", "")
+        if link:
+            text = f"✅ *Доступ к курсу открыт!*\n\n🎓 Уроки здесь:\n{link}\n\n🎁 Начислено {COURSE['credits']} кредитов."
+        else:
+            text = f"✅ *Оплата курса прошла!*\n\n🎁 Начислено {COURSE['credits']} кредитов. Доступ к урокам пришлю в ближайшее время."
+            try:
+                await bot.send_message(ADMIN_ID, f"🎓 Новая покупка КУРСА (картой)! Пользователь {uid}. Выдай доступ (/set_course_link).")
+            except Exception:
+                pass
+
+    # Чек в «Мой налог»
+    try:
+        if await nalog_is_connected() and amount_rub:
+            receipt_url = await nalog_add_income(item_name, amount_rub)
+            if receipt_url:
+                text += f"\n\n🧾 [Чек отправлен в налоговую]({receipt_url})"
+    except Exception as e:
+        logging.error(f"Nalog income error (yk): {e}")
+        try:
+            await bot.send_message(ADMIN_ID, f"⚠️ Чек в «Мой налог» не зарегистрирован ({amount_rub}₽). Ошибка: {str(e)[:150]}")
+        except Exception:
+            pass
+
+    # Реферальная комиссия (в копейках, как в Stars-платежах)
+    try:
+        commission = await process_commission(uid, amount_rub * 100)
+        if commission:
+            info = REFERRAL_LEVELS[commission["level"]]
+            await bot.send_message(commission["referrer_id"],
+                f"💰 *Реферальная комиссия!*\n\n{info['emoji']} {info['name']} ({commission['percent']}%)\nНачислено: *+{commission['credits_earned']} кр.*", parse_mode="Markdown")
+    except Exception:
+        pass
+
+    return text
+
+@router.callback_query(F.data.startswith("payrub_"))
 async def cb_pay_rub(callback: CallbackQuery):
-    if not YOOKASSA_TOKEN:
+    if not (YOOKASSA_SHOP_ID and YOOKASSA_SECRET_KEY):
         await callback.message.answer(
             "💳 Оплата картой скоро будет доступна. Пока используй ⭐️ Telegram Stars.",
         )
         await callback.answer()
         return
     _, kind, item_id = callback.data.split("_", 2)
+    uid = callback.from_user.id
 
-    title = description = payload = label = None
+    description = None
     amount = 0
     if kind == "credits":
         pack = CREDIT_PACKS.get(item_id)
         if not pack:
             await callback.answer(); return
-        title = f"Vatan AI — {pack['name']}"
-        description = f"Пополнение: {pack['credits']} кредитов"
-        payload = f"credits_{item_id}"; label = pack["name"]; amount = pack["rub"]
+        description = f"Vatan AI — {pack['name']} ({pack['credits']} кредитов)"; amount = pack["rub"]
     elif kind == "planyear":
         plan = PLANS_ANNUAL.get(item_id)
         if not plan:
             await callback.answer(); return
-        title = f"Vatan AI {plan['name']}"
-        description = f"{plan['credits']} кредитов на год"
-        payload = f"planyear_{item_id}"; label = plan["name"]; amount = plan["rub"]
+        description = f"Vatan AI {plan['name']} — подписка на год"; amount = plan["rub"]
     elif kind == "course":
-        title = COURSE["name"]
-        description = "Доступ к курсу + 1000 кредитов"
-        payload = "course_main"; label = COURSE["name"]; amount = COURSE["rub"]
+        description = COURSE["name"]; amount = COURSE["rub"]
     else:
         plan = PLANS.get(item_id)
         if not plan:
             await callback.answer(); return
-        title = f"Vatan AI {plan['name']} — 30 дней"
-        description = plan["description"]
-        payload = f"plan_{item_id}"; label = f"Vatan AI {plan['name']}"; amount = plan["rub"]
+        kind = "plan"
+        description = f"Vatan AI {plan['name']} — 30 дней"; amount = plan["rub"]
 
+    await callback.answer()
     try:
-        await callback.bot.send_invoice(
-            chat_id=callback.from_user.id,
-            title=title,
-            description=description,
-            payload=payload,
-            provider_token=YOOKASSA_TOKEN,
-            currency="RUB",
-            prices=[LabeledPrice(label=label, amount=amount * 100)],
+        payment_id, pay_url = await yk_create_payment(
+            amount, description,
+            metadata={"uid": str(uid), "kind": kind, "item_id": item_id},
         )
     except Exception as e:
-        logging.error(f"send_invoice RUB error: {type(e).__name__}: {e}")
+        logging.error(f"yk_create_payment error: {type(e).__name__}: {e}")
         await callback.message.answer(
-            f"⚠️ Ошибка создания оплаты картой:\n\n{type(e).__name__}: {e}\n\n"
-            "Попробуй ⭐️ Telegram Stars или напиши в поддержку."
+            "⚠️ Не удалось создать оплату картой. Попробуй ещё раз чуть позже "
+            "или используй ⭐️ Telegram Stars."
         )
-    await callback.answer()
+        return
+
+    b = InlineKeyboardBuilder()
+    b.row(InlineKeyboardButton(text="🔗 Оплатить картой", url=pay_url))
+    b.row(InlineKeyboardButton(text="✅ Я оплатил — проверить", callback_data=f"ykcheck_{payment_id}"))
+    await callback.message.answer(
+        f"💳 *Оплата картой*\n\n{description}\nСумма: *{amount} ₽*\n\n"
+        "1️⃣ Нажми «🔗 Оплатить картой» и заверши оплату\n"
+        "2️⃣ Вернись сюда и нажми «✅ Я оплатил — проверить»",
+        parse_mode="Markdown", reply_markup=b.as_markup(),
+    )
+
+@router.callback_query(F.data.startswith("ykcheck_"))
+async def cb_yk_check(callback: CallbackQuery):
+    payment_id = callback.data[len("ykcheck_"):]
+    await callback.answer("Проверяю оплату…")
+    try:
+        pay = await yk_check_payment(payment_id)
+    except Exception as e:
+        logging.error(f"yk_check_payment error: {type(e).__name__}: {e}")
+        await callback.message.answer("⚠️ Не удалось проверить оплату. Попробуй ещё раз через минуту.")
+        return
+
+    status = pay.get("status")
+    if status == "succeeded":
+        # защита от повторного начисления
+        already = await db_get("SELECT 1 FROM payments WHERE product_id=?", (f"yk_{payment_id}",))
+        if already:
+            await callback.message.answer("✅ Эта оплата уже зачислена. Баланс пополнен ранее.")
+            return
+        meta = pay.get("metadata", {}) or {}
+        uid = int(meta.get("uid", callback.from_user.id))
+        kind = meta.get("kind", "credits")
+        item_id = meta.get("item_id", "")
+        amount_rub = int(float(pay.get("amount", {}).get("value", "0")))
+        text = await grant_purchase(callback.bot, uid, kind, item_id)
+        await db_run(
+            "INSERT INTO payments (user_id,type,product_id,stars) VALUES (?,?,?,?)",
+            (uid, "purchase", f"yk_{payment_id}", amount_rub * 100),
+        )
+        try:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+        await callback.message.answer(text, parse_mode="Markdown", reply_markup=main_kb())
+    elif status in ("pending", "waiting_for_capture"):
+        await callback.message.answer(
+            "⏳ Оплата ещё не завершена. Заверши оплату на странице ЮKassa и нажми «✅ Я оплатил — проверить» ещё раз."
+        )
+    elif status == "canceled":
+        await callback.message.answer("❌ Платёж отменён. Можешь начать оплату заново.")
+    else:
+        await callback.message.answer("⏳ Статус оплаты пока не определён. Попробуй проверить ещё раз через минуту.")
 
 @router.pre_checkout_query()
 async def pre_checkout(query: PreCheckoutQuery): await query.answer(ok=True)

@@ -3098,59 +3098,50 @@ async def cb_pay_rub(callback: CallbackQuery):
         await callback.answer()
         return
     _, kind, item_id = callback.data.split("_", 2)
+
+    title = description = payload = label = None
+    amount = 0
     if kind == "credits":
         pack = CREDIT_PACKS.get(item_id)
-        if not pack: return
-        await callback.bot.send_invoice(
-            chat_id=callback.from_user.id,
-            title=f"Vatan AI — {pack['name']}",
-            description=f"Пополнение: {pack['credits']} кредитов",
-            payload=f"credits_{item_id}",
-            provider_token=YOOKASSA_TOKEN,
-            currency="RUB",
-            prices=[LabeledPrice(label=pack["name"], amount=pack["rub"] * 100)],
-            need_email=True, send_email_to_provider=True,
-            provider_data=yk_receipt(pack["name"], pack["rub"]),
-        )
+        if not pack:
+            await callback.answer(); return
+        title = f"Vatan AI — {pack['name']}"
+        description = f"Пополнение: {pack['credits']} кредитов"
+        payload = f"credits_{item_id}"; label = pack["name"]; amount = pack["rub"]
     elif kind == "planyear":
         plan = PLANS_ANNUAL.get(item_id)
-        if not plan: return
-        await callback.bot.send_invoice(
-            chat_id=callback.from_user.id,
-            title=f"Vatan AI {plan['name']}",
-            description=f"{plan['credits']} кредитов на год",
-            payload=f"planyear_{item_id}",
-            provider_token=YOOKASSA_TOKEN,
-            currency="RUB",
-            prices=[LabeledPrice(label=plan["name"], amount=plan["rub"] * 100)],
-            need_email=True, send_email_to_provider=True,
-            provider_data=yk_receipt(plan["name"], plan["rub"]),
-        )
+        if not plan:
+            await callback.answer(); return
+        title = f"Vatan AI {plan['name']}"
+        description = f"{plan['credits']} кредитов на год"
+        payload = f"planyear_{item_id}"; label = plan["name"]; amount = plan["rub"]
     elif kind == "course":
-        await callback.bot.send_invoice(
-            chat_id=callback.from_user.id,
-            title=COURSE["name"],
-            description="Доступ к курсу + 1000 кредитов",
-            payload="course_main",
-            provider_token=YOOKASSA_TOKEN,
-            currency="RUB",
-            prices=[LabeledPrice(label=COURSE["name"], amount=COURSE["rub"] * 100)],
-            need_email=True, send_email_to_provider=True,
-            provider_data=yk_receipt(COURSE["name"], COURSE["rub"]),
-        )
+        title = COURSE["name"]
+        description = "Доступ к курсу + 1000 кредитов"
+        payload = "course_main"; label = COURSE["name"]; amount = COURSE["rub"]
     else:
         plan = PLANS.get(item_id)
-        if not plan: return
+        if not plan:
+            await callback.answer(); return
+        title = f"Vatan AI {plan['name']} — 30 дней"
+        description = plan["description"]
+        payload = f"plan_{item_id}"; label = f"Vatan AI {plan['name']}"; amount = plan["rub"]
+
+    try:
         await callback.bot.send_invoice(
             chat_id=callback.from_user.id,
-            title=f"Vatan AI {plan['name']} — 30 дней",
-            description=plan["description"],
-            payload=f"plan_{item_id}",
+            title=title,
+            description=description,
+            payload=payload,
             provider_token=YOOKASSA_TOKEN,
             currency="RUB",
-            prices=[LabeledPrice(label=f"Vatan AI {plan['name']}", amount=plan["rub"] * 100)],
-            need_email=True, send_email_to_provider=True,
-            provider_data=yk_receipt(f"Vatan AI {plan['name']}", plan["rub"]),
+            prices=[LabeledPrice(label=label, amount=amount * 100)],
+        )
+    except Exception as e:
+        logging.error(f"send_invoice RUB error: {type(e).__name__}: {e}")
+        await callback.message.answer(
+            f"⚠️ Ошибка создания оплаты картой:\n\n{type(e).__name__}: {e}\n\n"
+            "Попробуй ⭐️ Telegram Stars или напиши в поддержку."
         )
     await callback.answer()
 

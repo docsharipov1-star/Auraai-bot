@@ -1,4 +1,3 @@
-
 """
 ╔══════════════════════════════════════════════════════╗
 ║          Vatan AI Bot v3.0 — Syntx AI Style            ║
@@ -18,6 +17,7 @@ import asyncio
 import hashlib
 import logging
 import os
+import json
 import httpx
 from datetime import datetime, timedelta
 
@@ -50,7 +50,6 @@ DEEPSEEK_KEY  = os.getenv("DEEPSEEK_KEY", "")
 AIML_KEY      = os.getenv("AIML_KEY", "")
 ADMIN_ID      = int(os.getenv("ADMIN_ID", "0"))
 BOT_USERNAME  = os.getenv("BOT_USERNAME", "GetAuraAI_bot")
-SHOWCASE_CHANNEL = os.getenv("SHOWCASE_CHANNEL", "@fayzabadAi")
 YOOKASSA_TOKEN = os.getenv("YOOKASSA_TOKEN", "")  # provider token из BotFather (ЮKassa)
 DB_PATH       = "/app/data/auraai.db"
 FREE_CREDITS  = 150
@@ -162,58 +161,6 @@ SYSTEM_PROMPTS = {
     "rewrite":    "Ты редактор. Переписывай тексты улучшая стиль, грамматику и читаемость.",
     "idea":       "Ты креативный директор. Генерируй свежие идеи, концепции и решения.",
 }
-
-# ══════════════════════════════════════════════════════
-#  SHOWCASE — авто-постинг результатов в канал
-# ══════════════════════════════════════════════════════
-
-import time as _sc_time
-_sc_last: dict[int, float] = {}
-_SC_COOLDOWN = 600  # 10 минут между постами одного пользователя
-
-_SC_TOOL_NAMES = {
-    "image_nano":    "🍌 Nano Banana",
-    "image_gpt":     "🖼 GPT Image",
-    "image_dalle":   "🎨 DALL-E 3",
-    "img2img":       "✏️ Редактирование фото",
-    "img2img_remix": "✏️ Ремикс фото",
-    "combine":       "🔗 Соединение фото",
-    "video_kling":   "🎥 Kling видео",
-    "video_seedance":"🎬 Seedance видео",
-    "img2video":     "📽 Фото → видео",
-}
-
-async def _showcase(bot, uid: int, username: str | None, tool: str, media, prompt: str = ""):
-    """Постит результат в SHOWCASE_CHANNEL без запроса у пользователя."""
-    if not SHOWCASE_CHANNEL:
-        return
-    now = _sc_time.time()
-    if now - _sc_last.get(uid, 0) < _SC_COOLDOWN:
-        return
-    _sc_last[uid] = now
-    label      = _SC_TOOL_NAMES.get(tool, "AI-генерация")
-    user_tag   = f"@{username}" if username else f"пользователь #{uid}"
-    prompt_txt = f"\n💬 _{prompt[:120]}_" if prompt else ""
-    caption    = f"*{label}*{prompt_txt}\n\n👤 {user_tag} · @{BOT_USERNAME}"
-    kb = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="✨ Создать такое же", url=f"https://t.me/{BOT_USERNAME}")
-    ]])
-    try:
-        is_video = tool in {"video_kling", "video_seedance", "img2video"}
-        if isinstance(media, bytes):
-            if is_video:
-                await bot.send_video(SHOWCASE_CHANNEL, BufferedInputFile(media, "result.mp4"),
-                                     caption=caption, parse_mode="Markdown", reply_markup=kb)
-            else:
-                await bot.send_photo(SHOWCASE_CHANNEL, BufferedInputFile(media, "result.jpg"),
-                                     caption=caption, parse_mode="Markdown", reply_markup=kb)
-        else:
-            # media — URL строка (для видео из фоновых задач)
-            await bot.send_video(SHOWCASE_CHANNEL, media,
-                                 caption=caption, parse_mode="Markdown", reply_markup=kb)
-    except Exception as _sc_e:
-        logging.warning(f"Showcase post failed: {_sc_e}")
-        _sc_last.pop(uid, None)
 
 # ══════════════════════════════════════════════════════
 #  БАЗА ДАННЫХ
@@ -2119,7 +2066,6 @@ async def process_image(message: Message, state: FSMContext):
                         parse_mode="Markdown"
                     )
                     await message.answer("Что дальше?", reply_markup=video_kb())
-                    asyncio.create_task(_showcase(message.bot, message.from_user.id, message.from_user.username, "video_kling", video_bytes, _kling_prompt))
                 except Exception as e:
                     await add_credits(message.from_user.id, cost, "bonus", "Возврат: ошибка видео")
                     await message.answer(f"⚠️ Ошибка генерации видео. Кредиты возвращены.\n{str(e)[:100]}", reply_markup=video_kb())
@@ -2180,7 +2126,6 @@ async def process_image(message: Message, state: FSMContext):
                         parse_mode="Markdown"
                     )
                     await message.answer("Что дальше?", reply_markup=video_kb())
-                    asyncio.create_task(_showcase(message.bot, message.from_user.id, message.from_user.username, "video_seedance", video_bytes, _prompt))
                 except Exception as e:
                     await add_credits(message.from_user.id, cost, "bonus", "Возврат: ошибка видео")
                     await message.answer(f"⚠️ Ошибка генерации видео. Кредиты возвращены.\n{str(e)[:100]}", reply_markup=video_kb())
@@ -2218,10 +2163,6 @@ async def process_image(message: Message, state: FSMContext):
                 parse_mode="Markdown"
             )
             await message.answer("Что дальше?", reply_markup=design_kb())
-            _tool_name = {"nano": "image_nano", "gpt": "image_gpt", "dalle": "image_dalle"}.get(model, f"image_{model}")
-            if base_photo:
-                _tool_name = "img2img"
-            asyncio.create_task(_showcase(message.bot, message.from_user.id, message.from_user.username, _tool_name, img_bytes, prompt))
 
         await log_request(message.from_user.id, f"media_{model}", model, cost)
 
@@ -2611,7 +2552,6 @@ async def img2video_video_process(message: Message, state: FSMContext):
                 parse_mode="Markdown"
             )
             await message.answer("Что дальше?", reply_markup=video_kb())
-            asyncio.create_task(_showcase(message.bot, uid, message.from_user.username, "img2video", video_bytes, prompt))
         except Exception as e:
             await add_credits(uid, cost, "bonus", "Возврат: ошибка img2video")
             await message.answer(f"⚠️ Ошибка. Кредиты возвращены.\n{str(e)[:100]}", reply_markup=video_kb())
@@ -2860,7 +2800,6 @@ async def combine_photo_received(message: Message, state: FSMContext):
                 )
                 await message.answer("Что дальше?", reply_markup=design_kb())
                 await log_request(uid, "combine", "nano-banana-pro-edit", cost)
-                asyncio.create_task(_showcase(message.bot, uid, message.from_user.username, "combine", img_bytes, caption))
             except Exception as e:
                 await add_credits(uid, cost, "bonus", "Возврат: ошибка соединения")
                 await message.answer(f"⚠️ Ошибка. Кредиты возвращены.\n{str(e)[:100]}", reply_markup=design_kb())
@@ -2914,7 +2853,6 @@ async def remix_photo_caption(message: Message, state: FSMContext):
         )
         await message.answer("📸 Отправь ещё фото с подписью для редактирования!", reply_markup=design_kb())
         await log_request(message.from_user.id, "img2img_remix", "nano-banana-pro", cost)
-        asyncio.create_task(_showcase(message.bot, message.from_user.id, message.from_user.username, "img2img_remix", img_bytes, prompt))
     except Exception as e:
         await add_credits(message.from_user.id, cost, "bonus", "Возврат: ошибка remix")
         await message.answer(f"⚠️ Ошибка. Кредиты возвращены.\n{str(e)[:100]}", reply_markup=design_kb())
@@ -3137,6 +3075,21 @@ async def cb_pay_stars(callback: CallbackQuery):
     await callback.answer()
 
 @router.callback_query(F.data.startswith("payrub_"))
+def yk_receipt(label: str, rub: int) -> str:
+    """Данные чека для ЮKassa (54-ФЗ), самозанятый — без НДС (vat_code=1)."""
+    return json.dumps({
+        "receipt": {
+            "items": [{
+                "description": label[:128],
+                "quantity": "1.00",
+                "amount": {"value": f"{rub}.00", "currency": "RUB"},
+                "vat_code": 1,
+                "payment_mode": "full_payment",
+                "payment_subject": "service"
+            }]
+        }
+    }, ensure_ascii=False)
+
 async def cb_pay_rub(callback: CallbackQuery):
     if not YOOKASSA_TOKEN:
         await callback.message.answer(
@@ -3157,6 +3110,7 @@ async def cb_pay_rub(callback: CallbackQuery):
             currency="RUB",
             prices=[LabeledPrice(label=pack["name"], amount=pack["rub"] * 100)],
             need_email=True, send_email_to_provider=True,
+            provider_data=yk_receipt(pack["name"], pack["rub"]),
         )
     elif kind == "planyear":
         plan = PLANS_ANNUAL.get(item_id)
@@ -3170,6 +3124,7 @@ async def cb_pay_rub(callback: CallbackQuery):
             currency="RUB",
             prices=[LabeledPrice(label=plan["name"], amount=plan["rub"] * 100)],
             need_email=True, send_email_to_provider=True,
+            provider_data=yk_receipt(plan["name"], plan["rub"]),
         )
     elif kind == "course":
         await callback.bot.send_invoice(
@@ -3181,6 +3136,7 @@ async def cb_pay_rub(callback: CallbackQuery):
             currency="RUB",
             prices=[LabeledPrice(label=COURSE["name"], amount=COURSE["rub"] * 100)],
             need_email=True, send_email_to_provider=True,
+            provider_data=yk_receipt(COURSE["name"], COURSE["rub"]),
         )
     else:
         plan = PLANS.get(item_id)
@@ -3194,6 +3150,7 @@ async def cb_pay_rub(callback: CallbackQuery):
             currency="RUB",
             prices=[LabeledPrice(label=f"Vatan AI {plan['name']}", amount=plan["rub"] * 100)],
             need_email=True, send_email_to_provider=True,
+            provider_data=yk_receipt(f"Vatan AI {plan['name']}", plan["rub"]),
         )
     await callback.answer()
 

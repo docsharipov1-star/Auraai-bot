@@ -19,6 +19,7 @@ import logging
 import os
 import json
 import uuid
+import random
 import httpx
 from datetime import datetime, timedelta
 
@@ -34,6 +35,7 @@ from aiogram.types import (
     CallbackQuery, InlineKeyboardButton, LabeledPrice,
     Message, PreCheckoutQuery, BufferedInputFile,
     ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove,
+    ChatMemberUpdated,
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
 from dotenv import load_dotenv
@@ -1181,6 +1183,7 @@ class State_(StatesGroup):
     waiting_photo_text = State()
     editing_more       = State()  # продолжение редактирования того же результата
     waiting_combine    = State()  # ожидание фото для соединения
+    combine_refine     = State()  # правка результата соединения
     waiting_video_photo = State()
     waiting_video_photo_aspect = State()
     waiting_video_photo_text = State()
@@ -1424,6 +1427,7 @@ async def cb_do_cancel(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     try:
         combine_buffer.pop(callback.from_user.id, None)
+        combine_ready.pop(callback.from_user.id, None)
     except Exception:
         pass
     try:
@@ -2701,7 +2705,9 @@ async def avatar_text_received(message: Message, state: FSMContext):
 
 
 # ── Соединение нескольких фото ──
-combine_buffer: dict[int, dict] = {}  # uid -> {"photos": [...], "caption": str, "task": bool}
+combine_buffer: dict[int, dict] = {}   # сборка альбома (временно): uid -> {"photos":[], "caption":"", "processing":False}
+combine_ready: dict[int, dict] = {}    # накоплено в ожидании описания/фото: uid -> {"photos":[...], "caption":""}
+combine_last: dict[int, dict] = {}     # последний успешный запрос (для правок): uid -> {"photos":[...], "caption":...}
 
 @router.message(F.text == "🔗 Соединить фото")
 async def combine_start(message: Message, state: FSMContext):
@@ -2713,11 +2719,13 @@ async def combine_start(message: Message, state: FSMContext):
     await state.set_state(State_.waiting_combine)
     await state.update_data(cost=cost)
     combine_buffer.pop(message.from_user.id, None)
+    combine_ready.pop(message.from_user.id, None)
     await message.answer(
-        "🔗 *Соединить фото*  ·  💎 70 кредитов\n\n"
-        "Отправь *2-4 фото одним альбомом* (выбери несколько сразу), "
-        "и в подписи к ним напиши что сделать.\n\n"
-        "Примеры подписи:\n"
+        "🔗 *Соединить фото*  ·  💎 120 кредитов\n\n"
+        "Пришли *2-4 фото* и напиши, что сделать. Можно как удобно:\n"
+        "• фото альбомом *с подписью* — сразу обработаю\n"
+        "• или сначала фото, *потом* описание отдельным сообщением\n\n"
+        "Примеры:\n"
         "• *посади этого человека на этот фон*\n"
         "• *объедини обоих людей на одном фото*\n"
         "• *надень одежду со второго фото на человека с первого*",
@@ -2727,8 +2735,54 @@ async def combine_start(message: Message, state: FSMContext):
 @router.message(State_.waiting_combine, F.text == "❌ Отмена")
 async def combine_cancel(message: Message, state: FSMContext):
     combine_buffer.pop(message.from_user.id, None)
+    combine_ready.pop(message.from_user.id, None)
     await state.clear()
     await message.answer("Отменено.", reply_markup=design_kb())
+
+async def _combine_run(message: Message, state: FSMContext, uid: int, photos: list, caption: str):
+    """Списывает кредиты, генерирует и показывает результат с кнопкой правки."""
+    photos = photos[:4]
+    data = await state.get_data()
+    cost = data.get("cost", 120)
+    ok = await use_credits(uid, "combine", cost)
+    if not ok:
+        await message.answer("❌ Недостаточно кредитов.", reply_markup=profile_kb())
+        await state.clear()
+        return
+    await state.clear()
+
+    thinking = await message.answer(
+        f"🔗 Соединяю {len(photos)} фото... (~20-40 сек)",
+        reply_markup=ReplyKeyboardRemove()
+    )
+    try:
+        img_bytes, result_url = await generate_combine(photos, caption)
+        bal = await get_balance(uid)
+        try:
+            await thinking.delete()
+        except Exception:
+            pass
+        combine_last[uid] = {"photos": photos, "caption": caption}
+        await message.answer_photo(
+            BufferedInputFile(img_bytes, filename="combined.png"),
+            caption="✅ Готово! NanoBanana PRO"
+        )
+        b = InlineKeyboardBuilder()
+        b.row(InlineKeyboardButton(text="✏️ Исправить результат", callback_data="combine_refine"))
+        if result_url:
+            b.row(InlineKeyboardButton(text="📥 Скачать в высоком качестве", url=result_url))
+        await message.answer(
+            f"📌 Запрос: _{caption}_\n\n"
+            f"💎 Потрачено: *{cost} кр.* · Остаток: *{bal} кр.*\n\n"
+            f"Не то? Нажми «✏️ Исправить результат» и напиши, что поменять.",
+            parse_mode="Markdown", reply_markup=b.as_markup()
+        )
+        await message.answer("Что дальше?", reply_markup=design_kb())
+        await log_request(uid, "combine", "nano-banana-pro-edit", cost)
+    except Exception as e:
+        await add_credits(uid, cost, "bonus", "Возврат: ошибка соединения")
+        await message.answer(f"⚠️ Ошибка. Кредиты возвращены.\n{str(e)[:100]}", reply_markup=design_kb())
+        logging.error(f"Combine error: {e}")
 
 @router.message(State_.waiting_combine, F.photo)
 async def combine_photo_received(message: Message, state: FSMContext):
@@ -2743,76 +2797,95 @@ async def combine_photo_received(message: Message, state: FSMContext):
     if message.caption:
         combine_buffer[uid]["caption"] = message.caption
 
-    # Запустить отложенную обработку (ждём пока придут все фото альбома)
+    # Отложенная обработка — ждём, пока придут все фото альбома
     if not combine_buffer[uid]["processing"]:
         combine_buffer[uid]["processing"] = True
 
         async def process_after_delay():
-            await asyncio.sleep(2.5)  # ждём остальные фото альбома
-            buf = combine_buffer.get(uid)
+            await asyncio.sleep(2.5)
+            buf = combine_buffer.pop(uid, None)
             if not buf:
                 return
-            photos = buf["photos"]
-            caption = buf["caption"]
-            combine_buffer.pop(uid, None)
+            # объединяем с уже накопленным (фото/описание из прошлых сообщений)
+            prev = combine_ready.get(uid, {"photos": [], "caption": ""})
+            photos = prev["photos"] + buf["photos"]
+            caption = buf["caption"] or prev["caption"]
+            combine_ready[uid] = {"photos": photos, "caption": caption}
 
             if len(photos) < 2:
                 await message.answer(
-                    "❌ Нужно минимум 2 фото. Отправь несколько фото одним альбомом.",
+                    "📸 Принял 1 фото. Пришли ещё хотя бы одно (можно альбомом).",
                     reply_markup=cancel_kb()
                 )
                 return
-
             if not caption:
                 await message.answer(
-                    "❌ Не вижу подписи. Отправь фото ещё раз и добавь в подписи что сделать "
-                    "(например: *объедини этих людей*).",
+                    f"📸 Принял {len(photos)} фото. Теперь напиши, что сделать "
+                    f"(например: *объедини обоих людей на одном фото*).",
                     parse_mode="Markdown", reply_markup=cancel_kb()
                 )
                 return
-
-            data = await state.get_data()
-            cost = data.get("cost", 120)
-            ok = await use_credits(uid, "combine", cost)
-            if not ok:
-                await message.answer("❌ Недостаточно кредитов.", reply_markup=profile_kb())
-                await state.clear()
-                return
-            await state.clear()
-
-            thinking = await message.answer(
-                f"🔗 Соединяю {len(photos)} фото... (~20-40 сек)",
-                reply_markup=ReplyKeyboardRemove()
-            )
-            try:
-                img_bytes, result_url = await generate_combine(photos, caption)
-                bal = await get_balance(uid)
-                try:
-                    await thinking.delete()
-                except Exception:
-                    pass
-                await message.answer_photo(
-                    BufferedInputFile(img_bytes, filename="combined.png"),
-                    caption="✅ Готово! NanoBanana PRO"
-                )
-                await message.answer(
-                    f"📌 Запрос: _{caption}_\n\n"
-                    f"💎 Потрачено: *{cost} кр.* · Остаток: *{bal} кр.*\n\n"
-                    f"[📥 Скачать в высоком качестве]({result_url})",
-                    parse_mode="Markdown", disable_web_page_preview=False
-                )
-                await message.answer("Что дальше?", reply_markup=design_kb())
-                await log_request(uid, "combine", "nano-banana-pro-edit", cost)
-            except Exception as e:
-                await add_credits(uid, cost, "bonus", "Возврат: ошибка соединения")
-                await message.answer(f"⚠️ Ошибка. Кредиты возвращены.\n{str(e)[:100]}", reply_markup=design_kb())
-                logging.error(f"Combine error: {e}")
+            # есть и фото, и описание → запускаем
+            combine_ready.pop(uid, None)
+            await _combine_run(message, state, uid, photos, caption)
 
         asyncio.create_task(process_after_delay())
 
-@router.message(State_.waiting_combine, F.text != "❌ Отмена")
-async def combine_no_photo(message: Message):
-    await message.answer("📸 Отправь 2-4 фото одним альбомом с подписью что сделать.")
+@router.message(State_.waiting_combine, F.text, F.text != "❌ Отмена")
+async def combine_text_received(message: Message, state: FSMContext):
+    uid = message.from_user.id
+    text = (message.text or "").strip()
+    ready = combine_ready.get(uid)
+    if ready and len(ready["photos"]) >= 2:
+        # фото уже есть — этот текст и есть описание → запускаем
+        photos = ready["photos"]
+        combine_ready.pop(uid, None)
+        await _combine_run(message, state, uid, photos, text)
+    else:
+        # описание пришло раньше фото — запомним и ждём фото
+        if uid not in combine_ready:
+            combine_ready[uid] = {"photos": [], "caption": ""}
+        combine_ready[uid]["caption"] = text
+        await message.answer(
+            "📝 Запомнил описание. Теперь пришли 2-4 фото (можно одним альбомом).",
+            reply_markup=cancel_kb()
+        )
+
+# ── Правка результата соединения ──
+@router.callback_query(F.data == "combine_refine")
+async def cb_combine_refine(callback: CallbackQuery, state: FSMContext):
+    uid = callback.from_user.id
+    if uid not in combine_last:
+        await callback.answer("Нет предыдущего результата для правки.", show_alert=True)
+        return
+    bal = await get_balance(uid)
+    if bal < 120:
+        await callback.answer(f"Нужно 120 кр., у тебя {bal} кр.", show_alert=True)
+        return
+    await state.set_state(State_.combine_refine)
+    await state.update_data(cost=120)
+    await callback.answer()
+    await callback.message.answer(
+        "✏️ Напиши, что изменить — переделаю по исходным фото.\n\n"
+        "Например: *объедини обоих людей в полный рост на одном фоне*.",
+        parse_mode="Markdown", reply_markup=cancel_kb()
+    )
+
+@router.message(State_.combine_refine, F.text == "❌ Отмена")
+async def combine_refine_cancel(message: Message, state: FSMContext):
+    await state.clear()
+    await message.answer("Ок, оставляю как есть.", reply_markup=design_kb())
+
+@router.message(State_.combine_refine, F.text)
+async def combine_refine_text(message: Message, state: FSMContext):
+    uid = message.from_user.id
+    last = combine_last.get(uid)
+    if not last:
+        await state.clear()
+        await message.answer("Нет исходных фото для правки. Зайди в «Соединить фото» заново.", reply_markup=design_kb())
+        return
+    new_caption = (message.text or "").strip()
+    await _combine_run(message, state, uid, last["photos"], new_caption)
 
 
 @router.message(StateFilter(None), F.photo & F.caption, ~F.from_user.is_bot)
@@ -3585,6 +3658,276 @@ async def cmd_broadcast(message: Message):
 #  ЗАПУСК
 # ══════════════════════════════════════════════════════
 
+# ══════════════════════════════════════════════════════
+#  АВТОПОСТИНГ В КАНАЛ (ИИ-агент сам публикует посты)
+# ══════════════════════════════════════════════════════
+
+# Темы постов — ротация, чтобы контент не повторялся
+AUTOPOST_THEMES = [
+    ("Полезный совет", "Напиши короткий полезный пост-совет о том, как использовать нейросети (ChatGPT, генерацию картинок/видео) в повседневной жизни или работе. Один конкретный приём с примером."),
+    ("Идея заработка на ИИ", "Напиши вдохновляющий пост с конкретной идеей, как зарабатывать с помощью нейросетей (контент на заказ, картинки, видео, тексты, автоматизация). Коротко и по делу."),
+    ("Мини-инструкция", "Напиши пост-инструкцию из 3-4 шагов: как с помощью ИИ сделать что-то полезное (например рекламный ролик, аватар, музыку, обработку фото). Просто и понятно."),
+    ("Интересный факт об ИИ", "Напиши пост с интересным фактом или новостью о возможностях современных нейросетей. Зацепи внимание, вызови вау-эффект."),
+    ("Мотивация", "Напиши короткий мотивирующий пост о том, что сейчас лучшее время освоить ИИ и начать зарабатывать, пока большинство ещё не разобрались. Без воды, с энергией."),
+    ("Возможности Vatan AI", "Напиши пост, который рассказывает об одной из возможностей бота Vatan AI (генерация картинок, видео из фото, музыка, озвучка, аватары, ИИ-чат) и зачем это нужно человеку. Заверши призывом попробовать."),
+]
+
+AUTOPOST_SYSTEM = (
+    "Ты — SMM-редактор Telegram-канала проекта «Vatan AI» (нейросети и заработок на ИИ). "
+    "Пиши живые, цепляющие посты на русском языке для широкой аудитории. "
+    "Правила: 4-8 предложений, дружелюбный тон, уместные эмодзи (но без перебора), "
+    "разбивай на короткие абзацы, добавляй цепляющий первый заголовок-строку. "
+    "Не используй хэштеги пачкой. Не выдумывай несуществующие функции. "
+    "Пиши только сам пост, без пояснений и без кавычек вокруг текста."
+)
+
+AUTOPOST_CTA = f"\n\n🤖 Попробуй бесплатно: @{BOT_USERNAME}"
+
+# Варианты частоты: подпись -> минут между постами
+AUTOPOST_FREQ = [
+    ("2 раза в день", 720),
+    ("3 раза в день", 480),
+    ("4 раза в день", 360),
+    ("6 раз в день", 240),
+    ("8 раз в день", 180),
+]
+
+def autopost_freq_label(minutes: int) -> str:
+    for label, m in AUTOPOST_FREQ:
+        if m == minutes:
+            return label
+    return f"каждые {minutes} мин"
+
+async def autopost_generate() -> tuple:
+    """Генерирует пост: возвращает (text, image_bytes_or_None)."""
+    # выбираем тему по кругу
+    try:
+        idx = int(await setting_get("autopost_theme_idx", "0"))
+    except Exception:
+        idx = 0
+    theme_label, theme_prompt = AUTOPOST_THEMES[idx % len(AUTOPOST_THEMES)]
+    await setting_set("autopost_theme_idx", str((idx + 1) % len(AUTOPOST_THEMES)))
+
+    # генерируем текст: пробуем 3 модели по очереди
+    text = ""
+    for model_id in ("claude", "gpt4o", "deepseek"):
+        try:
+            text = await call_text_ai(theme_prompt, AUTOPOST_SYSTEM, model_id, uid=0, timeout_s=40)
+            if text and len(text.strip()) > 20:
+                break
+        except Exception as e:
+            logging.error(f"autopost text {model_id} error: {e}")
+            text = ""
+    if not text or len(text.strip()) < 20:
+        return None, None  # не удалось — пропускаем пост
+
+    text = text.strip()
+    # добавляем CTA в бота (не во все темы, чтобы не приедалось)
+    if "@" + BOT_USERNAME not in text and random.random() < 0.6:
+        text += AUTOPOST_CTA
+
+    # «иногда с картинкой» — примерно в трети постов
+    image_bytes = None
+    if random.random() < 0.35:
+        try:
+            img_prompt_raw = await call_text_ai(
+                f"Придумай короткое описание для яркой иллюстрации к этому посту (на английском, 1 предложение, без текста на картинке):\n\n{text[:400]}",
+                "You write concise vivid image-generation prompts in English. Reply with the prompt only.",
+                "gpt4o", uid=0, timeout_s=30,
+            )
+            img_prompt = (img_prompt_raw or "").strip()[:400] or "modern AI technology, neural network, futuristic digital art, emerald and gold colors"
+            image_bytes = await generate_image_dalle(img_prompt, "1:1")
+        except Exception as e:
+            logging.error(f"autopost image error: {e}")
+            image_bytes = None  # просто опубликуем текст
+
+    return text, image_bytes
+
+async def autopost_send(bot, manual: bool = False) -> bool:
+    """Публикует один пост в канал. Возвращает True при успехе."""
+    channel = await setting_get("autopost_channel", "")
+    if not channel:
+        if manual:
+            try:
+                await bot.send_message(ADMIN_ID, "⚠️ Канал не подключён. Добавь бота админом в канал — он определится сам, или задай командой /set_channel @username")
+            except Exception:
+                pass
+        return False
+
+    text, image_bytes = await autopost_generate()
+    if not text:
+        if manual:
+            try:
+                await bot.send_message(ADMIN_ID, "⚠️ Не удалось сгенерировать пост (нейросети не ответили). Попробуй ещё раз.")
+            except Exception:
+                pass
+        return False
+
+    try:
+        if image_bytes:
+            cap = text if len(text) <= 1024 else text[:1020] + "…"
+            await bot.send_photo(channel, BufferedInputFile(image_bytes, "post.jpg"), caption=cap)
+        else:
+            await bot.send_message(channel, text, disable_web_page_preview=True)
+        await setting_set("autopost_last", datetime.now().isoformat())
+        return True
+    except Exception as e:
+        logging.error(f"autopost send error: {e}")
+        try:
+            await bot.send_message(ADMIN_ID, f"⚠️ Не смог опубликовать в канал. Проверь, что бот — администратор канала с правом публикации.\n\nОшибка: {str(e)[:200]}")
+        except Exception:
+            pass
+        return False
+
+async def autopost_loop(bot):
+    """Фоновый цикл: проверяет каждые 5 минут, не пора ли опубликовать."""
+    await asyncio.sleep(20)  # дать боту стартовать
+    while True:
+        try:
+            enabled = await setting_get("autopost_enabled", "0")
+            channel = await setting_get("autopost_channel", "")
+            if enabled == "1" and channel:
+                try:
+                    interval = int(await setting_get("autopost_interval_min", "360"))
+                except Exception:
+                    interval = 360
+                last_s = await setting_get("autopost_last", "")
+                due = True
+                if last_s:
+                    try:
+                        last_dt = datetime.fromisoformat(last_s)
+                        due = (datetime.now() - last_dt) >= timedelta(minutes=interval)
+                    except Exception:
+                        due = True
+                if due:
+                    await autopost_send(bot)
+        except Exception as e:
+            logging.error(f"autopost_loop error: {e}")
+        await asyncio.sleep(300)  # 5 минут
+
+# ── Авто-определение канала: когда бота делают админом канала ──
+@router.my_chat_member()
+async def on_bot_membership(update: ChatMemberUpdated):
+    try:
+        chat = update.chat
+        new_status = update.new_chat_member.status
+        if chat.type == "channel" and new_status in ("administrator", "creator"):
+            await setting_set("autopost_channel", str(chat.id))
+            await setting_set("autopost_channel_title", chat.title or "")
+            try:
+                await update.bot.send_message(
+                    ADMIN_ID,
+                    f"✅ Канал подключён: *{chat.title}*\n\nТеперь зайди в /autopost и нажми ▶️ Включить, чтобы бот начал публиковать посты.",
+                    parse_mode="Markdown",
+                )
+            except Exception:
+                pass
+    except Exception as e:
+        logging.error(f"on_bot_membership error: {e}")
+
+# ── Админ-меню автопостинга ──
+async def autopost_menu_text() -> str:
+    enabled = await setting_get("autopost_enabled", "0")
+    channel_title = await setting_get("autopost_channel_title", "")
+    channel = await setting_get("autopost_channel", "")
+    interval = int(await setting_get("autopost_interval_min", "360"))
+    last_s = await setting_get("autopost_last", "")
+    status = "🟢 включён" if enabled == "1" else "🔴 выключен"
+    ch = f"«{channel_title}»" if channel_title else (channel if channel else "не подключён ❗")
+    last = "ещё не было"
+    if last_s:
+        try:
+            last = datetime.fromisoformat(last_s).strftime("%d.%m %H:%M")
+        except Exception:
+            last = last_s
+    return (
+        f"📢 *Автопостинг в канал*\n\n"
+        f"Статус: {status}\n"
+        f"Канал: {ch}\n"
+        f"Частота: {autopost_freq_label(interval)}\n"
+        f"Последний пост: {last}\n\n"
+        f"Бот сам генерирует посты на тему ИИ/заработка и публикует в канал."
+    )
+
+def autopost_menu_kb(enabled: str):
+    b = InlineKeyboardBuilder()
+    if enabled == "1":
+        b.row(InlineKeyboardButton(text="⏸ Выключить", callback_data="ap_off"))
+    else:
+        b.row(InlineKeyboardButton(text="▶️ Включить", callback_data="ap_on"))
+    b.row(InlineKeyboardButton(text="📝 Опубликовать сейчас", callback_data="ap_now"))
+    b.row(InlineKeyboardButton(text="🔄 Сменить частоту", callback_data="ap_freq"))
+    return b.as_markup()
+
+@router.message(Command("autopost"))
+async def cmd_autopost(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    enabled = await setting_get("autopost_enabled", "0")
+    await message.answer(await autopost_menu_text(), parse_mode="Markdown", reply_markup=autopost_menu_kb(enabled))
+
+@router.message(Command("set_channel"))
+async def cmd_set_channel(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    parts = (message.text or "").split(maxsplit=1)
+    if len(parts) < 2:
+        await message.answer("Использование: /set_channel @username_канала\n\nИли просто добавь бота администратором в канал — он определится автоматически.")
+        return
+    ch = parts[1].strip()
+    await setting_set("autopost_channel", ch)
+    await setting_set("autopost_channel_title", ch)
+    await message.answer(f"✅ Канал установлен: {ch}\n\nПроверь, что бот — администратор этого канала. Затем /autopost → ▶️ Включить.")
+
+@router.callback_query(F.data == "ap_on")
+async def cb_ap_on(callback: CallbackQuery):
+    if callback.from_user.id != ADMIN_ID:
+        await callback.answer(); return
+    channel = await setting_get("autopost_channel", "")
+    if not channel:
+        await callback.answer("Сначала подключи канал (добавь бота админом).", show_alert=True); return
+    await setting_set("autopost_enabled", "1")
+    await setting_set("autopost_last", datetime.now().isoformat())  # следующий пост через интервал
+    await callback.answer("Включено ✅")
+    await callback.message.edit_text(await autopost_menu_text(), parse_mode="Markdown", reply_markup=autopost_menu_kb("1"))
+
+@router.callback_query(F.data == "ap_off")
+async def cb_ap_off(callback: CallbackQuery):
+    if callback.from_user.id != ADMIN_ID:
+        await callback.answer(); return
+    await setting_set("autopost_enabled", "0")
+    await callback.answer("Выключено")
+    await callback.message.edit_text(await autopost_menu_text(), parse_mode="Markdown", reply_markup=autopost_menu_kb("0"))
+
+@router.callback_query(F.data == "ap_now")
+async def cb_ap_now(callback: CallbackQuery):
+    if callback.from_user.id != ADMIN_ID:
+        await callback.answer(); return
+    await callback.answer("Генерирую и публикую…")
+    ok = await autopost_send(callback.bot, manual=True)
+    if ok:
+        await callback.message.answer("✅ Пост опубликован в канал!")
+    enabled = await setting_get("autopost_enabled", "0")
+    try:
+        await callback.message.edit_reply_markup(reply_markup=autopost_menu_kb(enabled))
+    except Exception:
+        pass
+
+@router.callback_query(F.data == "ap_freq")
+async def cb_ap_freq(callback: CallbackQuery):
+    if callback.from_user.id != ADMIN_ID:
+        await callback.answer(); return
+    cur = int(await setting_get("autopost_interval_min", "360"))
+    mins = [m for _, m in AUTOPOST_FREQ]
+    try:
+        nxt = mins[(mins.index(cur) + 1) % len(mins)]
+    except ValueError:
+        nxt = 360
+    await setting_set("autopost_interval_min", str(nxt))
+    await callback.answer(f"Частота: {autopost_freq_label(nxt)}")
+    enabled = await setting_get("autopost_enabled", "0")
+    await callback.message.edit_text(await autopost_menu_text(), parse_mode="Markdown", reply_markup=autopost_menu_kb(enabled))
+
 async def main():
     global anthropic_client, openai_client, deepseek_client
 
@@ -3612,6 +3955,9 @@ async def main():
     bot = Bot(token=BOT_TOKEN)
     dp  = Dispatcher(storage=MemoryStorage())
     dp.include_router(router)
+
+    asyncio.create_task(autopost_loop(bot))
+    logging.info("✅ Автопостинг в канал активен (управление: /autopost)")
 
     logging.info(f"🚀 Vatan AI Bot v3.1 ФОРМАТЫ запущен | @{BOT_USERNAME}")
     logging.info("✅ ВЕРСИЯ С ВЫБОРОМ ФОРМАТА 9:16 16:9 — если видишь это, новый код работает")

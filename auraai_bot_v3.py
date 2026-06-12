@@ -1044,7 +1044,7 @@ def main_kb() -> ReplyKeyboardMarkup:
     b.row(KeyboardButton(text="🎓 Обучение"))
     b.row(
         KeyboardButton(text="❓ Помощь"),
-        KeyboardButton(text="📕 База знаний"),
+        KeyboardButton(text="📖 Инструкция"),
     )
     return b.as_markup(resize_keyboard=True)
 
@@ -1135,10 +1135,10 @@ def plans_annual_inline_kb():
     return b.as_markup()
 
 def pay_method_kb(kind: str, item_id: str):
-    """Выбор способа оплаты: Stars или рубли"""
+    """Выбор способа оплаты: Россия → картой, другие страны → Stars"""
     b = InlineKeyboardBuilder()
-    b.row(InlineKeyboardButton(text="💳 Картой (рубли)", callback_data=f"payrub_{kind}_{item_id}"))
-    b.row(InlineKeyboardButton(text="⭐️ Telegram Stars", callback_data=f"paystars_{kind}_{item_id}"))
+    b.row(InlineKeyboardButton(text="💳 Картой — Россия 🇷🇺", callback_data=f"payrub_{kind}_{item_id}"))
+    b.row(InlineKeyboardButton(text="⭐️ Telegram Stars — другие страны 🌍", callback_data=f"paystars_{kind}_{item_id}"))
     return b.as_markup()
 
 def ref_inline_kb():
@@ -1322,7 +1322,7 @@ async def course_menu(message: Message, state: FSMContext):
 @router.callback_query(F.data == "buy_course")
 async def cb_buy_course(callback: CallbackQuery):
     await callback.message.answer(
-        f"🎓 *{COURSE['name']}*\n\nВыбери способ оплаты:",
+        f"🎓 *{COURSE['name']}*\n\nВыбери способ оплаты:\n🇷🇺 Из России — картой · 🌍 Из других стран — Stars",
         parse_mode="Markdown", reply_markup=pay_method_kb("course", "main")
     )
     await callback.answer()
@@ -1485,10 +1485,32 @@ async def section_storage(message: Message):
         parse_mode="Markdown", reply_markup=main_kb()
     )
 
-@router.message(F.text == "📕 База знаний")
+@router.message(F.text == "📖 Инструкция")
 async def section_knowledge(message: Message):
     await message.answer(
-        "📕 *База знаний*\n\n⏳ Раздел в разработке.\n\nСкоро: обучающие материалы по работе с AI.",
+        "📖 *Инструкция — что умеет Vatan AI*\n\n"
+        "Бот собирает топовые нейросети в одном месте. Что за что отвечает:\n\n"
+        "💡 *GPTs/Claude/Gemini* — текстовый ИИ\n"
+        "Чат с ИИ, копирайтинг, код, SEO, перевод, саммари, письма, эссе, рерайт, идеи.\n"
+        "💎 от 5 кр. за запрос\n\n"
+        "🎨 *Дизайн с ИИ* — работа с картинками\n"
+        "• Генерация по описанию (DALL-E — 50, GPT Image — 80, Nano Banana — 110 кр.)\n"
+        "• Обработка и редактирование фото — 120 кр.\n"
+        "• 🔗 Соединить фото (объединить людей, сменить фон/одежду) — 120 кр.\n\n"
+        "🎙 *Аудио с ИИ*\n"
+        "• Музыка по описанию — 50 кр.\n"
+        "• Озвучка текста голосом — 20 кр.\n\n"
+        "🎬 *Видео будущего*\n"
+        "• Видео по описанию — 400 кр.\n"
+        "• Фото в видео (оживить картинку) — 400 кр.\n"
+        "• Говорящие аватары — от 800 кр.\n\n"
+        "🗂 *Хранитель изображений* — все созданные картинки в одном месте.\n"
+        "🎓 *Обучение* — курс «Заработок на ИИ-картинках».\n"
+        "👤 *Профиль* — баланс и пополнение кредитов.\n"
+        "🔗 *Рефералы* — приглашай друзей и получай % с их пополнений.\n\n"
+        "💎 *Кредиты* — внутренняя валюта, списываются за каждый запрос. На старте даём бесплатные. "
+        "Пополнить: Профиль → Купить кредиты (карта или ⭐️ Stars).\n\n"
+        "Не разобрался? Жми ❓ Помощь → Чат с поддержкой 👇",
         parse_mode="Markdown", reply_markup=main_kb()
     )
 
@@ -1496,6 +1518,10 @@ async def section_knowledge(message: Message):
 async def section_help(message: Message):
     b = InlineKeyboardBuilder()
     b.row(InlineKeyboardButton(text="💬 Чат с поддержкой", callback_data="support_chat"))
+    contact = await setting_get("admin_contact", "")
+    if contact:
+        url = contact if contact.startswith("http") else f"https://t.me/{contact.lstrip('@')}"
+        b.row(InlineKeyboardButton(text="👨‍💼 Написать администратору", url=url))
     await message.answer(
         "❓ *Помощь*\n\n"
         "💡 *GPTs/Claude/Gemini* — текстовые AI инструменты\n"
@@ -1505,8 +1531,9 @@ async def section_help(message: Message):
         "🎓 *Обучение* — курс по заработку на ИИ\n\n"
         "💎 Кредиты списываются за каждый запрос (на старте дают бесплатные)\n"
         "💳 Пополнить: Профиль → Купить кредиты (карта или Stars)\n"
-        "🔗 Рефералы — приглашай и зарабатывай\n\n"
-        "Есть вопрос? Нажми кнопку ниже — отвечу 👇",
+        "🔗 Рефералы — приглашай и зарабатывай\n"
+        "📖 Подробно о функциях — кнопка «Инструкция» в меню\n\n"
+        "Есть вопрос? Напиши в чат поддержки или администратору 👇",
         parse_mode="Markdown", reply_markup=b.as_markup()
     )
 
@@ -3042,7 +3069,7 @@ async def cb_choose_credits_method(callback: CallbackQuery):
     pack = CREDIT_PACKS.get(pid)
     if not pack: return
     await callback.message.answer(
-        f"💎 *{pack['name']}*\n\nВыбери способ оплаты:",
+        f"💎 *{pack['name']}*\n\nВыбери способ оплаты:\n🇷🇺 Из России — картой · 🌍 Из других стран — Stars",
         parse_mode="Markdown",
         reply_markup=pay_method_kb("credits", pid)
     )
@@ -3085,7 +3112,7 @@ async def cb_choose_year_method(callback: CallbackQuery):
     plan = PLANS_ANNUAL.get(pid)
     if not plan: return
     await callback.message.answer(
-        f"{plan['emoji']} *{plan['name']}* — {plan['credits']} кредитов на год\n\nВыбери способ оплаты:",
+        f"{plan['emoji']} *{plan['name']}* — {plan['credits']} кредитов на год\n\nВыбери способ оплаты:\n🇷🇺 Из России — картой · 🌍 Из других стран — Stars",
         parse_mode="Markdown",
         reply_markup=pay_method_kb("planyear", pid)
     )
@@ -3097,7 +3124,7 @@ async def cb_choose_plan_method(callback: CallbackQuery):
     plan = PLANS.get(pid)
     if not plan: return
     await callback.message.answer(
-        f"{plan['emoji']} *{plan['name']}* — {plan['description']}\n\nВыбери способ оплаты:",
+        f"{plan['emoji']} *{plan['name']}* — {plan['description']}\n\nВыбери способ оплаты:\n🇷🇺 Из России — картой · 🌍 Из других стран — Stars",
         parse_mode="Markdown",
         reply_markup=pay_method_kb("plan", pid)
     )
@@ -3876,6 +3903,23 @@ def autopost_menu_kb(enabled: str):
     b.row(InlineKeyboardButton(text="📝 Опубликовать сейчас", callback_data="ap_now"))
     b.row(InlineKeyboardButton(text="🔄 Сменить частоту", callback_data="ap_freq"))
     return b.as_markup()
+
+@router.message(Command("set_contact"))
+async def cmd_set_contact(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    parts = (message.text or "").split(maxsplit=1)
+    if len(parts) < 2:
+        await message.answer(
+            "Использование: /set_contact @username\n"
+            "(или ссылка https://t.me/username)\n\n"
+            "Это ссылка, по которой пользователи смогут написать тебе напрямую из раздела «❓ Помощь»."
+        )
+        return
+    contact = parts[1].strip()
+    await setting_set("admin_contact", contact)
+    url = contact if contact.startswith("http") else f"https://t.me/{contact.lstrip('@')}"
+    await message.answer(f"✅ Контакт поддержки установлен: {url}\n\nТеперь в «❓ Помощь» появилась кнопка «👨‍💼 Написать администратору».")
 
 @router.message(Command("autopost"))
 async def cmd_autopost(message: Message):

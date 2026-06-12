@@ -3783,6 +3783,12 @@ async def team_auto(message: Message, state: FSMContext):
                 await message.answer(f"{agent['emoji']} {result}")
                 work_log.append(f"{agent['name']}: {result}")
                 continue
+            if role == "smm":
+                # SMM не вернул команду — публикуем его текст как пост
+                result = await _tg_post(message.bot, {"caption": reply})
+                await message.answer(f"{agent['emoji']} {result}")
+                work_log.append(f"{agent['name']}: {result}")
+                continue
         work_log.append(f"{agent['name']}: {reply}")
         await _send_block(message, f"{agent['emoji']} *{agent['name']}*", reply)
 
@@ -3864,6 +3870,13 @@ async def team_solo(message: Message, state: FSMContext):
             if attached_img and not cmd.get("image_url"):
                 cmd["image_url"] = attached_img
             result = await dispatch_action(message.bot, cmd)
+            await message.answer(f"{agent['emoji']} {result}", reply_markup=team_work_kb())
+            acted = True
+        elif role == "smm":
+            act = {"caption": reply}
+            if attached_img:
+                act["image_url"] = attached_img
+            result = await _tg_post(message.bot, act)
             await message.answer(f"{agent['emoji']} {result}", reply_markup=team_work_kb())
             acted = True
     if not acted:
@@ -4068,6 +4081,23 @@ async def start_daily_finance_report(bot):
 # ====================================================================
 #  <<< КОНЕЦ БЛОКА АГЕНТОВ >>>
 # ====================================================================
+
+@router.message(Command("testpost"))
+async def testpost_cmd(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    chat = os.getenv("TG_POST_CHANNEL", "")
+    if not chat:
+        await message.answer("⚠️ TG_POST_CHANNEL не задан в .env"); return
+    try:
+        await message.bot.send_message(chat, "✅ Тест: бот пишет в канал.")
+        await message.answer(f"✅ Текст ушёл в {chat}. Пробую фото...")
+        img = await generate_nano_banana("минималистичная тестовая иллюстрация", "1:1")
+        await message.bot.send_photo(chat, BufferedInputFile(img, "test.png"), caption="✅ Тест фото")
+        await message.answer(f"✅ Фото тоже ушло в {chat}. Канал настроен верно!")
+    except Exception as e:
+        await message.answer(f"⚠️ Ошибка отправки в {chat}:\n{str(e)[:300]}\n\nПроверь: бот — админ канала с правом публикации, и @хендл канала верный.")
+
 
 async def main():
     global anthropic_client, openai_client, deepseek_client

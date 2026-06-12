@@ -3368,15 +3368,17 @@ from aiogram.types import URLInputFile
 # ══════════════════════════════════════════════════════════════════
 
 MANAGER_PLAN_PROMPT = (
-    "Ты — Менеджер-оркестратор команды ИИ-агентов. В команде:\n"
-    "• engineer (Инженер) — код, алгоритмы, расчёты, «как сделать технически».\n"
-    "• assistant (Ассистент) — тексты, объяснения, структура, оформление.\n"
-    "• smm (SMM) — контент для соцсетей и публикация постов/историй.\n"
-    "• marketer (Маркетолог) — лиды, конверсия, продажи, что окупается.\n\n"
-    "Пришла задача пользователя. Реши, кто нужен и ЧТО каждый делает (в нужном порядке).\n"
+    "Ты — Менеджер-оркестратор команды ИИ-агентов AuraAI. Команда работает ВМЕСТЕ над целью пользователя. Состав:\n"
+    "• engineer (Инженер) — код, расчёты, технические решения.\n"
+    "• assistant (Ассистент) — тексты, объяснения, оформление.\n"
+    "• smm (SMM) — контент и РЕАЛЬНАЯ публикация постов/историй в канал.\n"
+    "• marketer (Маркетолог) — анализ лидов, конверсии и продаж по данным бизнеса.\n\n"
+    "Разбей цель на шаги и задействуй ВСЕХ нужных агентов в правильном порядке "
+    "(например: marketer анализирует данные → smm публикует пост на лучшую тему). "
+    "Если в контексте есть данные бизнеса — учитывай их.\n"
     "Верни СТРОГО JSON без markdown и пояснений:\n"
-    '{"plan":"одно предложение что делаем","steps":[{"agent":"engineer","task":"подзадача"}]}\n'
-    "Простая задача — один шаг. agent — только \"engineer\",\"assistant\",\"smm\" или \"marketer\"."
+    '{"plan":"что делаем","steps":[{"agent":"marketer","task":"..."},{"agent":"smm","task":"опубликуй пост ..."}]}\n'
+    "agent — только \"engineer\",\"assistant\",\"smm\" или \"marketer\". Используй несколько агентов, если цель того требует."
 )
 
 MANAGER_FINAL_PROMPT = (
@@ -3490,14 +3492,27 @@ async def dispatch_action(bot, action: dict) -> str:
 async def _tg_post(bot, action: dict) -> str:
     chat = action.get("chat") or os.getenv("TG_POST_CHANNEL", "")
     if not chat:
-        return "⚠️ Не задан канал. Укажи TG_POST_CHANNEL в .env или поле \"chat\"."
+        return "⚠️ Не задан канал. Укажи TG_POST_CHANNEL в .env."
     caption = (action.get("caption") or action.get("text") or "")[:1024]
     image_url = action.get("image_url")
+    image_prompt = action.get("image_prompt")
     if image_url:
-        await bot.send_photo(chat, URLInputFile(image_url), caption=caption)
-        return f"✅ Фото опубликовано в {chat}"
-    await bot.send_message(chat, caption or "(пусто)")
-    return f"✅ Пост опубликован в {chat}"
+        try:
+            await bot.send_photo(chat, URLInputFile(image_url), caption=caption)
+            return f"✅ Фото опубликовано в {chat}"
+        except Exception as e:
+            logging.error(f"tg_post url: {e}")
+    try:
+        p = image_prompt or caption or "качественная иллюстрация для поста, без текста"
+        img = await generate_nano_banana(p, "1:1")
+        await bot.send_photo(chat, BufferedInputFile(img, "post.png"), caption=caption)
+        return f"✅ Пост с картинкой опубликован в {chat}"
+    except Exception as e:
+        logging.error(f"tg_post gen: {e}")
+    if caption:
+        await bot.send_message(chat, caption)
+        return f"✅ Пост опубликован в {chat} (без фото)"
+    return "⚠️ Нет ни картинки, ни текста."
 
 
 async def _tg_story(bot, action: dict) -> str:
@@ -3586,15 +3601,62 @@ async def marketing_context(days: int = 7) -> str:
 #  КОМАНДА АГЕНТОВ · клавиатуры
 # ══════════════════════════════════════════════════════════════════
 
-AUTO_LABEL = "🎯 Авто-оркестр"
+AUTO_LABEL = "🎯 Вся команда (авто)"
+POST_NOW_LABEL = "📰 Пост сейчас"
 SWITCH_LABEL = "🔄 Сменить режим"
 HOME_LABEL = "🏠 В главное меню"
 AGENT_LABELS = {f"{d['emoji']} {d['name']}": role for role, d in AGENT_DEFS.items()}
 
 
-def team_menu_kb() -> ReplyKeyboardMarkup:
+async def suggest_autopost_topic(recent=None) -> str:
+    recent = recent or []
+    try:
+        stats = await marketing_context(7)
+    except Exception:
+        stats = ""
+    avoid = ("Не повторяй темы: " + "; ".join(recent[-5:]) + ". ") if recent else ""
+    sys = AGENT_DEFS["marketer"]["prompt"] + (
+        "\n\nНа основе данных предложи ОДНУ тему поста, которая сейчас лучше всего сработает на продажи. "
+        'Верни СТРОГО JSON: {"topic":"короткая тема поста"}')
+    try:
+        raw = await _agent_call(f"{stats}\n{avoid}Предложи тему поста.", sys, timeout_s=40)
+        d = _extract_json(raw) or {}
+        return (d.get("topic") or "").strip()
+    except Exception as e:
+        logging.error(f"suggest topic: {e}")
+        return ""
+
+
+async def _post_now(message: Message):
+    status = await message.answer("📊 Маркетолог выбирает тему...")
+    topic = await suggest_autopost_topic([])
+    if not topic:
+        topic = "польза курса AuraAI: как новичку начать зарабатывать на ИИ-картинках"
+    try:
+        await status.edit_text(f"📊 Тема: {topic}\n📣 SMM готовит пост...")
+    except Exception:
+        pass
+    smm_sys = AGENT_DEFS["smm"]["prompt"] + (
+        "\n\nСгенерируй ОДИН пост для Telegram-канала на тему ниже. Верни СТРОГО JSON: "
+        '{"caption":"текст поста с эмодзи и призывом","image_prompt":"detailed English image prompt, no text on image"}')
+    raw = await _agent_call(f"Тема поста: {topic}", smm_sys, timeout_s=40)
+    d = _extract_json(raw) or {}
+    caption = d.get("caption") or topic
+    image_prompt = d.get("image_prompt") or topic
+    result = await _tg_post(message.bot, {"caption": caption, "image_prompt": image_prompt})
+    try:
+        await status.delete()
+    except Exception:
+        pass
+    await message.answer(f"{result}\n\n📝 Тема: {topic}",
+                         reply_markup=team_menu_kb(message.from_user.id == ADMIN_ID))
+
+
+def team_menu_kb(is_admin: bool = False) -> ReplyKeyboardMarkup:
     b = ReplyKeyboardBuilder()
     b.row(KeyboardButton(text=AUTO_LABEL))
+    if is_admin:
+        b.row(KeyboardButton(text=POST_NOW_LABEL))
     for label in AGENT_LABELS:
         b.row(KeyboardButton(text=label))
     b.row(KeyboardButton(text=HOME_LABEL))
@@ -3627,10 +3689,10 @@ async def _team_menu(message: Message, state: FSMContext):
     roles = " · ".join(f"{d['emoji']} {d['name']}" for d in AGENT_DEFS.values())
     await message.answer(
         "🤖 *Команда ИИ-агентов*\n\n"
-        f"🎯 *Авто-оркестр* — Менеджер сам раскидает задачу ({TEAM_COST_AUTO} кр.)\n"
+        f"🎯 *Вся команда* — пиши цель, агенты работают вместе ({TEAM_COST_AUTO} кр.)\n"
         f"Или напиши напрямую агенту ({TEAM_COST_SOLO} кр./сообщение):\n{roles}\n\n"
         "Выбери режим 👇",
-        parse_mode="Markdown", reply_markup=team_menu_kb()
+        parse_mode="Markdown", reply_markup=team_menu_kb(message.from_user.id == ADMIN_ID)
     )
 
 
@@ -3640,10 +3702,14 @@ async def team_menu_choose(message: Message, state: FSMContext):
     if txt == HOME_LABEL:
         await state.clear()
         await message.answer("Главное меню", reply_markup=main_kb()); return
+    if txt == POST_NOW_LABEL:
+        if message.from_user.id != ADMIN_ID:
+            await message.answer("Эта кнопка только для админа."); return
+        await _post_now(message); return
     if txt == AUTO_LABEL:
         await state.set_state(State_.agent_auto)
         await state.update_data(team_transcript=[])
-        await message.answer("🎯 *Авто-оркестр включён.*\nОпиши задачу 👇",
+        await message.answer("🎯 *Вся команда подключена.*\nНапиши цель — сделаем вместе 👇",
                              parse_mode="Markdown", reply_markup=team_work_kb()); return
     if txt in AGENT_LABELS:
         role = AGENT_LABELS[txt]
@@ -3652,7 +3718,7 @@ async def team_menu_choose(message: Message, state: FSMContext):
         await state.update_data(current_agent=role, solo_history=[])
         await message.answer(f"{agent['emoji']} *{agent['name']}* на связи. Пиши 👇",
                              parse_mode="Markdown", reply_markup=team_work_kb()); return
-    await message.answer("Выбери режим кнопкой ниже 👇", reply_markup=team_menu_kb())
+    await message.answer("Выбери режим кнопкой ниже 👇", reply_markup=team_menu_kb(message.from_user.id == ADMIN_ID))
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -3678,6 +3744,12 @@ async def team_auto(message: Message, state: FSMContext):
     data = await state.get_data()
     transcript = data.get("team_transcript", [])
     ctx = ("Контекст прошлой работы:\n" + "\n".join(transcript[-6:]) + "\n\n") if transcript else ""
+    try:
+        _mkt = await marketing_context(7)
+        if _mkt.startswith("Данные за"):
+            ctx = f"Данные бизнеса: {_mkt}\n\n" + ctx
+    except Exception:
+        pass
 
     status = await message.answer("👔 Менеджер разбирает задачу...")
     plan_raw = await _agent_call(f"{ctx}Задача: {task}", MANAGER_PLAN_PROMPT, timeout_s=40)

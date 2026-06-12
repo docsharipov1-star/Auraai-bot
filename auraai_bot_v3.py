@@ -1010,6 +1010,7 @@ def main_kb() -> ReplyKeyboardMarkup:
         KeyboardButton(text="🔗 Рефералы"),
     )
     b.row(KeyboardButton(text="🎓 Обучение"))
+    b.row(KeyboardButton(text="🤖 Команда агентов"))
     b.row(
         KeyboardButton(text="❓ Помощь"),
         KeyboardButton(text="📕 База знаний"),
@@ -1158,6 +1159,11 @@ class State_(StatesGroup):
     course_chat = State()  # чат с ИИ-менеджером курса
     avatar_photo = State()  # ИИ-аватар: ожидание фото
     avatar_audio = State()  # ИИ-аватар: ожидание аудио или текста
+    agent_menu  = State()  # команда агентов: выбор режима
+    agent_auto  = State()  # команда агентов: авто-оркестр
+    agent_solo  = State()  # команда агентов: прямой диалог
+    finance_menu  = State()  # финансовый агент: меню
+    finance_input = State()  # финансовый агент: ввод отчёта
 
 user_tool:  dict[int, str] = {}
 user_model: dict[int, str] = {}
@@ -3311,6 +3317,685 @@ async def cmd_broadcast(message: Message):
 # ══════════════════════════════════════════════════════
 #  ЗАПУСК
 # ══════════════════════════════════════════════════════
+
+
+
+# ====================================================================
+#  >>> КОМАНДА ИИ-АГЕНТОВ (Шаг 2) <<<
+# ====================================================================
+# ══════════════════════════════════════════════════════════════════
+#  AuraAI · ВСЯ КОМАНДА ИИ-АГЕНТОВ — ЕДИНАЯ СБОРКА
+#  Заменяет: auraai_agent_team / auraai_agent_actions /
+#            auraai_finance_agent / auraai_smm_marketer.
+#  Вставь ЭТОТ блок один раз среди @router.message(...) в auraai_bot_v3_43.py.
+#
+#  ──────── ЧТО ВНУТРИ ────────
+#   👔 Менеджер  — оркестратор (план + сборка итога)
+#   🛠 Инженер   — техника, код, расчёты
+#   🤝 Ассистент — тексты, объяснения
+#   📣 SMM       — контент + РЕАЛЬНАЯ публикация (TG-канал/Instagram/сторис)
+#   📊 Маркетолог— лиды, конверсия, продажи (читает finance_log)
+#   💼 Финагент  — приём дневных отчётов + отчётность (прибыль, ROMI)
+#
+#  ──────── ВСТРОЙКА (2 правки кроме самого блока) ────────
+#   [A] в class State_(StatesGroup) добавь 5 строк:
+#         agent_menu  = State()
+#         agent_auto  = State()
+#         agent_solo  = State()
+#         finance_menu  = State()
+#         finance_input = State()
+#   [B] в main_kb() добавь ряд:
+#         b.row(KeyboardButton(text="🤖 Команда агентов"))
+#       (финансовый агент — только для админа, вход командой /finance)
+#
+#  Нужные имена из бота (уже есть): router, F, Command, Message, FSMContext,
+#   State_, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardBuilder,
+#   call_text_ai, use_credits, add_credits, get_balance, log_request,
+#   db_run, db_all, main_kb, profile_kb, ADMIN_ID, logging, asyncio, os.
+#
+#  ──────── ENV для публикаций (по желанию) ────────
+#   TG_POST_CHANNEL=@твой_канал          (бот — админ канала; TG-пост работает сразу)
+#   TG_BUSINESS_CONNECTION_ID=...        (для сторис: бот как бизнес-бот)
+#   IG_USER_ID=... / IG_ACCESS_TOKEN=... (для Instagram; + graph.facebook.com в allow-list)
+# ══════════════════════════════════════════════════════════════════
+
+import json, re, datetime, asyncio
+from aiogram.types import URLInputFile
+
+
+# ══════════════════════════════════════════════════════════════════
+#  ПРОМПТЫ
+# ══════════════════════════════════════════════════════════════════
+
+MANAGER_PLAN_PROMPT = (
+    "Ты — Менеджер-оркестратор команды ИИ-агентов. В команде:\n"
+    "• engineer (Инженер) — код, алгоритмы, расчёты, «как сделать технически».\n"
+    "• assistant (Ассистент) — тексты, объяснения, структура, оформление.\n"
+    "• smm (SMM) — контент для соцсетей и публикация постов/историй.\n"
+    "• marketer (Маркетолог) — лиды, конверсия, продажи, что окупается.\n\n"
+    "Пришла задача пользователя. Реши, кто нужен и ЧТО каждый делает (в нужном порядке).\n"
+    "Верни СТРОГО JSON без markdown и пояснений:\n"
+    '{"plan":"одно предложение что делаем","steps":[{"agent":"engineer","task":"подзадача"}]}\n'
+    "Простая задача — один шаг. agent — только \"engineer\",\"assistant\",\"smm\" или \"marketer\"."
+)
+
+MANAGER_FINAL_PROMPT = (
+    "Ты — Менеджер-оркестратор. Команда выполнила задачу по частям. Собери единый финальный "
+    "ответ пользователю: связно, без повторов, готовый к использованию. Не пересказывай, кто "
+    "что делал — дай результат."
+)
+
+ACTION_AGENT_NOTE = (
+    "\n\nЕсли просят ОПУБЛИКОВАТЬ — верни ТОЛЬКО JSON одной строкой, без пояснений:\n"
+    '{"action":"tg_post","caption":"текст","image_url":"https://..."}\n'
+    '{"action":"tg_story","image_url":"https://...","caption":"текст"}\n'
+    '{"action":"ig_post","image_url":"https://...","caption":"текст"}\n'
+    "Если фото приложено — image_url можно опустить, подставится само. "
+    "Если публиковать не нужно — пиши обычный текст."
+)
+
+AGENT_DEFS = {
+    "engineer": {
+        "emoji": "🛠", "name": "Инженер",
+        "prompt": ("Ты — Инженер команды AuraAI. Техническая часть: код, алгоритмы, расчёты, "
+                   "архитектура. По делу, с конкретикой и примерами. Кратко и точно."),
+    },
+    "assistant": {
+        "emoji": "🤝", "name": "Ассистент",
+        "prompt": ("Ты — Ассистент команды AuraAI. Тексты, понятные объяснения, структура, "
+                   "оформление, орг-вопросы. Пиши тепло, ясно, структурно."),
+    },
+    "smm": {
+        "emoji": "📣", "name": "SMM", "can_act": True,
+        "prompt": ("Ты — SMM-агент AuraAI. Делаешь контент для соцсетей: посты, сторис, сценарии "
+                   "Reels, подписи, хэштеги — коротко, цепляюще, под целевую аудиторию."),
+    },
+    "marketer": {
+        "emoji": "📊", "name": "Маркетолог", "use_data": True,
+        "prompt": ("Ты — Маркетолог-аналитик AuraAI. Следишь за лидами, конверсией и продажами. "
+                   "В начале сообщения тебе дают свежие цифры из базы (лиды, продажи, конверсия, "
+                   "CPL, средний чек, выручка, ROMI). Анализируй динамику, давай конкретные выводы "
+                   "и 1–3 рекомендации по росту продаж. Коротко, по-деловому, на цифрах."),
+    },
+}
+
+TEAM_COST_AUTO = 30
+TEAM_COST_SOLO = 10
+
+
+# ══════════════════════════════════════════════════════════════════
+#  ОБЩИЕ ХЕЛПЕРЫ
+# ══════════════════════════════════════════════════════════════════
+
+def _extract_json(text: str):
+    if not text:
+        return None
+    t = text.strip()
+    t = re.sub(r"^```(?:json)?\s*", "", t)
+    t = re.sub(r"\s*```$", "", t).strip()
+    s, e = t.find("{"), t.rfind("}")
+    if s != -1 and e != -1 and e > s:
+        t = t[s:e + 1]
+    try:
+        d = json.loads(t)
+        return d if isinstance(d, dict) else None
+    except Exception:
+        return None
+
+
+async def _agent_call(prompt: str, system: str, history_msgs=None, timeout_s: int = 45):
+    for mid in ("claude", "gpt4o", "deepseek"):
+        try:
+            r = await call_text_ai(prompt, system, mid, history_msgs=history_msgs, timeout_s=timeout_s)
+            if r and not r.startswith("❌"):
+                return r
+        except Exception as ex:
+            logging.error(f"agent [{mid}] error: {ex}")
+    return None
+
+
+async def _send_block(message, header: str, body: str):
+    await message.answer(header, parse_mode="Markdown")
+    body = body or "(пусто)"
+    for i in range(0, len(body), 3900):
+        await message.answer(body[i:i + 3900])
+
+
+def _money(x):
+    return f"{x:,.0f}".replace(",", " ")
+
+
+# ══════════════════════════════════════════════════════════════════
+#  СЛОЙ ДЕЙСТВИЙ (tool-use)
+# ══════════════════════════════════════════════════════════════════
+
+GRAPH_VER = "v22.0"
+
+
+async def dispatch_action(bot, action: dict) -> str:
+    a = (action.get("action") or "").lower().strip()
+    try:
+        if a == "tg_post":
+            return await _tg_post(bot, action)
+        if a == "tg_story":
+            return await _tg_story(bot, action)
+        if a == "ig_post":
+            return await _ig_post(action)
+        return f"⚠️ Неизвестное действие: «{a}»"
+    except Exception as e:
+        logging.error(f"action {a} error: {e}")
+        return f"⚠️ Не удалось выполнить «{a}»: {str(e)[:150]}"
+
+
+async def _tg_post(bot, action: dict) -> str:
+    chat = action.get("chat") or os.getenv("TG_POST_CHANNEL", "")
+    if not chat:
+        return "⚠️ Не задан канал. Укажи TG_POST_CHANNEL в .env или поле \"chat\"."
+    caption = (action.get("caption") or action.get("text") or "")[:1024]
+    image_url = action.get("image_url")
+    if image_url:
+        await bot.send_photo(chat, URLInputFile(image_url), caption=caption)
+        return f"✅ Фото опубликовано в {chat}"
+    await bot.send_message(chat, caption or "(пусто)")
+    return f"✅ Пост опубликован в {chat}"
+
+
+async def _tg_story(bot, action: dict) -> str:
+    bcid = os.getenv("TG_BUSINESS_CONNECTION_ID", "")
+    if not bcid:
+        return ("⚠️ Сторис в Telegram требует бизнес-подключения: подключи бота к Telegram "
+                "Business аккаунту (право управления историями) и задай TG_BUSINESS_CONNECTION_ID.")
+    image_url = action.get("image_url")
+    if not image_url:
+        return "⚠️ Для истории нужен image_url."
+    try:
+        from aiogram.methods import PostStory
+        from aiogram.types import InputStoryContentPhoto
+    except ImportError:
+        return "⚠️ Нужна aiogram с Bot API 9.0 (postStory). Обнови aiogram."
+    await bot(PostStory(
+        business_connection_id=bcid,
+        content=InputStoryContentPhoto(photo=URLInputFile(image_url)),
+        active_period=86400,
+        caption=(action.get("caption") or "")[:2048],
+    ))
+    return "✅ История опубликована в Telegram (24 ч)."
+
+
+async def _ig_post(action: dict) -> str:
+    import httpx
+    ig_id = os.getenv("IG_USER_ID", "")
+    token = os.getenv("IG_ACCESS_TOKEN", "")
+    if not (ig_id and token):
+        return ("⚠️ Instagram не настроен: нужны IG_USER_ID и IG_ACCESS_TOKEN "
+                "(Business/Creator + Facebook Page + Meta-приложение с instagram_content_publish), "
+                "и graph.facebook.com в network allow-list.")
+    image_url = action.get("image_url")
+    if not image_url:
+        return "⚠️ Для поста в Instagram нужен ПУБЛИЧНЫЙ image_url."
+    caption = action.get("caption") or ""
+    base = f"https://graph.facebook.com/{GRAPH_VER}/{ig_id}"
+    async with httpx.AsyncClient(timeout=60) as c:
+        r1 = await c.post(f"{base}/media",
+                          data={"image_url": image_url, "caption": caption, "access_token": token})
+        if r1.status_code >= 400:
+            return f"⚠️ Instagram (контейнер): {r1.text[:200]}"
+        cid = r1.json().get("id")
+        if not cid:
+            return f"⚠️ Instagram: нет id контейнера: {r1.text[:150]}"
+        await asyncio.sleep(3)
+        r2 = await c.post(f"{base}/media_publish",
+                          data={"creation_id": cid, "access_token": token})
+        if r2.status_code >= 400:
+            return f"⚠️ Instagram (публикация): {r2.text[:200]}"
+    return "✅ Опубликовано в Instagram."
+
+
+# ══════════════════════════════════════════════════════════════════
+#  ДАННЫЕ ДЛЯ МАРКЕТОЛОГА (читает finance_log)
+# ══════════════════════════════════════════════════════════════════
+
+async def marketing_context(days: int = 7) -> str:
+    try:
+        await db_run("ALTER TABLE finance_log ADD COLUMN sales INTEGER DEFAULT 0")
+    except Exception:
+        pass
+    try:
+        rows = await db_all(
+            "SELECT leads, sales, revenue, ad_spend FROM finance_log WHERE day >= date('now', ?)",
+            (f"-{days - 1} day",)
+        )
+    except Exception:
+        return "Данных по маркетингу пока нет (нужны отчёты через /finance)."
+    if not rows:
+        return f"За последние {days} дн. данных нет — внеси отчёты через /finance."
+    leads = sum(r["leads"] for r in rows)
+    sales = sum((r["sales"] or 0) for r in rows)
+    rev = sum(r["revenue"] for r in rows)
+    ad = sum(r["ad_spend"] for r in rows)
+    conv = (sales / leads * 100) if leads else 0
+    cpl = (ad / leads) if leads else 0
+    check = (rev / sales) if sales else 0
+    romi = ((rev - ad) / ad * 100) if ad else 0
+    return (f"Данные за {days} дн.: лиды {leads}, продажи {sales}, конверсия {conv:.1f}%, "
+            f"CPL {_money(cpl)}, средний чек {_money(check)}, выручка {_money(rev)}, "
+            f"реклама {_money(ad)}, ROMI {romi:.0f}%.")
+
+
+# ══════════════════════════════════════════════════════════════════
+#  КОМАНДА АГЕНТОВ · клавиатуры
+# ══════════════════════════════════════════════════════════════════
+
+AUTO_LABEL = "🎯 Авто-оркестр"
+SWITCH_LABEL = "🔄 Сменить режим"
+HOME_LABEL = "🏠 В главное меню"
+AGENT_LABELS = {f"{d['emoji']} {d['name']}": role for role, d in AGENT_DEFS.items()}
+
+
+def team_menu_kb() -> ReplyKeyboardMarkup:
+    b = ReplyKeyboardBuilder()
+    b.row(KeyboardButton(text=AUTO_LABEL))
+    for label in AGENT_LABELS:
+        b.row(KeyboardButton(text=label))
+    b.row(KeyboardButton(text=HOME_LABEL))
+    return b.as_markup(resize_keyboard=True)
+
+
+def team_work_kb() -> ReplyKeyboardMarkup:
+    b = ReplyKeyboardBuilder()
+    b.row(KeyboardButton(text=SWITCH_LABEL))
+    b.row(KeyboardButton(text=HOME_LABEL))
+    return b.as_markup(resize_keyboard=True)
+
+
+# ══════════════════════════════════════════════════════════════════
+#  КОМАНДА АГЕНТОВ · вход и выбор режима
+# ══════════════════════════════════════════════════════════════════
+
+@router.message(Command("team"))
+async def team_entry_cmd(message: Message, state: FSMContext):
+    await _team_menu(message, state)
+
+
+@router.message(F.text == "🤖 Команда агентов")
+async def team_entry_btn(message: Message, state: FSMContext):
+    await _team_menu(message, state)
+
+
+async def _team_menu(message: Message, state: FSMContext):
+    await state.set_state(State_.agent_menu)
+    roles = " · ".join(f"{d['emoji']} {d['name']}" for d in AGENT_DEFS.values())
+    await message.answer(
+        "🤖 *Команда ИИ-агентов*\n\n"
+        f"🎯 *Авто-оркестр* — Менеджер сам раскидает задачу ({TEAM_COST_AUTO} кр.)\n"
+        f"Или напиши напрямую агенту ({TEAM_COST_SOLO} кр./сообщение):\n{roles}\n\n"
+        "Выбери режим 👇",
+        parse_mode="Markdown", reply_markup=team_menu_kb()
+    )
+
+
+@router.message(State_.agent_menu)
+async def team_menu_choose(message: Message, state: FSMContext):
+    txt = message.text or ""
+    if txt == HOME_LABEL:
+        await state.clear()
+        await message.answer("Главное меню", reply_markup=main_kb()); return
+    if txt == AUTO_LABEL:
+        await state.set_state(State_.agent_auto)
+        await state.update_data(team_transcript=[])
+        await message.answer("🎯 *Авто-оркестр включён.*\nОпиши задачу 👇",
+                             parse_mode="Markdown", reply_markup=team_work_kb()); return
+    if txt in AGENT_LABELS:
+        role = AGENT_LABELS[txt]
+        agent = AGENT_DEFS[role]
+        await state.set_state(State_.agent_solo)
+        await state.update_data(current_agent=role, solo_history=[])
+        await message.answer(f"{agent['emoji']} *{agent['name']}* на связи. Пиши 👇",
+                             parse_mode="Markdown", reply_markup=team_work_kb()); return
+    await message.answer("Выбери режим кнопкой ниже 👇", reply_markup=team_menu_kb())
+
+
+# ══════════════════════════════════════════════════════════════════
+#  РЕЖИМ 1 · АВТО-ОРКЕСТР
+# ══════════════════════════════════════════════════════════════════
+
+@router.message(State_.agent_auto)
+async def team_auto(message: Message, state: FSMContext):
+    txt = message.text or ""
+    if txt == HOME_LABEL:
+        await state.clear()
+        await message.answer("Главное меню", reply_markup=main_kb()); return
+    if txt == SWITCH_LABEL:
+        await _team_menu(message, state); return
+
+    task = (message.text or message.caption or "").strip()
+    if not task:
+        await message.answer("Напиши задачу текстом 🙏", reply_markup=team_work_kb()); return
+
+    if not await use_credits(message.from_user.id, "team", TEAM_COST_AUTO):
+        await message.answer("❌ Недостаточно кредитов.", reply_markup=profile_kb()); return
+
+    data = await state.get_data()
+    transcript = data.get("team_transcript", [])
+    ctx = ("Контекст прошлой работы:\n" + "\n".join(transcript[-6:]) + "\n\n") if transcript else ""
+
+    status = await message.answer("👔 Менеджер разбирает задачу...")
+    plan_raw = await _agent_call(f"{ctx}Задача: {task}", MANAGER_PLAN_PROMPT, timeout_s=40)
+    plan = _extract_json(plan_raw)
+    if not plan or not isinstance(plan.get("steps"), list) or not plan["steps"]:
+        plan = {"plan": "Разберём силами инженера и ассистента.",
+                "steps": [{"agent": "engineer", "task": task}, {"agent": "assistant", "task": task}]}
+    try:
+        await status.edit_text(f"👔 *Менеджер:* {plan.get('plan', '')}", parse_mode="Markdown")
+    except Exception:
+        pass
+
+    work_log = []
+    for step in plan["steps"][:3]:
+        role = step.get("agent")
+        agent = AGENT_DEFS.get(role)
+        if not agent:
+            continue
+        sub = step.get("task", task)
+        prior = "\n\n".join(work_log) if work_log else "(пока ничего)"
+        extra = (await marketing_context() + "\n\n") if agent.get("use_data") else ""
+        system = agent["prompt"] + (ACTION_AGENT_NOTE if agent.get("can_act") else "")
+        prompt = f"{extra}{ctx}Общая задача: {task}\n\nТвоя подзадача: {sub}\n\nЧто сделали коллеги:\n{prior}"
+        await message.answer(f"{agent['emoji']} *{agent['name']} работает...*", parse_mode="Markdown")
+        reply = await _agent_call(prompt, system, timeout_s=50) or "(нет ответа)"
+
+        if agent.get("can_act"):
+            cmd = _extract_json(reply)
+            if isinstance(cmd, dict) and cmd.get("action"):
+                result = await dispatch_action(message.bot, cmd)
+                await message.answer(f"{agent['emoji']} {result}")
+                work_log.append(f"{agent['name']}: {result}")
+                continue
+        work_log.append(f"{agent['name']}: {reply}")
+        await _send_block(message, f"{agent['emoji']} *{agent['name']}*", reply)
+
+    await message.answer("👔 *Менеджер собирает итог...*", parse_mode="Markdown")
+    final = await _agent_call(
+        f"Задача: {task}\n\nРабота команды:\n" + "\n\n".join(work_log) + "\n\nСобери итог.",
+        MANAGER_FINAL_PROMPT, timeout_s=50)
+    if final:
+        await _send_block(message, "✅ *Итог от Менеджера*", final)
+    else:
+        final = work_log[-1] if work_log else ""
+
+    try:
+        await log_request(message.from_user.id, "team", "claude", TEAM_COST_AUTO)
+    except Exception:
+        pass
+    transcript += [f"Задача: {task}", f"Итог: {final[:500]}"]
+    await state.update_data(team_transcript=transcript[-10:])
+    bal = await get_balance(message.from_user.id)
+    await message.answer(f"💎 Потрачено: *{TEAM_COST_AUTO} кр.* · Остаток: *{bal} кр.*\n\n"
+                         "Дай следующую задачу или смени режим 👇",
+                         parse_mode="Markdown", reply_markup=team_work_kb())
+
+
+# ══════════════════════════════════════════════════════════════════
+#  РЕЖИМ 2 · ПРЯМОЙ ДИАЛОГ С АГЕНТОМ
+# ══════════════════════════════════════════════════════════════════
+
+@router.message(State_.agent_solo)
+async def team_solo(message: Message, state: FSMContext):
+    txt = message.text or ""
+    if txt == HOME_LABEL:
+        await state.clear()
+        await message.answer("Главное меню", reply_markup=main_kb()); return
+    if txt == SWITCH_LABEL:
+        await _team_menu(message, state); return
+
+    user_msg = (message.text or message.caption or "").strip()
+    if not user_msg:
+        await message.answer("Напиши сообщение 🙏", reply_markup=team_work_kb()); return
+
+    data = await state.get_data()
+    role = data.get("current_agent")
+    agent = AGENT_DEFS.get(role)
+    if not agent:
+        await _team_menu(message, state); return
+
+    if not await use_credits(message.from_user.id, "team_solo", TEAM_COST_SOLO):
+        await message.answer("❌ Недостаточно кредитов.", reply_markup=profile_kb()); return
+
+    # приложенное фото → image_url для возможной публикации
+    attached_img = None
+    if message.photo:
+        ph = message.photo[-1]
+        f = await message.bot.get_file(ph.file_id)
+        attached_img = f"https://api.telegram.org/file/bot{message.bot.token}/{f.file_path}"
+
+    history = data.get("solo_history", [])
+    thinking = await message.answer(f"{agent['emoji']} {agent['name']} думает...")
+
+    extra = (await marketing_context() + "\n\n") if agent.get("use_data") else ""
+    system = agent["prompt"] + (ACTION_AGENT_NOTE if agent.get("can_act") else "")
+    reply = await _agent_call(extra + user_msg, system, history_msgs=history, timeout_s=45)
+
+    try:
+        await thinking.delete()
+    except Exception:
+        pass
+
+    if not reply:
+        await add_credits(message.from_user.id, TEAM_COST_SOLO, "bonus", "Возврат: ошибка агента")
+        await message.answer("Не получилось ответить, кредиты возвращены 🙏",
+                             reply_markup=team_work_kb()); return
+
+    acted = False
+    if agent.get("can_act"):
+        cmd = _extract_json(reply)
+        if isinstance(cmd, dict) and cmd.get("action"):
+            if attached_img and not cmd.get("image_url"):
+                cmd["image_url"] = attached_img
+            result = await dispatch_action(message.bot, cmd)
+            await message.answer(f"{agent['emoji']} {result}", reply_markup=team_work_kb())
+            acted = True
+    if not acted:
+        await _send_block(message, f"{agent['emoji']} *{agent['name']}*", reply)
+
+    history += [{"role": "user", "content": user_msg}, {"role": "assistant", "content": reply}]
+    await state.update_data(solo_history=history[-12:])
+    try:
+        await log_request(message.from_user.id, "team_solo", "claude", TEAM_COST_SOLO)
+    except Exception:
+        pass
+    bal = await get_balance(message.from_user.id)
+    await message.answer(f"💎 −{TEAM_COST_SOLO} кр. · Остаток: *{bal} кр.*",
+                         parse_mode="Markdown", reply_markup=team_work_kb())
+
+
+# ══════════════════════════════════════════════════════════════════
+#  💼 ФИНАНСОВЫЙ АГЕНТ (только админ, вход: /finance)
+# ══════════════════════════════════════════════════════════════════
+
+FINANCE_PARSE_PROMPT = (
+    "Ты — финансовый агент. Из текста дневного отчёта вытащи числа и верни СТРОГО JSON без markdown:\n"
+    '{"ad_spend":число,"leads":целое,"sales":целое,"revenue":число,"payouts":число,"note":"кратко"}\n'
+    "ad_spend — расходы на рекламу; leads — сколько пришло (лидов); sales — сколько ПРОДАЖ (оплат); "
+    "revenue — выручка; payouts — что отдали/прочие расходы. Чего нет — ставь 0. Бери только числа."
+)
+
+FINANCE_REPORT_PROMPT = (
+    "Ты — финансовый директор AuraAI. По готовым сводным цифрам составь короткий деловой отчёт: "
+    "итоги, 2–3 наблюдения и 1–2 рекомендации. Без воды. Цифры уже посчитаны — не пересчитывай."
+)
+
+
+async def _ensure_finance_table():
+    await db_run("""CREATE TABLE IF NOT EXISTS finance_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts TEXT DEFAULT (datetime('now')),
+        day TEXT, ad_spend REAL DEFAULT 0, leads INTEGER DEFAULT 0,
+        sales INTEGER DEFAULT 0, revenue REAL DEFAULT 0, payouts REAL DEFAULT 0, note TEXT
+    )""")
+    try:
+        await db_run("ALTER TABLE finance_log ADD COLUMN sales INTEGER DEFAULT 0")
+    except Exception:
+        pass
+
+
+def _today():
+    return datetime.date.today().isoformat()
+
+
+async def _save_finance(d: dict):
+    await _ensure_finance_table()
+    await db_run(
+        "INSERT INTO finance_log (day,ad_spend,leads,sales,revenue,payouts,note) VALUES (?,?,?,?,?,?,?)",
+        (_today(), float(d.get("ad_spend") or 0), int(d.get("leads") or 0), int(d.get("sales") or 0),
+         float(d.get("revenue") or 0), float(d.get("payouts") or 0), str(d.get("note") or "")))
+
+
+async def _finance_agg(days: int) -> dict:
+    await _ensure_finance_table()
+    if days <= 1:
+        rows = await db_all("SELECT ad_spend,leads,sales,revenue,payouts FROM finance_log WHERE day = date('now')")
+        label = "сегодня"
+    else:
+        rows = await db_all("SELECT ad_spend,leads,sales,revenue,payouts FROM finance_log WHERE day >= date('now', ?)",
+                            (f"-{days - 1} day",))
+        label = f"{days} дней"
+    ad = sum(r["ad_spend"] for r in rows); leads = sum(r["leads"] for r in rows)
+    sales = sum((r["sales"] or 0) for r in rows); rev = sum(r["revenue"] for r in rows)
+    pay = sum(r["payouts"] for r in rows)
+    return {"label": label, "n": len(rows), "ad": ad, "leads": leads, "sales": sales,
+            "rev": rev, "pay": pay, "profit": rev - ad - pay,
+            "romi": ((rev - ad) / ad * 100) if ad else 0,
+            "conv": (sales / leads * 100) if leads else 0,
+            "cpl": (ad / leads) if leads else 0}
+
+
+def finance_kb() -> ReplyKeyboardMarkup:
+    b = ReplyKeyboardBuilder()
+    b.row(KeyboardButton(text="📥 Внести отчёт за сегодня"))
+    b.row(KeyboardButton(text="📊 Сегодня"), KeyboardButton(text="📈 7 дней"), KeyboardButton(text="🗓 30 дней"))
+    b.row(KeyboardButton(text="🏠 В главное меню"))
+    return b.as_markup(resize_keyboard=True)
+
+
+@router.message(Command("finance"))
+async def finance_start(message: Message, state: FSMContext):
+    if message.from_user.id != ADMIN_ID:
+        return
+    await state.set_state(State_.finance_menu)
+    await message.answer("💼 *Финансовый агент*\n\n📥 Внеси дневной отчёт свободным текстом — разберу цифры.\n"
+                         "📊 Кнопки периодов — построю отчётность с прибылью, конверсией и ROMI.",
+                         parse_mode="Markdown", reply_markup=finance_kb())
+
+
+@router.message(State_.finance_menu)
+async def finance_menu(message: Message, state: FSMContext):
+    if message.from_user.id != ADMIN_ID:
+        return
+    txt = message.text or ""
+    if txt == "🏠 В главное меню":
+        await state.clear()
+        await message.answer("Главное меню", reply_markup=main_kb()); return
+    if txt == "📥 Внести отчёт за сегодня":
+        await state.set_state(State_.finance_input)
+        await message.answer("Пришли отчёт. Например:\n_реклама 5000, пришло 30, продаж 8, "
+                             "заработали 45000, отдали 12000_", parse_mode="Markdown",
+                             reply_markup=finance_kb()); return
+    period = {"📊 Сегодня": 1, "📈 7 дней": 7, "🗓 30 дней": 30}.get(txt)
+    if period:
+        await _send_finance_report(message, period); return
+    await message.answer("Выбери действие кнопкой ниже 👇", reply_markup=finance_kb())
+
+
+@router.message(State_.finance_input)
+async def finance_input(message: Message, state: FSMContext):
+    if message.from_user.id != ADMIN_ID:
+        return
+    txt = (message.text or "").strip()
+    if txt == "🏠 В главное меню":
+        await state.clear()
+        await message.answer("Главное меню", reply_markup=main_kb()); return
+    if not txt:
+        await message.answer("Напиши отчёт текстом 🙏", reply_markup=finance_kb()); return
+
+    thinking = await message.answer("💼 Разбираю цифры...")
+    parsed = None
+    for mid in ("claude", "gpt4o", "deepseek"):
+        try:
+            raw = await call_text_ai(txt, FINANCE_PARSE_PROMPT, mid, timeout_s=30)
+            parsed = _extract_json(raw)
+            if parsed:
+                break
+        except Exception as e:
+            logging.error(f"finance parse [{mid}]: {e}")
+    try:
+        await thinking.delete()
+    except Exception:
+        pass
+    if not parsed:
+        await message.answer("Не разобрал. Проще: «реклама 5000, пришло 30, продаж 8, заработали 45000, отдали 12000».",
+                             reply_markup=finance_kb()); return
+
+    await _save_finance(parsed)
+    ad = float(parsed.get("ad_spend") or 0); rev = float(parsed.get("revenue") or 0)
+    pay = float(parsed.get("payouts") or 0); leads = int(parsed.get("leads") or 0)
+    sales = int(parsed.get("sales") or 0)
+    await state.set_state(State_.finance_menu)
+    await message.answer(f"✅ *Записал за {_today()}:*\n📣 Реклама: {_money(ad)}\n👥 Пришло: {leads}\n"
+                         f"🛒 Продаж: {sales}\n💰 Выручка: {_money(rev)}\n📤 Выплаты: {_money(pay)}\n"
+                         f"━━━━━━━━\n📈 Прибыль за день: *{_money(rev - ad - pay)}*",
+                         parse_mode="Markdown", reply_markup=finance_kb())
+
+
+async def _send_finance_report(message: Message, days: int):
+    agg = await _finance_agg(days)
+    if agg["n"] == 0:
+        await message.answer("За этот период данных нет. Внеси отчёт 👇", reply_markup=finance_kb()); return
+    summary = (f"Период: {agg['label']} ({agg['n']} записей)\nРеклама: {_money(agg['ad'])}\n"
+               f"Пришло: {agg['leads']}\nПродаж: {agg['sales']}\nКонверсия: {agg['conv']:.1f}%\n"
+               f"Выручка: {_money(agg['rev'])}\nВыплаты: {_money(agg['pay'])}\n"
+               f"Прибыль: {_money(agg['profit'])}\nROMI: {agg['romi']:.0f}%\nCPL: {_money(agg['cpl'])}")
+    thinking = await message.answer("💼 Готовлю отчёт...")
+    narrative = None
+    for mid in ("claude", "gpt4o", "deepseek"):
+        try:
+            narrative = await call_text_ai(f"Цифры за период:\n{summary}\n\nСоставь деловой отчёт.",
+                                           FINANCE_REPORT_PROMPT, mid, timeout_s=40)
+            if narrative and not narrative.startswith("❌"):
+                break
+        except Exception as e:
+            logging.error(f"finance report [{mid}]: {e}")
+    try:
+        await thinking.delete()
+    except Exception:
+        pass
+    await message.answer(f"📊 *Финансовый отчёт · {agg['label']}*\n\n{summary}", parse_mode="Markdown")
+    if narrative:
+        await _send_block(message, "🧠 *Аналитика:*", narrative)
+    await message.answer("Что дальше? 👇", reply_markup=finance_kb())
+
+
+# Авто-итог дня админу (опц.): вызови start_daily_finance_report(bot) при старте.
+async def start_daily_finance_report(bot):
+    async def loop():
+        while True:
+            now = datetime.datetime.utcnow()
+            target = now.replace(hour=21, minute=0, second=0, microsecond=0)
+            if target <= now:
+                target += datetime.timedelta(days=1)
+            await asyncio.sleep((target - now).total_seconds())
+            try:
+                agg = await _finance_agg(1)
+                if agg["n"]:
+                    await bot.send_message(ADMIN_ID, f"🌙 Итоги дня: выручка {_money(agg['rev'])}, "
+                                           f"прибыль {_money(agg['profit'])}, конверсия {agg['conv']:.1f}%, "
+                                           f"ROMI {agg['romi']:.0f}%.")
+            except Exception as e:
+                logging.error(f"daily finance: {e}")
+    asyncio.create_task(loop())
+
+# ====================================================================
+#  <<< КОНЕЦ БЛОКА АГЕНТОВ >>>
+# ====================================================================
 
 async def main():
     global anthropic_client, openai_client, deepseek_client

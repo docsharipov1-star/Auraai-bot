@@ -3490,7 +3490,7 @@ async def dispatch_action(bot, action: dict) -> str:
 
 
 async def _tg_post(bot, action: dict) -> str:
-    chat = action.get("chat") or os.getenv("TG_POST_CHANNEL", "")
+    chat = action.get("chat") or os.getenv("TG_POST_CHANNEL", "") or await get_setting("tg_channel", "")
     if not chat:
         return "⚠️ Не задан канал. Укажи TG_POST_CHANNEL в .env."
     caption = (action.get("caption") or action.get("text") or "")[:1024]
@@ -4086,7 +4086,7 @@ async def start_daily_finance_report(bot):
 async def testpost_cmd(message: Message):
     if message.from_user.id != ADMIN_ID:
         return
-    chat = os.getenv("TG_POST_CHANNEL", "")
+    chat = os.getenv("TG_POST_CHANNEL", "") or await get_setting("tg_channel", "")
     if not chat:
         await message.answer("⚠️ TG_POST_CHANNEL не задан в .env"); return
     try:
@@ -4097,6 +4097,30 @@ async def testpost_cmd(message: Message):
         await message.answer(f"✅ Фото тоже ушло в {chat}. Канал настроен верно!")
     except Exception as e:
         await message.answer(f"⚠️ Ошибка отправки в {chat}:\n{str(e)[:300]}\n\nПроверь: бот — админ канала с правом публикации, и @хендл канала верный.")
+
+
+async def _ensure_settings_table():
+    await db_run("CREATE TABLE IF NOT EXISTS bot_settings (k TEXT PRIMARY KEY, v TEXT)")
+
+async def get_setting(key, default=""):
+    await _ensure_settings_table()
+    row = await db_get("SELECT v FROM bot_settings WHERE k=?", (key,))
+    return row["v"] if row else default
+
+async def set_setting(key, value):
+    await _ensure_settings_table()
+    await db_run("INSERT INTO bot_settings (k,v) VALUES (?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v", (key, value))
+
+@router.message(Command("setchannel"))
+async def setchannel_cmd(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    parts = (message.text or "").split(maxsplit=1)
+    if len(parts) < 2:
+        await message.answer("Использование: /setchannel @канал\n(для приватного — числовой ID вида -100...)"); return
+    ch = parts[1].strip()
+    await set_setting("tg_channel", ch)
+    await message.answer(f"✅ Канал для постов сохранён: {ch}\nПроверь командой /testpost")
 
 
 async def main():

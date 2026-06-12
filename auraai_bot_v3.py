@@ -1,6 +1,6 @@
 """
 ╔══════════════════════════════════════════════════════╗
-║          Vatan AI Bot v3.0 — Syntx AI Style            ║
+║          AuraAI Bot v3.0 — Syntx AI Style            ║
 ║  Reply Keyboard + все разделы + починенные картинки  ║
 ╚══════════════════════════════════════════════════════╝
 
@@ -17,9 +17,6 @@ import asyncio
 import hashlib
 import logging
 import os
-import json
-import uuid
-import random
 import httpx
 from datetime import datetime, timedelta
 
@@ -35,7 +32,6 @@ from aiogram.types import (
     CallbackQuery, InlineKeyboardButton, LabeledPrice,
     Message, PreCheckoutQuery, BufferedInputFile,
     ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove,
-    ChatMemberUpdated,
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
 from dotenv import load_dotenv
@@ -54,8 +50,6 @@ AIML_KEY      = os.getenv("AIML_KEY", "")
 ADMIN_ID      = int(os.getenv("ADMIN_ID", "0"))
 BOT_USERNAME  = os.getenv("BOT_USERNAME", "GetAuraAI_bot")
 YOOKASSA_TOKEN = os.getenv("YOOKASSA_TOKEN", "")  # provider token из BotFather (ЮKassa)
-YOOKASSA_SHOP_ID = os.getenv("YOOKASSA_SHOP_ID", "")      # ShopID из кабинета ЮKassa (для оплаты по ссылке)
-YOOKASSA_SECRET_KEY = os.getenv("YOOKASSA_SECRET_KEY", "")  # секретный ключ ЮKassa (для оплаты по ссылке)
 DB_PATH       = "/app/data/auraai.db"
 FREE_CREDITS  = 150
 REFERRAL_BONUS = 50
@@ -82,7 +76,7 @@ PLANS_ANNUAL = {
 COURSE = {"name": "Курс «Заработок на ИИ-картинках»", "rub": 2900, "stars": 2400, "credits": 1000}
 
 SALES_PROMPT = (
-    "Ты — дружелюбный и уверенный менеджер по продажам онлайн-курса Vatan AI. "
+    "Ты — дружелюбный и уверенный менеджер по продажам онлайн-курса AuraAI. "
     "Твоя задача — помочь человеку и мягко довести его до покупки курса.\n\n"
     "О КУРСЕ:\n"
     "• Название: курс «Заработок на ИИ-картинках».\n"
@@ -90,7 +84,7 @@ SALES_PROMPT = (
     "• Для кого: для новичков с нуля — студентов, предпринимателей, всех кто хочет новую профессию или подработку из дома. Опыт и диплом не нужны, нужен только телефон.\n"
     "• Что внутри: как обрабатывать фото, делать рекламу и карточки товаров, оживлять снимки в видео, и как брать на этом платные заказы.\n"
     "• Результат: после курса человек умеет делать ИИ-визуал и может брать заказы или делать визуал для своего бизнеса без дизайнера.\n"
-    "• Бонус: при покупке курса начисляется 1 000 кредитов на бота Vatan AI, чтобы сразу практиковаться.\n\n"
+    "• Бонус: при покупке курса начисляется 1 000 кредитов на бота AuraAI, чтобы сразу практиковаться.\n\n"
     "КАК ОБЩАТЬСЯ:\n"
     "• Отвечай коротко, тепло, по-человечески, на «ты». 2-4 предложения. Не повторяй один и тот же текст — каждый ответ разный.\n"
     "• ВСЕГДА заканчивай ответ встречным вопросом, чтобы продолжить диалог (например: «А ты для себя хочешь освоить или для заработка?», «Какой у тебя сейчас доход хочешь добавить?»). Это помогает дожимать.\n"
@@ -100,34 +94,6 @@ SALES_PROMPT = (
     "• Когда чувствуешь интерес — прямо предлагай нажать кнопку «Купить курс» внизу.\n"
     "• Если спрашивают не про курс — кратко ответь и верни разговор к курсу.\n"
     "• Пиши на том языке, на котором пишет человек (русский или таджикский)."
-)
-
-SUPPORT_PROMPT = (
-    "Ты — дружелюбный агент поддержки Telegram-бота Vatan AI. Отвечай тепло, коротко и по делу, на «ты», на языке пользователя (русский или таджикский).\n\n"
-    "ЧТО УМЕЕТ БОТ Vatan AI:\n"
-    "• 💡 Текстовый AI-чат (Claude, GPT-4o, DeepSeek) — вопросы, тексты, помощь.\n"
-    "• 🎨 Дизайн с ИИ — генерация картинок (Nano Banana, GPT Image, DALL-E), редактирование фото, соединение нескольких фото.\n"
-    "• 🎬 Видео будущего — генерация видео (Seedance, Kling), оживление фото в видео, ИИ-аватар с синхронизацией губ (Kling Avatar).\n"
-    "• 🎙 Аудио с ИИ — генерация музыки (Lyria) и озвучка текста голосом (TTS).\n"
-    "• 🗂 Хранитель изображений — сохранение работ.\n"
-    "• 🎓 Обучение — курс по заработку на нейросетях.\n"
-    "• 🔗 Рефералы — приглашаешь друзей и получаешь бонусы.\n\n"
-    "КРЕДИТЫ И ОПЛАТА:\n"
-    "• Всё работает на кредитах, они списываются за каждую генерацию. На старте даются бесплатные кредиты.\n"
-    "• Пополнить: Профиль → 💎 Купить кредиты. Оплата картой (рубли) или Telegram Stars.\n"
-    "• Есть пакеты кредитов и подписки (Basic, Pro, Premium), а также годовые тарифы со скидкой.\n"
-    "• Кредиты не сгорают.\n\n"
-    "ЧАСТЫЕ ВОПРОСЫ:\n"
-    "• Генерация видео/музыки/аватара идёт в фоне 2-4 минуты — можно пользоваться ботом, результат придёт сам.\n"
-    "• Если генерация не удалась — кредиты автоматически возвращаются.\n"
-    "• Чтобы отредактировать фото: Дизайн с ИИ → Редактировать фото → отправить фото → описать что изменить.\n"
-    "• Видео из фото: Видео будущего → Фото в видео → отправить фото → выбрать формат → описать движение.\n"
-    "• Закончились кредиты — пополни в Профиле.\n\n"
-    "ПРАВИЛА:\n"
-    "• Помогай решить проблему пошагово и просто.\n"
-    "• Если вопрос про оплату/возврат, который ты не можешь решить сам, или серьёзная техническая проблема — скажи, что передашь вопрос администратору, и предложи написать ему.\n"
-    "• Не выдумывай функции, которых нет. Если не знаешь — честно скажи и предложи связаться с админом.\n"
-    "• Будь кратким: 2-4 предложения."
 )
 
 CREDIT_PACKS = {
@@ -673,7 +639,7 @@ async def generate_nano_banana(prompt: str, aspect: str = "1:1") -> bytes:
         "model": "google/nano-banana-pro",
         "prompt": prompt,
         "aspect_ratio": aspect,
-        "resolution": "1K"
+        "resolution": "2K"
     })
     url = ""
     if data.get("images"):
@@ -686,6 +652,12 @@ async def generate_nano_banana(prompt: str, aspect: str = "1:1") -> bytes:
         r = await client.get(url)
         r.raise_for_status()
         return r.content
+
+def _preserve_face(prompt: str) -> str:
+    return (prompt.strip() +
+            ". Keep the person's face, identity, facial features, skin tone "
+            "and proportions exactly as in the original photo. Do not change the face.")
+
 
 async def generate_img2img(image_url: str, prompt: str, aspect: str = "1:1") -> tuple:
     """Редактирование фото через Nano Banana PRO Edit — возвращает (bytes, url)"""
@@ -707,10 +679,10 @@ async def generate_img2img(image_url: str, prompt: str, aspect: str = "1:1") -> 
             headers={"Authorization": f"Bearer {AIML_KEY}", "Content-Type": "application/json"},
             json={
                 "model": "google/nano-banana-pro-edit",
-                "prompt": prompt,
+                "prompt": _preserve_face(prompt),
                 "image_urls": [data_uri],
                 "aspect_ratio": aspect,
-                "resolution": "1K"
+                "resolution": "2K"
             }
         )
         resp.raise_for_status()
@@ -751,10 +723,10 @@ async def generate_combine(image_urls: list, prompt: str, aspect: str = "1:1") -
             headers={"Authorization": f"Bearer {AIML_KEY}", "Content-Type": "application/json"},
             json={
                 "model": "google/nano-banana-pro-edit",
-                "prompt": prompt,
+                "prompt": _preserve_face(prompt),
                 "image_urls": data_uris,
                 "aspect_ratio": aspect,
-                "resolution": "1K"
+                "resolution": "2K"
             }
         )
         resp.raise_for_status()
@@ -927,11 +899,7 @@ async def generate_video_kling(prompt: str, aspect: str = "16:9") -> str:
                 raise Exception(f"Kling failed: {result}")
         raise Exception("Таймаут генерации видео (3 мин)")
 
-async def generate_video_seedance(prompt: str, aspect: str = "16:9") -> str:
-    """Генерация видео по тексту (через надёжный движок Kling)."""
-    return await generate_video_kling(prompt, aspect)
-
-async def generate_img2video(image_url: str, prompt: str, aspect: str = "16:9") -> str:
+async def generate_img2video(image_url: str, prompt: str) -> str:
     """Kling img2video — фото в видео через aimlapi.com"""
     if not AIML_KEY:
         raise Exception("AIML_KEY не настроен")
@@ -944,7 +912,7 @@ async def generate_img2video(image_url: str, prompt: str, aspect: str = "16:9") 
                 "image_url": image_url,
                 "prompt": prompt,
                 "duration": "5",
-                "aspect_ratio": aspect
+                "aspect_ratio": "16:9"
             }
         )
         resp.raise_for_status()
@@ -1044,7 +1012,7 @@ def main_kb() -> ReplyKeyboardMarkup:
     b.row(KeyboardButton(text="🎓 Обучение"))
     b.row(
         KeyboardButton(text="❓ Помощь"),
-        KeyboardButton(text="📖 Инструкция"),
+        KeyboardButton(text="📕 База знаний"),
     )
     return b.as_markup(resize_keyboard=True)
 
@@ -1093,7 +1061,7 @@ def model_kb() -> ReplyKeyboardMarkup:
 def cancel_kb() -> ReplyKeyboardMarkup:
     b = ReplyKeyboardBuilder()
     b.row(KeyboardButton(text="❌ Отмена"))
-    return b.as_markup(resize_keyboard=True, input_field_placeholder="Введи текст или отправь фото…")
+    return b.as_markup(resize_keyboard=True)
 
 def profile_kb() -> ReplyKeyboardMarkup:
     b = ReplyKeyboardBuilder()
@@ -1135,10 +1103,10 @@ def plans_annual_inline_kb():
     return b.as_markup()
 
 def pay_method_kb(kind: str, item_id: str):
-    """Выбор способа оплаты: Россия → картой, другие страны → Stars"""
+    """Выбор способа оплаты: Stars или рубли"""
     b = InlineKeyboardBuilder()
-    b.row(InlineKeyboardButton(text="💳 Картой — Россия 🇷🇺", callback_data=f"payrub_{kind}_{item_id}"))
-    b.row(InlineKeyboardButton(text="⭐️ Telegram Stars — другие страны 🌍", callback_data=f"paystars_{kind}_{item_id}"))
+    b.row(InlineKeyboardButton(text="💳 Картой (рубли)", callback_data=f"payrub_{kind}_{item_id}"))
+    b.row(InlineKeyboardButton(text="⭐️ Telegram Stars", callback_data=f"paystars_{kind}_{item_id}"))
     return b.as_markup()
 
 def ref_inline_kb():
@@ -1183,14 +1151,11 @@ class State_(StatesGroup):
     waiting_photo_text = State()
     editing_more       = State()  # продолжение редактирования того же результата
     waiting_combine    = State()  # ожидание фото для соединения
-    combine_refine     = State()  # правка результата соединения
     waiting_video_photo = State()
-    waiting_video_photo_aspect = State()
     waiting_video_photo_text = State()
     nalog_phone = State()  # админ: ввод телефона для входа в «Мой налог»
     nalog_code  = State()  # админ: ввод SMS-кода
     course_chat = State()  # чат с ИИ-менеджером курса
-    support_chat = State()  # чат с ИИ-поддержкой
     avatar_photo = State()  # ИИ-аватар: ожидание фото
     avatar_audio = State()  # ИИ-аватар: ожидание аудио или текста
 
@@ -1272,7 +1237,7 @@ async def cmd_start(message: Message):
                     try: await message.bot.send_message(referrer["id"], "🎉 По твоей ссылке зарегистрировался новый пользователь!")
                     except: pass
         bal = await get_balance(message.from_user.id)
-        text = f"✨ *Добро пожаловать в Vatan AI!*\n\n🎁 Тебе начислено *{bal} кредитов* для старта\n\nВыбери раздел:"
+        text = f"✨ *Добро пожаловать в AuraAI!*\n\n🎁 Тебе начислено *{bal} кредитов* для старта\n\nВыбери раздел:"
     else:
         bal = await get_balance(message.from_user.id)
         text = f"👋 С возвращением, *{message.from_user.first_name}*!\n\n💎 Кредиты: *{bal}*\n\nВыбери раздел:"
@@ -1322,7 +1287,7 @@ async def course_menu(message: Message, state: FSMContext):
 @router.callback_query(F.data == "buy_course")
 async def cb_buy_course(callback: CallbackQuery):
     await callback.message.answer(
-        f"🎓 *{COURSE['name']}*\n\nВыбери способ оплаты:\n🇷🇺 Из России — картой · 🌍 Из других стран — Stars",
+        f"🎓 *{COURSE['name']}*\n\nВыбери способ оплаты:",
         parse_mode="Markdown", reply_markup=pay_method_kb("course", "main")
     )
     await callback.answer()
@@ -1413,37 +1378,8 @@ async def to_main(message: Message, state: FSMContext):
 
 @router.message(F.text == "❌ Отмена")
 async def cancel(message: Message, state: FSMContext):
-    cur = await state.get_state()
-    if cur is None:
-        await message.answer("Главное меню 👇", reply_markup=main_kb())
-        return
-    b = InlineKeyboardBuilder()
-    b.row(InlineKeyboardButton(text="✅ Да, отменить", callback_data="do_cancel"))
-    b.row(InlineKeyboardButton(text="↩️ Нет, продолжить", callback_data="resume_flow"))
-    await message.answer("Точно отменить? Текущий прогресс сбросится.", reply_markup=b.as_markup())
-
-@router.callback_query(F.data == "do_cancel")
-async def cb_do_cancel(callback: CallbackQuery, state: FSMContext):
     await state.clear()
-    try:
-        combine_buffer.pop(callback.from_user.id, None)
-        combine_ready.pop(callback.from_user.id, None)
-    except Exception:
-        pass
-    try:
-        await callback.message.edit_text("❌ Отменено.")
-    except Exception:
-        pass
-    await callback.message.answer("Главное меню 👇", reply_markup=main_kb())
-    await callback.answer()
-
-@router.callback_query(F.data == "resume_flow")
-async def cb_resume_flow(callback: CallbackQuery, state: FSMContext):
-    try:
-        await callback.message.edit_text("👍 Продолжаем — отправь данные дальше.")
-    except Exception:
-        pass
-    await callback.answer("Продолжаем")
+    await message.answer("Отменено.", reply_markup=main_kb())
 
 @router.message(F.text == "🗑 Очистить историю чата")
 async def clear_chat_history(message: Message):
@@ -1485,112 +1421,26 @@ async def section_storage(message: Message):
         parse_mode="Markdown", reply_markup=main_kb()
     )
 
-@router.message(F.text == "📖 Инструкция")
+@router.message(F.text == "📕 База знаний")
 async def section_knowledge(message: Message):
     await message.answer(
-        "📖 *Инструкция — что умеет Vatan AI*\n\n"
-        "Бот собирает топовые нейросети в одном месте. Что за что отвечает:\n\n"
-        "💡 *GPTs/Claude/Gemini* — текстовый ИИ\n"
-        "Чат с ИИ, копирайтинг, код, SEO, перевод, саммари, письма, эссе, рерайт, идеи.\n"
-        "💎 от 5 кр. за запрос\n\n"
-        "🎨 *Дизайн с ИИ* — работа с картинками\n"
-        "• Генерация по описанию (DALL-E — 50, GPT Image — 80, Nano Banana — 110 кр.)\n"
-        "• Обработка и редактирование фото — 120 кр.\n"
-        "• 🔗 Соединить фото (объединить людей, сменить фон/одежду) — 120 кр.\n\n"
-        "🎙 *Аудио с ИИ*\n"
-        "• Музыка по описанию — 50 кр.\n"
-        "• Озвучка текста голосом — 20 кр.\n\n"
-        "🎬 *Видео будущего*\n"
-        "• Видео по описанию — 400 кр.\n"
-        "• Фото в видео (оживить картинку) — 400 кр.\n"
-        "• Говорящие аватары — от 800 кр.\n\n"
-        "🗂 *Хранитель изображений* — все созданные картинки в одном месте.\n"
-        "🎓 *Обучение* — курс «Заработок на ИИ-картинках».\n"
-        "👤 *Профиль* — баланс и пополнение кредитов.\n"
-        "🔗 *Рефералы* — приглашай друзей и получай % с их пополнений.\n\n"
-        "💎 *Кредиты* — внутренняя валюта, списываются за каждый запрос. На старте даём бесплатные. "
-        "Пополнить: Профиль → Купить кредиты (карта или ⭐️ Stars).\n\n"
-        "Не разобрался? Жми ❓ Помощь → Чат с поддержкой 👇",
+        "📕 *База знаний*\n\n⏳ Раздел в разработке.\n\nСкоро: обучающие материалы по работе с AI.",
         parse_mode="Markdown", reply_markup=main_kb()
     )
 
 @router.message(F.text == "❓ Помощь")
 async def section_help(message: Message):
-    b = InlineKeyboardBuilder()
-    b.row(InlineKeyboardButton(text="💬 Чат с поддержкой", callback_data="support_chat"))
-    contact = await setting_get("admin_contact", "")
-    if contact:
-        url = contact if contact.startswith("http") else f"https://t.me/{contact.lstrip('@')}"
-        b.row(InlineKeyboardButton(text="👨‍💼 Написать администратору", url=url))
     await message.answer(
         "❓ *Помощь*\n\n"
         "💡 *GPTs/Claude/Gemini* — текстовые AI инструменты\n"
-        "🎨 *Дизайн с ИИ* — картинки, обработка и соединение фото\n"
-        "🎙 *Аудио с ИИ* — музыка и озвучка голосом\n"
-        "🎬 *Видео будущего* — видео, фото в видео, говорящие аватары\n"
-        "🎓 *Обучение* — курс по заработку на ИИ\n\n"
-        "💎 Кредиты списываются за каждый запрос (на старте дают бесплатные)\n"
-        "💳 Пополнить: Профиль → Купить кредиты (карта или Stars)\n"
-        "🔗 Рефералы — приглашай и зарабатывай\n"
-        "📖 Подробно о функциях — кнопка «Инструкция» в меню\n\n"
-        "Есть вопрос? Напиши в чат поддержки или администратору 👇",
-        parse_mode="Markdown", reply_markup=b.as_markup()
+        "🎨 *Дизайн с ИИ* — генерация картинок\n"
+        "🎙 *Аудио с ИИ* — музыка и голос (скоро)\n"
+        "🎬 *Видео будущего* — AI видео (скоро)\n\n"
+        "💎 Кредиты списываются за каждый запрос\n"
+        "🔗 Рефералы — приглашай и зарабатывай Stars\n\n"
+        "🆘 Поддержка: @support",
+        parse_mode="Markdown", reply_markup=main_kb()
     )
-
-def support_chat_kb() -> ReplyKeyboardMarkup:
-    b = ReplyKeyboardBuilder()
-    b.row(KeyboardButton(text="🏠 В главное меню"))
-    return b.as_markup(resize_keyboard=True)
-
-@router.callback_query(F.data == "support_chat")
-async def cb_support_chat(callback: CallbackQuery, state: FSMContext):
-    await state.set_state(State_.support_chat)
-    await callback.message.answer(
-        "💬 Я — поддержка Vatan AI. Опиши свой вопрос или проблему — помогу разобраться.\n\n"
-        "Например: «как пополнить кредиты?», «не пришло видео», «как редактировать фото?»\n\n"
-        "Чтобы выйти — нажми «🏠 В главное меню».",
-        reply_markup=support_chat_kb()
-    )
-    await callback.answer()
-
-@router.message(State_.support_chat, F.text == "🏠 В главное меню")
-async def support_chat_exit(message: Message, state: FSMContext):
-    await state.clear()
-    bal = await get_balance(message.from_user.id)
-    await message.answer(f"🏠 *Главное меню*\n\n💎 Кредиты: *{bal}*", parse_mode="Markdown", reply_markup=main_kb())
-
-@router.message(State_.support_chat)
-async def support_chat_answer(message: Message, state: FSMContext):
-    data = await state.get_data()
-    history = data.get("support_history", [])
-    thinking = await message.answer("✍️ ...")
-    reply = None
-    for mid in ("claude", "gpt4o", "deepseek"):
-        try:
-            r = await call_text_ai(message.text or "", SUPPORT_PROMPT, mid, history_msgs=history, timeout_s=30)
-            if r and not r.startswith("❌"):
-                reply = r
-                break
-        except Exception as e:
-            logging.error(f"Support chat [{mid}] error: {e}")
-            continue
-    try:
-        await thinking.delete()
-    except Exception:
-        pass
-    if not reply:
-        await message.answer(
-            "Сейчас не могу ответить — попробуй ещё раз через минуту 🙏\n"
-            "Если вопрос срочный — напиши администратору.",
-            reply_markup=support_chat_kb()
-        )
-        return
-    history = history + [
-        {"role": "user", "content": message.text or ""},
-        {"role": "assistant", "content": reply},
-    ]
-    await state.update_data(support_history=history[-12:])
-    await message.answer(reply, reply_markup=support_chat_kb())
 
 # ══════════════════════════════════════════════════════
 #  ПРОФИЛЬ
@@ -1627,7 +1477,7 @@ async def buy_plans(message: Message):
     plan = user["plan"] if user else "free"
 
     text = (
-        "👑 *Подписки Vatan AI*\n"
+        "👑 *Подписки AuraAI*\n"
         "_Чем выше тариф — тем дешевле каждая генерация._\n\n"
 
         f"{'✅ ' if plan=='basic' else ''}⭐️ *Basic — 390₽/мес*\n"
@@ -2196,7 +2046,14 @@ async def process_image(message: Message, state: FSMContext):
                 caption=f"🎨 *{model_name}*  ·  Формат {aspect}\n\n💎 Потрачено: *{cost} кр.* · Остаток: *{bal} кр.*",
                 parse_mode="Markdown"
             )
-            await message.answer("Что дальше?", reply_markup=design_kb())
+            # вернуть в режим генерации, чтобы следующий текст снова сработал
+            await state.set_state(State_.waiting_image)
+            await state.update_data(image_model=model, cost=cost, aspect=aspect, base_photo=base_photo)
+            await message.answer(
+                "✅ Готово! Напиши следующий запрос — сделаю ещё.\n"
+                "Или выбери другое в меню ниже 👇",
+                reply_markup=design_kb()
+            )
 
         await log_request(message.from_user.id, f"media_{model}", model, cost)
 
@@ -2259,7 +2116,7 @@ async def tts_start(message: Message, state: FSMContext):
     await message.answer(
         f"🔊 *ElevenLabs TTS*  ·  💎 {cost} кредитов\n\n"
         f"Введи текст который хочешь озвучить:\n\n"
-        f"Пример: *Привет! Добро пожаловать в Vatan AI*",
+        f"Пример: *Привет! Добро пожаловать в AuraAI*",
         parse_mode="Markdown", reply_markup=cancel_kb()
     )
 @router.message(F.text == "🎥 Создать видео Kling")
@@ -2497,42 +2354,16 @@ async def img2video_photo_received(message: Message, state: FSMContext):
     file = await message.bot.get_file(photo.file_id)
     file_url = f"https://api.telegram.org/file/bot{message.bot.token}/{file.file_path}"
     user_video_photo_urls[message.from_user.id] = file_url
-    await state.set_state(State_.waiting_video_photo_aspect)
-    b = ReplyKeyboardBuilder()
-    b.row(KeyboardButton(text="📱 9:16 Вертикальное"))
-    b.row(KeyboardButton(text="🖥 16:9 Горизонтальное"))
-    b.row(KeyboardButton(text="📷 3:4"))
-    b.row(KeyboardButton(text="❌ Отмена"))
-    await message.answer(
-        "✅ Фото получено!\n\n"
-        "2️⃣ Выбери формат видео:",
-        reply_markup=b.as_markup(resize_keyboard=True)
-    )
-
-VIDEO_PHOTO_ASPECTS = {
-    "📱 9:16 Вертикальное": "9:16",
-    "🖥 16:9 Горизонтальное": "16:9",
-    "📷 3:4": "3:4",
-}
-
-@router.message(State_.waiting_video_photo_aspect, F.text.in_(VIDEO_PHOTO_ASPECTS.keys()))
-async def img2video_aspect_received(message: Message, state: FSMContext):
-    aspect = VIDEO_PHOTO_ASPECTS[message.text]
-    await state.update_data(video_aspect=aspect)
     await state.set_state(State_.waiting_video_photo_text)
     await message.answer(
-        f"Формат: *{aspect}* ✅\n\n"
-        "3️⃣ Опиши что должно происходить в видео:\n\n"
+        "✅ Фото получено!\n\n"
+        "2️⃣ Опиши что должно происходить в видео:\n\n"
         "Примеры:\n"
         "• *плавное движение камеры вперёд*\n"
         "• *волосы развеваются на ветру*\n"
         "• *облака медленно плывут*",
         parse_mode="Markdown", reply_markup=cancel_kb()
     )
-
-@router.message(State_.waiting_video_photo_aspect, F.text != "❌ Отмена")
-async def img2video_aspect_invalid(message: Message):
-    await message.answer("📐 Выбери формат кнопкой: 9:16, 16:9 или 3:4")
 
 @router.message(State_.waiting_video_photo, F.text != "❌ Отмена")
 async def img2video_no_photo(message: Message):
@@ -2547,7 +2378,6 @@ async def img2video_video_process(message: Message, state: FSMContext):
 
     data = await state.get_data()
     cost = data.get("cost", 100)
-    aspect = data.get("video_aspect", "16:9")
     image_url = user_video_photo_urls.get(message.from_user.id)
 
     if not image_url:
@@ -2574,7 +2404,7 @@ async def img2video_video_process(message: Message, state: FSMContext):
 
     async def img2video_task():
         try:
-            url = await generate_img2video(image_url, prompt, aspect)
+            url = await generate_img2video(image_url, prompt)
             async with httpx.AsyncClient(timeout=180) as client:
                 vr = await client.get(url)
                 vr.raise_for_status()
@@ -2732,9 +2562,7 @@ async def avatar_text_received(message: Message, state: FSMContext):
 
 
 # ── Соединение нескольких фото ──
-combine_buffer: dict[int, dict] = {}   # сборка альбома (временно): uid -> {"photos":[], "caption":"", "processing":False}
-combine_ready: dict[int, dict] = {}    # накоплено в ожидании описания/фото: uid -> {"photos":[...], "caption":""}
-combine_last: dict[int, dict] = {}     # последний успешный запрос (для правок): uid -> {"photos":[...], "caption":...}
+combine_buffer: dict[int, dict] = {}  # uid -> {"photos": [...], "caption": str, "task": bool}
 
 @router.message(F.text == "🔗 Соединить фото")
 async def combine_start(message: Message, state: FSMContext):
@@ -2746,13 +2574,11 @@ async def combine_start(message: Message, state: FSMContext):
     await state.set_state(State_.waiting_combine)
     await state.update_data(cost=cost)
     combine_buffer.pop(message.from_user.id, None)
-    combine_ready.pop(message.from_user.id, None)
     await message.answer(
-        "🔗 *Соединить фото*  ·  💎 120 кредитов\n\n"
-        "Пришли *2-4 фото* и напиши, что сделать. Можно как удобно:\n"
-        "• фото альбомом *с подписью* — сразу обработаю\n"
-        "• или сначала фото, *потом* описание отдельным сообщением\n\n"
-        "Примеры:\n"
+        "🔗 *Соединить фото*  ·  💎 70 кредитов\n\n"
+        "Отправь *2-4 фото одним альбомом* (выбери несколько сразу), "
+        "и в подписи к ним напиши что сделать.\n\n"
+        "Примеры подписи:\n"
         "• *посади этого человека на этот фон*\n"
         "• *объедини обоих людей на одном фото*\n"
         "• *надень одежду со второго фото на человека с первого*",
@@ -2762,54 +2588,8 @@ async def combine_start(message: Message, state: FSMContext):
 @router.message(State_.waiting_combine, F.text == "❌ Отмена")
 async def combine_cancel(message: Message, state: FSMContext):
     combine_buffer.pop(message.from_user.id, None)
-    combine_ready.pop(message.from_user.id, None)
     await state.clear()
     await message.answer("Отменено.", reply_markup=design_kb())
-
-async def _combine_run(message: Message, state: FSMContext, uid: int, photos: list, caption: str):
-    """Списывает кредиты, генерирует и показывает результат с кнопкой правки."""
-    photos = photos[:4]
-    data = await state.get_data()
-    cost = data.get("cost", 120)
-    ok = await use_credits(uid, "combine", cost)
-    if not ok:
-        await message.answer("❌ Недостаточно кредитов.", reply_markup=profile_kb())
-        await state.clear()
-        return
-    await state.clear()
-
-    thinking = await message.answer(
-        f"🔗 Соединяю {len(photos)} фото... (~20-40 сек)",
-        reply_markup=ReplyKeyboardRemove()
-    )
-    try:
-        img_bytes, result_url = await generate_combine(photos, caption)
-        bal = await get_balance(uid)
-        try:
-            await thinking.delete()
-        except Exception:
-            pass
-        combine_last[uid] = {"photos": photos, "caption": caption}
-        await message.answer_photo(
-            BufferedInputFile(img_bytes, filename="combined.png"),
-            caption="✅ Готово! NanoBanana PRO"
-        )
-        b = InlineKeyboardBuilder()
-        b.row(InlineKeyboardButton(text="✏️ Исправить результат", callback_data="combine_refine"))
-        if result_url:
-            b.row(InlineKeyboardButton(text="📥 Скачать в высоком качестве", url=result_url))
-        await message.answer(
-            f"📌 Запрос: _{caption}_\n\n"
-            f"💎 Потрачено: *{cost} кр.* · Остаток: *{bal} кр.*\n\n"
-            f"Не то? Нажми «✏️ Исправить результат» и напиши, что поменять.",
-            parse_mode="Markdown", reply_markup=b.as_markup()
-        )
-        await message.answer("Что дальше?", reply_markup=design_kb())
-        await log_request(uid, "combine", "nano-banana-pro-edit", cost)
-    except Exception as e:
-        await add_credits(uid, cost, "bonus", "Возврат: ошибка соединения")
-        await message.answer(f"⚠️ Ошибка. Кредиты возвращены.\n{str(e)[:100]}", reply_markup=design_kb())
-        logging.error(f"Combine error: {e}")
 
 @router.message(State_.waiting_combine, F.photo)
 async def combine_photo_received(message: Message, state: FSMContext):
@@ -2824,95 +2604,76 @@ async def combine_photo_received(message: Message, state: FSMContext):
     if message.caption:
         combine_buffer[uid]["caption"] = message.caption
 
-    # Отложенная обработка — ждём, пока придут все фото альбома
+    # Запустить отложенную обработку (ждём пока придут все фото альбома)
     if not combine_buffer[uid]["processing"]:
         combine_buffer[uid]["processing"] = True
 
         async def process_after_delay():
-            await asyncio.sleep(2.5)
-            buf = combine_buffer.pop(uid, None)
+            await asyncio.sleep(2.5)  # ждём остальные фото альбома
+            buf = combine_buffer.get(uid)
             if not buf:
                 return
-            # объединяем с уже накопленным (фото/описание из прошлых сообщений)
-            prev = combine_ready.get(uid, {"photos": [], "caption": ""})
-            photos = prev["photos"] + buf["photos"]
-            caption = buf["caption"] or prev["caption"]
-            combine_ready[uid] = {"photos": photos, "caption": caption}
+            photos = buf["photos"]
+            caption = buf["caption"]
+            combine_buffer.pop(uid, None)
 
             if len(photos) < 2:
                 await message.answer(
-                    "📸 Принял 1 фото. Пришли ещё хотя бы одно (можно альбомом).",
+                    "❌ Нужно минимум 2 фото. Отправь несколько фото одним альбомом.",
                     reply_markup=cancel_kb()
                 )
                 return
+
             if not caption:
                 await message.answer(
-                    f"📸 Принял {len(photos)} фото. Теперь напиши, что сделать "
-                    f"(например: *объедини обоих людей на одном фото*).",
+                    "❌ Не вижу подписи. Отправь фото ещё раз и добавь в подписи что сделать "
+                    "(например: *объедини этих людей*).",
                     parse_mode="Markdown", reply_markup=cancel_kb()
                 )
                 return
-            # есть и фото, и описание → запускаем
-            combine_ready.pop(uid, None)
-            await _combine_run(message, state, uid, photos, caption)
+
+            data = await state.get_data()
+            cost = data.get("cost", 120)
+            ok = await use_credits(uid, "combine", cost)
+            if not ok:
+                await message.answer("❌ Недостаточно кредитов.", reply_markup=profile_kb())
+                await state.clear()
+                return
+            await state.clear()
+
+            thinking = await message.answer(
+                f"🔗 Соединяю {len(photos)} фото... (~20-40 сек)",
+                reply_markup=ReplyKeyboardRemove()
+            )
+            try:
+                img_bytes, result_url = await generate_combine(photos, caption)
+                bal = await get_balance(uid)
+                try:
+                    await thinking.delete()
+                except Exception:
+                    pass
+                await message.answer_photo(
+                    BufferedInputFile(img_bytes, filename="combined.png"),
+                    caption="✅ Готово! NanoBanana PRO"
+                )
+                await message.answer(
+                    f"📌 Запрос: _{caption}_\n\n"
+                    f"💎 Потрачено: *{cost} кр.* · Остаток: *{bal} кр.*\n\n"
+                    f"[📥 Скачать в высоком качестве]({result_url})",
+                    parse_mode="Markdown", disable_web_page_preview=False
+                )
+                await message.answer("Что дальше?", reply_markup=design_kb())
+                await log_request(uid, "combine", "nano-banana-pro-edit", cost)
+            except Exception as e:
+                await add_credits(uid, cost, "bonus", "Возврат: ошибка соединения")
+                await message.answer(f"⚠️ Ошибка. Кредиты возвращены.\n{str(e)[:100]}", reply_markup=design_kb())
+                logging.error(f"Combine error: {e}")
 
         asyncio.create_task(process_after_delay())
 
-@router.message(State_.waiting_combine, F.text, F.text != "❌ Отмена")
-async def combine_text_received(message: Message, state: FSMContext):
-    uid = message.from_user.id
-    text = (message.text or "").strip()
-    ready = combine_ready.get(uid)
-    if ready and len(ready["photos"]) >= 2:
-        # фото уже есть — этот текст и есть описание → запускаем
-        photos = ready["photos"]
-        combine_ready.pop(uid, None)
-        await _combine_run(message, state, uid, photos, text)
-    else:
-        # описание пришло раньше фото — запомним и ждём фото
-        if uid not in combine_ready:
-            combine_ready[uid] = {"photos": [], "caption": ""}
-        combine_ready[uid]["caption"] = text
-        await message.answer(
-            "📝 Запомнил описание. Теперь пришли 2-4 фото (можно одним альбомом).",
-            reply_markup=cancel_kb()
-        )
-
-# ── Правка результата соединения ──
-@router.callback_query(F.data == "combine_refine")
-async def cb_combine_refine(callback: CallbackQuery, state: FSMContext):
-    uid = callback.from_user.id
-    if uid not in combine_last:
-        await callback.answer("Нет предыдущего результата для правки.", show_alert=True)
-        return
-    bal = await get_balance(uid)
-    if bal < 120:
-        await callback.answer(f"Нужно 120 кр., у тебя {bal} кр.", show_alert=True)
-        return
-    await state.set_state(State_.combine_refine)
-    await state.update_data(cost=120)
-    await callback.answer()
-    await callback.message.answer(
-        "✏️ Напиши, что изменить — переделаю по исходным фото.\n\n"
-        "Например: *объедини обоих людей в полный рост на одном фоне*.",
-        parse_mode="Markdown", reply_markup=cancel_kb()
-    )
-
-@router.message(State_.combine_refine, F.text == "❌ Отмена")
-async def combine_refine_cancel(message: Message, state: FSMContext):
-    await state.clear()
-    await message.answer("Ок, оставляю как есть.", reply_markup=design_kb())
-
-@router.message(State_.combine_refine, F.text)
-async def combine_refine_text(message: Message, state: FSMContext):
-    uid = message.from_user.id
-    last = combine_last.get(uid)
-    if not last:
-        await state.clear()
-        await message.answer("Нет исходных фото для правки. Зайди в «Соединить фото» заново.", reply_markup=design_kb())
-        return
-    new_caption = (message.text or "").strip()
-    await _combine_run(message, state, uid, last["photos"], new_caption)
+@router.message(State_.waiting_combine, F.text != "❌ Отмена")
+async def combine_no_photo(message: Message):
+    await message.answer("📸 Отправь 2-4 фото одним альбомом с подписью что сделать.")
 
 
 @router.message(StateFilter(None), F.photo & F.caption, ~F.from_user.is_bot)
@@ -3069,7 +2830,7 @@ async def cb_choose_credits_method(callback: CallbackQuery):
     pack = CREDIT_PACKS.get(pid)
     if not pack: return
     await callback.message.answer(
-        f"💎 *{pack['name']}*\n\nВыбери способ оплаты:\n🇷🇺 Из России — картой · 🌍 Из других стран — Stars",
+        f"💎 *{pack['name']}*\n\nВыбери способ оплаты:",
         parse_mode="Markdown",
         reply_markup=pay_method_kb("credits", pid)
     )
@@ -3094,7 +2855,7 @@ async def cb_show_annual(callback: CallbackQuery):
 @router.callback_query(F.data == "show_monthly")
 async def cb_show_monthly(callback: CallbackQuery):
     text = (
-        "👑 *Подписки Vatan AI* (помесячно)\n\n"
+        "👑 *Подписки AuraAI* (помесячно)\n\n"
         "⭐️ *Basic — 390₽/мес* · 2 000 кр\n"
         "👑 *Pro — 1 090₽/мес* · 4 500 кр + скидка 25% 🔥\n"
         "💎 *Premium — 2 290₽/мес* · 9 000 кр + безлимит чат + скидка 50% ⭐️\n\n"
@@ -3112,7 +2873,7 @@ async def cb_choose_year_method(callback: CallbackQuery):
     plan = PLANS_ANNUAL.get(pid)
     if not plan: return
     await callback.message.answer(
-        f"{plan['emoji']} *{plan['name']}* — {plan['credits']} кредитов на год\n\nВыбери способ оплаты:\n🇷🇺 Из России — картой · 🌍 Из других стран — Stars",
+        f"{plan['emoji']} *{plan['name']}* — {plan['credits']} кредитов на год\n\nВыбери способ оплаты:",
         parse_mode="Markdown",
         reply_markup=pay_method_kb("planyear", pid)
     )
@@ -3124,7 +2885,7 @@ async def cb_choose_plan_method(callback: CallbackQuery):
     plan = PLANS.get(pid)
     if not plan: return
     await callback.message.answer(
-        f"{plan['emoji']} *{plan['name']}* — {plan['description']}\n\nВыбери способ оплаты:\n🇷🇺 Из России — картой · 🌍 Из других стран — Stars",
+        f"{plan['emoji']} *{plan['name']}* — {plan['description']}\n\nВыбери способ оплаты:",
         parse_mode="Markdown",
         reply_markup=pay_method_kb("plan", pid)
     )
@@ -3138,7 +2899,7 @@ async def cb_pay_stars(callback: CallbackQuery):
         if not pack: return
         await callback.bot.send_invoice(
             chat_id=callback.from_user.id,
-            title=f"Vatan AI — {pack['name']}",
+            title=f"AuraAI — {pack['name']}",
             description=f"Пополнение: {pack['credits']} кредитов",
             payload=f"credits_{item_id}",
             currency="XTR",
@@ -3149,7 +2910,7 @@ async def cb_pay_stars(callback: CallbackQuery):
         if not plan: return
         await callback.bot.send_invoice(
             chat_id=callback.from_user.id,
-            title=f"Vatan AI {plan['name']}",
+            title=f"AuraAI {plan['name']}",
             description=f"{plan['credits']} кредитов на год",
             payload=f"planyear_{item_id}",
             currency="XTR",
@@ -3169,208 +2930,74 @@ async def cb_pay_stars(callback: CallbackQuery):
         if not plan: return
         await callback.bot.send_invoice(
             chat_id=callback.from_user.id,
-            title=f"Vatan AI {plan['name']} — 30 дней",
+            title=f"AuraAI {plan['name']} — 30 дней",
             description=plan["description"],
             payload=f"plan_{item_id}",
             currency="XTR",
-            prices=[LabeledPrice(label=f"Vatan AI {plan['name']}", amount=plan["stars"])],
+            prices=[LabeledPrice(label=f"AuraAI {plan['name']}", amount=plan["stars"])],
         )
     await callback.answer()
 
-async def yk_create_payment(amount_rub: int, description: str, metadata: dict) -> tuple:
-    """Создаёт платёж в ЮKassa по API. Возвращает (payment_id, confirmation_url)."""
-    if not (YOOKASSA_SHOP_ID and YOOKASSA_SECRET_KEY):
-        raise Exception("YOOKASSA_SHOP_ID / YOOKASSA_SECRET_KEY не настроены")
-    async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.post(
-            "https://api.yookassa.ru/v3/payments",
-            auth=(YOOKASSA_SHOP_ID, YOOKASSA_SECRET_KEY),
-            headers={"Idempotence-Key": str(uuid.uuid4()), "Content-Type": "application/json"},
-            json={
-                "amount": {"value": f"{amount_rub}.00", "currency": "RUB"},
-                "capture": True,
-                "confirmation": {"type": "redirect", "return_url": f"https://t.me/{BOT_USERNAME}"},
-                "description": description[:128],
-                "metadata": metadata,
-            },
-        )
-        resp.raise_for_status()
-        data = resp.json()
-    return data["id"], data["confirmation"]["confirmation_url"]
-
-async def yk_check_payment(payment_id: str) -> dict:
-    """Возвращает данные платежа ЮKassa (status, metadata и т.д.)."""
-    async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.get(
-            f"https://api.yookassa.ru/v3/payments/{payment_id}",
-            auth=(YOOKASSA_SHOP_ID, YOOKASSA_SECRET_KEY),
-        )
-        resp.raise_for_status()
-        return resp.json()
-
-async def grant_purchase(bot, uid: int, kind: str, item_id: str) -> str:
-    """Начисляет покупку пользователю. Возвращает текст для пользователя."""
-    item_name = "Доступ к сервису Vatan AI"
-    amount_rub = 0
-    text = "✅ Оплата прошла!"
-    if kind == "credits":
-        pack = CREDIT_PACKS.get(item_id)
-        if not pack:
-            return "✅ Оплата прошла."
-        item_name = f"Vatan AI — {pack['name']}"; amount_rub = pack["rub"]
-        new_bal = await add_credits(uid, pack["credits"], "purchase", f"Покупка: {pack['name']}")
-        text = f"✅ *Оплата прошла!*\n\n💎 +{pack['credits']} кредитов\n💰 Баланс: *{new_bal} кр.*"
-    elif kind == "planyear":
-        plan = PLANS_ANNUAL.get(item_id)
-        if not plan:
-            return "✅ Оплата прошла."
-        item_name = f"Vatan AI {plan['name']}"; amount_rub = plan["rub"]
-        await set_plan(uid, plan["base"], plan["credits"], plan["days"])
-        bal = await get_balance(uid)
-        text = f"✅ *{plan['name']} активирован на год!*\n\n💎 +{plan['credits']} кредитов\n💰 Баланс: *{bal} кр.*"
-    elif kind == "plan":
-        plan = PLANS.get(item_id)
-        if not plan:
-            return "✅ Оплата прошла."
-        item_name = f"Vatan AI {plan['name']}"; amount_rub = plan["rub"]
-        await set_plan(uid, item_id, plan["credits"], plan["days"])
-        bal = await get_balance(uid)
-        text = f"✅ *{plan['name']} активирован!*\n\n💎 +{plan['credits']} кредитов\n💰 Баланс: *{bal} кр.*"
-    elif kind == "course":
-        item_name = COURSE["name"]; amount_rub = COURSE["rub"]
-        await add_credits(uid, COURSE["credits"], "purchase", "Бонус за курс")
-        link = await setting_get("course_link", "")
-        if link:
-            text = f"✅ *Доступ к курсу открыт!*\n\n🎓 Уроки здесь:\n{link}\n\n🎁 Начислено {COURSE['credits']} кредитов."
-        else:
-            text = f"✅ *Оплата курса прошла!*\n\n🎁 Начислено {COURSE['credits']} кредитов. Доступ к урокам пришлю в ближайшее время."
-            try:
-                await bot.send_message(ADMIN_ID, f"🎓 Новая покупка КУРСА (картой)! Пользователь {uid}. Выдай доступ (/set_course_link).")
-            except Exception:
-                pass
-
-    # Чек в «Мой налог»
-    try:
-        if await nalog_is_connected() and amount_rub:
-            receipt_url = await nalog_add_income(item_name, amount_rub)
-            if receipt_url:
-                text += f"\n\n🧾 [Чек отправлен в налоговую]({receipt_url})"
-    except Exception as e:
-        logging.error(f"Nalog income error (yk): {e}")
-        try:
-            await bot.send_message(ADMIN_ID, f"⚠️ Чек в «Мой налог» не зарегистрирован ({amount_rub}₽). Ошибка: {str(e)[:150]}")
-        except Exception:
-            pass
-
-    # Реферальная комиссия (в копейках, как в Stars-платежах)
-    try:
-        commission = await process_commission(uid, amount_rub * 100)
-        if commission:
-            info = REFERRAL_LEVELS[commission["level"]]
-            await bot.send_message(commission["referrer_id"],
-                f"💰 *Реферальная комиссия!*\n\n{info['emoji']} {info['name']} ({commission['percent']}%)\nНачислено: *+{commission['credits_earned']} кр.*", parse_mode="Markdown")
-    except Exception:
-        pass
-
-    return text
-
 @router.callback_query(F.data.startswith("payrub_"))
 async def cb_pay_rub(callback: CallbackQuery):
-    if not (YOOKASSA_SHOP_ID and YOOKASSA_SECRET_KEY):
+    if not YOOKASSA_TOKEN:
         await callback.message.answer(
             "💳 Оплата картой скоро будет доступна. Пока используй ⭐️ Telegram Stars.",
         )
         await callback.answer()
         return
     _, kind, item_id = callback.data.split("_", 2)
-    uid = callback.from_user.id
-
-    description = None
-    amount = 0
     if kind == "credits":
         pack = CREDIT_PACKS.get(item_id)
-        if not pack:
-            await callback.answer(); return
-        description = f"Vatan AI — {pack['name']} ({pack['credits']} кредитов)"; amount = pack["rub"]
+        if not pack: return
+        await callback.bot.send_invoice(
+            chat_id=callback.from_user.id,
+            title=f"AuraAI — {pack['name']}",
+            description=f"Пополнение: {pack['credits']} кредитов",
+            payload=f"credits_{item_id}",
+            provider_token=YOOKASSA_TOKEN,
+            currency="RUB",
+            prices=[LabeledPrice(label=pack["name"], amount=pack["rub"] * 100)],
+            need_email=True, send_email_to_provider=True,
+        )
     elif kind == "planyear":
         plan = PLANS_ANNUAL.get(item_id)
-        if not plan:
-            await callback.answer(); return
-        description = f"Vatan AI {plan['name']} — подписка на год"; amount = plan["rub"]
+        if not plan: return
+        await callback.bot.send_invoice(
+            chat_id=callback.from_user.id,
+            title=f"AuraAI {plan['name']}",
+            description=f"{plan['credits']} кредитов на год",
+            payload=f"planyear_{item_id}",
+            provider_token=YOOKASSA_TOKEN,
+            currency="RUB",
+            prices=[LabeledPrice(label=plan["name"], amount=plan["rub"] * 100)],
+            need_email=True, send_email_to_provider=True,
+        )
     elif kind == "course":
-        description = COURSE["name"]; amount = COURSE["rub"]
+        await callback.bot.send_invoice(
+            chat_id=callback.from_user.id,
+            title=COURSE["name"],
+            description="Доступ к курсу + 1000 кредитов",
+            payload="course_main",
+            provider_token=YOOKASSA_TOKEN,
+            currency="RUB",
+            prices=[LabeledPrice(label=COURSE["name"], amount=COURSE["rub"] * 100)],
+            need_email=True, send_email_to_provider=True,
+        )
     else:
         plan = PLANS.get(item_id)
-        if not plan:
-            await callback.answer(); return
-        kind = "plan"
-        description = f"Vatan AI {plan['name']} — 30 дней"; amount = plan["rub"]
-
+        if not plan: return
+        await callback.bot.send_invoice(
+            chat_id=callback.from_user.id,
+            title=f"AuraAI {plan['name']} — 30 дней",
+            description=plan["description"],
+            payload=f"plan_{item_id}",
+            provider_token=YOOKASSA_TOKEN,
+            currency="RUB",
+            prices=[LabeledPrice(label=f"AuraAI {plan['name']}", amount=plan["rub"] * 100)],
+            need_email=True, send_email_to_provider=True,
+        )
     await callback.answer()
-    try:
-        payment_id, pay_url = await yk_create_payment(
-            amount, description,
-            metadata={"uid": str(uid), "kind": kind, "item_id": item_id},
-        )
-    except Exception as e:
-        logging.error(f"yk_create_payment error: {type(e).__name__}: {e}")
-        await callback.message.answer(
-            "⚠️ Не удалось создать оплату картой. Попробуй ещё раз чуть позже "
-            "или используй ⭐️ Telegram Stars."
-        )
-        return
-
-    b = InlineKeyboardBuilder()
-    b.row(InlineKeyboardButton(text="🔗 Оплатить картой", url=pay_url))
-    b.row(InlineKeyboardButton(text="✅ Я оплатил — проверить", callback_data=f"ykcheck_{payment_id}"))
-    await callback.message.answer(
-        f"💳 *Оплата картой*\n\n{description}\nСумма: *{amount} ₽*\n\n"
-        "1️⃣ Нажми «🔗 Оплатить картой» и заверши оплату\n"
-        "2️⃣ Вернись сюда и нажми «✅ Я оплатил — проверить»",
-        parse_mode="Markdown", reply_markup=b.as_markup(),
-    )
-
-@router.callback_query(F.data.startswith("ykcheck_"))
-async def cb_yk_check(callback: CallbackQuery):
-    payment_id = callback.data[len("ykcheck_"):]
-    await callback.answer("Проверяю оплату…")
-    try:
-        pay = await yk_check_payment(payment_id)
-    except Exception as e:
-        logging.error(f"yk_check_payment error: {type(e).__name__}: {e}")
-        await callback.message.answer("⚠️ Не удалось проверить оплату. Попробуй ещё раз через минуту.")
-        return
-
-    status = pay.get("status")
-    if status == "succeeded":
-        # защита от повторного начисления
-        already = await db_get("SELECT 1 FROM payments WHERE product_id=?", (f"yk_{payment_id}",))
-        if already:
-            await callback.message.answer("✅ Эта оплата уже зачислена. Баланс пополнен ранее.")
-            return
-        meta = pay.get("metadata", {}) or {}
-        uid = int(meta.get("uid", callback.from_user.id))
-        kind = meta.get("kind", "credits")
-        item_id = meta.get("item_id", "")
-        amount_rub = int(float(pay.get("amount", {}).get("value", "0")))
-        text = await grant_purchase(callback.bot, uid, kind, item_id)
-        await db_run(
-            "INSERT INTO payments (user_id,type,product_id,stars) VALUES (?,?,?,?)",
-            (uid, "purchase", f"yk_{payment_id}", amount_rub * 100),
-        )
-        try:
-            await callback.message.edit_reply_markup(reply_markup=None)
-        except Exception:
-            pass
-        await callback.message.answer(text, parse_mode="Markdown", reply_markup=main_kb())
-    elif status in ("pending", "waiting_for_capture"):
-        await callback.message.answer(
-            "⏳ Оплата ещё не завершена. Заверши оплату на странице ЮKassa и нажми «✅ Я оплатил — проверить» ещё раз."
-        )
-    elif status == "canceled":
-        await callback.message.answer("❌ Платёж отменён. Можешь начать оплату заново.")
-    else:
-        await callback.message.answer("⏳ Статус оплаты пока не определён. Попробуй проверить ещё раз через минуту.")
 
 @router.pre_checkout_query()
 async def pre_checkout(query: PreCheckoutQuery): await query.answer(ok=True)
@@ -3382,24 +3009,24 @@ async def on_payment(message: Message):
     currency = message.successful_payment.currency
     uid     = message.from_user.id
 
-    item_name = "Доступ к сервису Vatan AI"
+    item_name = "Доступ к сервису AuraAI"
     if payload.startswith("credits_"):
         pack = CREDIT_PACKS.get(payload.replace("credits_", ""))
         if pack:
-            item_name = f"Vatan AI — {pack['name']}"
+            item_name = f"AuraAI — {pack['name']}"
             new_bal = await add_credits(uid, pack["credits"], "purchase", f"Покупка: {pack['name']}")
             await message.answer(f"✅ *Оплата прошла!*\n\n💎 +{pack['credits']} кредитов\n💰 Баланс: *{new_bal} кр.*", parse_mode="Markdown", reply_markup=main_kb())
     elif payload.startswith("planyear_"):
         plan = PLANS_ANNUAL.get(payload.replace("planyear_", ""))
         if plan:
-            item_name = f"Vatan AI {plan['name']}"
+            item_name = f"AuraAI {plan['name']}"
             await set_plan(uid, plan["base"], plan["credits"], plan["days"])
             bal = await get_balance(uid)
             await message.answer(f"✅ *{plan['name']} активирован на год!*\n\n💎 +{plan['credits']} кредитов\n💰 Баланс: *{bal} кр.*", parse_mode="Markdown", reply_markup=main_kb())
     elif payload.startswith("plan_"):
         plan = PLANS.get(payload.replace("plan_", ""))
         if plan:
-            item_name = f"Vatan AI {plan['name']}"
+            item_name = f"AuraAI {plan['name']}"
             await set_plan(uid, payload.replace("plan_", ""), plan["credits"], plan["days"])
             bal = await get_balance(uid)
             await message.answer(f"✅ *{plan['name']} активирован!*\n\n💎 +{plan['credits']} кредитов\n💰 Баланс: *{bal} кр.*", parse_mode="Markdown", reply_markup=main_kb())
@@ -3534,7 +3161,7 @@ async def cmd_admin(message: Message):
     if message.from_user.id != ADMIN_ID: return
     total, paid, today, stars = await admin_stats()
     await message.answer(
-        f"🔐 *Админ Vatan AI v3*\n\n👥 Всего: *{total}*\n👑 Платных: *{paid}*\n📨 Сегодня: *{today}*\n⭐️ Stars: *{stars}*",
+        f"🔐 *Админ AuraAI v3*\n\n👥 Всего: *{total}*\n👑 Платных: *{paid}*\n📨 Сегодня: *{today}*\n⭐️ Stars: *{stars}*",
         parse_mode="Markdown"
     )
 
@@ -3685,311 +3312,6 @@ async def cmd_broadcast(message: Message):
 #  ЗАПУСК
 # ══════════════════════════════════════════════════════
 
-# ══════════════════════════════════════════════════════
-#  АВТОПОСТИНГ В КАНАЛ (ИИ-агент сам публикует посты)
-# ══════════════════════════════════════════════════════
-
-# Темы постов — ротация, чтобы контент не повторялся
-AUTOPOST_THEMES = [
-    ("Мотивация на старт", "Короткий заряжающий пост: сейчас лучшее время начать зарабатывать на нейросетях, пока другие сомневаются. Подтолкни сделать первый шаг сегодня в Vatan AI."),
-    ("Идея заработка", "Короткий пост с ОДНОЙ конкретной идеей заработка через Vatan AI (продажа картинок и аватаров, видео из фото на заказ, озвучка, рекламные ролики для бизнеса). Просто, вдохновляюще, с призывом попробовать."),
-    ("Деньги и ИИ", "Короткий мотивирующий пост: один человек с телефоном и нейросетями сегодня делает то, за что раньше платили агентствам тысячи. Возможность открыта каждому — и всё это есть в Vatan AI."),
-    ("Возможность Vatan AI", "Короткий пост про одну фишку Vatan AI (генерация картинок, видео из фото, музыка, озвучка, аватары) и как на ней можно заработать или сэкономить. Заверши призывом зайти и попробовать."),
-    ("Свобода и доход", "Короткий мотивирующий пост про деньги и свободу: навык работы с ИИ сегодня — это новый источник дохода и независимости. Не откладывай, начни с малого прямо в Vatan AI."),
-    ("Без отговорок", "Короткий пост-пинок: для старта заработка на нейросетях не нужны деньги, опыт или техника — хватит телефона и Vatan AI. Развей страх «это сложно» и замотивируй начать сегодня."),
-]
-
-AUTOPOST_SYSTEM = (
-    "Ты — автор Telegram-канала «Vatan AI» — это платформа, где с помощью нейросетей можно зарабатывать "
-    "(создавать картинки, видео из фото, музыку, озвучку, аватары — в том числе на заказ). "
-    "Пиши как сильный коуч-мотиватор: коротко, цепляюще, заряжая на действие и заработок.\n"
-    "Правила:\n"
-    "- Длину поста бери из задания (короткий/средний/подробный). В любом случае — читабельно, короткие фразы, разделяй мысли пустыми строками («воздух»).\n"
-    "- Первая строка — мощный крючок, который цепляет.\n"
-    "- Тон: энергичный, мотивирующий, про деньги, возможности и свободу. Без воды.\n"
-    "- Грамотный русский без опечаток. Эмодзи уместно, но без перебора.\n"
-    "- Веди читателя в бота Vatan AI.\n"
-    "- НЕ называй чужие сервисы по именам (ChatGPT, Midjourney и т.п.) — говори «нейросети» и «Vatan AI».\n"
-    "- Не давай ложных гарантий конкретных сумм дохода. Без кучи хэштегов.\n"
-    "Пиши только сам пост, без пояснений и без кавычек вокруг текста."
-)
-
-AUTOPOST_CTA = f"\n\n🚀 Начни зарабатывать в Vatan AI: @{BOT_USERNAME}"
-
-# Варианты длины поста — чередуются случайно (с весами: чаще короткие/средние, иногда длинные)
-AUTOPOST_LENGTHS = [
-    ("короткий", "Сделай пост коротким: 3-6 строк в стиле коуча, с «воздухом» между мыслями."),
-    ("средний", "Сделай пост СРЕДНИМ: 6-9 строк — чуть глубже раскрой мысль, добавь пример или короткую историю."),
-    ("подробный", "Сделай пост ПОДРОБНЫМ: 10-15 строк — раскрой тему (мини-история, разбор или 3-4 пункта), но живо и читабельно, с разбивкой на короткие абзацы."),
-]
-AUTOPOST_LENGTH_WEIGHTS = [45, 35, 20]  # % выпадения каждой длины
-
-# Варианты частоты: подпись -> минут между постами
-AUTOPOST_FREQ = [
-    ("2 раза в день", 720),
-    ("3 раза в день", 480),
-    ("4 раза в день", 360),
-    ("6 раз в день", 240),
-    ("8 раз в день", 180),
-]
-
-def autopost_freq_label(minutes: int) -> str:
-    for label, m in AUTOPOST_FREQ:
-        if m == minutes:
-            return label
-    return f"каждые {minutes} мин"
-
-async def autopost_generate() -> tuple:
-    """Генерирует пост: возвращает (text, image_bytes_or_None)."""
-    # выбираем тему по кругу
-    try:
-        idx = int(await setting_get("autopost_theme_idx", "0"))
-    except Exception:
-        idx = 0
-    theme_label, theme_prompt = AUTOPOST_THEMES[idx % len(AUTOPOST_THEMES)]
-    await setting_set("autopost_theme_idx", str((idx + 1) % len(AUTOPOST_THEMES)))
-
-    # случайная длина поста (некоторые короткие, некоторые длиннее)
-    length_label, length_instr = random.choices(AUTOPOST_LENGTHS, weights=AUTOPOST_LENGTH_WEIGHTS, k=1)[0]
-    full_prompt = f"{theme_prompt}\n\n{length_instr}"
-
-    # генерируем текст: пробуем 3 модели по очереди
-    text = ""
-    for model_id in ("claude", "gpt4o", "deepseek"):
-        try:
-            text = await call_text_ai(full_prompt, AUTOPOST_SYSTEM, model_id, uid=0, timeout_s=40)
-            if text and len(text.strip()) > 20:
-                break
-        except Exception as e:
-            logging.error(f"autopost text {model_id} error: {e}")
-            text = ""
-    if not text or len(text.strip()) < 20:
-        return None, None  # не удалось — пропускаем пост
-
-    text = text.strip()
-    # добавляем CTA в бота (не во все темы, чтобы не приедалось)
-    if "@" + BOT_USERNAME not in text and random.random() < 0.85:
-        text += AUTOPOST_CTA
-
-    # картинка примерно в половине постов (DALL-E — самая дешёвая модель)
-    image_bytes = None
-    if random.random() < 0.5:
-        try:
-            img_prompt_raw = await call_text_ai(
-                f"Придумай короткое описание для яркой иллюстрации к этому посту (на английском, 1 предложение, без текста на картинке):\n\n{text[:400]}",
-                "You write concise vivid image-generation prompts in English. Reply with the prompt only.",
-                "gpt4o", uid=0, timeout_s=30,
-            )
-            img_prompt = (img_prompt_raw or "").strip()[:400] or "modern AI technology, neural network, futuristic digital art, emerald and gold colors"
-            image_bytes = await generate_image_dalle(img_prompt, "1:1")
-        except Exception as e:
-            logging.error(f"autopost image error: {e}")
-            image_bytes = None  # просто опубликуем текст
-
-    return text, image_bytes
-
-async def autopost_send(bot, manual: bool = False) -> bool:
-    """Публикует один пост в канал. Возвращает True при успехе."""
-    channel = await setting_get("autopost_channel", "")
-    if not channel:
-        if manual:
-            try:
-                await bot.send_message(ADMIN_ID, "⚠️ Канал не подключён. Добавь бота админом в канал — он определится сам, или задай командой /set_channel @username")
-            except Exception:
-                pass
-        return False
-
-    text, image_bytes = await autopost_generate()
-    if not text:
-        if manual:
-            try:
-                await bot.send_message(ADMIN_ID, "⚠️ Не удалось сгенерировать пост (нейросети не ответили). Попробуй ещё раз.")
-            except Exception:
-                pass
-        return False
-
-    try:
-        if image_bytes:
-            cap = text if len(text) <= 1024 else text[:1020] + "…"
-            await bot.send_photo(channel, BufferedInputFile(image_bytes, "post.jpg"), caption=cap)
-        else:
-            await bot.send_message(channel, text, disable_web_page_preview=True)
-        await setting_set("autopost_last", datetime.now().isoformat())
-        return True
-    except Exception as e:
-        logging.error(f"autopost send error: {e}")
-        try:
-            await bot.send_message(ADMIN_ID, f"⚠️ Не смог опубликовать в канал. Проверь, что бот — администратор канала с правом публикации.\n\nОшибка: {str(e)[:200]}")
-        except Exception:
-            pass
-        return False
-
-async def autopost_loop(bot):
-    """Фоновый цикл: проверяет каждые 5 минут, не пора ли опубликовать."""
-    await asyncio.sleep(20)  # дать боту стартовать
-    while True:
-        try:
-            enabled = await setting_get("autopost_enabled", "0")
-            channel = await setting_get("autopost_channel", "")
-            if enabled == "1" and channel:
-                try:
-                    interval = int(await setting_get("autopost_interval_min", "360"))
-                except Exception:
-                    interval = 360
-                last_s = await setting_get("autopost_last", "")
-                due = True
-                if last_s:
-                    try:
-                        last_dt = datetime.fromisoformat(last_s)
-                        due = (datetime.now() - last_dt) >= timedelta(minutes=interval)
-                    except Exception:
-                        due = True
-                if due:
-                    await autopost_send(bot)
-        except Exception as e:
-            logging.error(f"autopost_loop error: {e}")
-        await asyncio.sleep(300)  # 5 минут
-
-# ── Авто-определение канала: когда бота делают админом канала ──
-@router.my_chat_member()
-async def on_bot_membership(update: ChatMemberUpdated):
-    try:
-        chat = update.chat
-        new_status = update.new_chat_member.status
-        if chat.type == "channel" and new_status in ("administrator", "creator"):
-            await setting_set("autopost_channel", str(chat.id))
-            await setting_set("autopost_channel_title", chat.title or "")
-            try:
-                await update.bot.send_message(
-                    ADMIN_ID,
-                    f"✅ Канал подключён: *{chat.title}*\n\nТеперь зайди в /autopost и нажми ▶️ Включить, чтобы бот начал публиковать посты.",
-                    parse_mode="Markdown",
-                )
-            except Exception:
-                pass
-    except Exception as e:
-        logging.error(f"on_bot_membership error: {e}")
-
-# ── Админ-меню автопостинга ──
-async def autopost_menu_text() -> str:
-    enabled = await setting_get("autopost_enabled", "0")
-    channel_title = await setting_get("autopost_channel_title", "")
-    channel = await setting_get("autopost_channel", "")
-    interval = int(await setting_get("autopost_interval_min", "360"))
-    last_s = await setting_get("autopost_last", "")
-    status = "🟢 включён" if enabled == "1" else "🔴 выключен"
-    ch = f"«{channel_title}»" if channel_title else (channel if channel else "не подключён ❗")
-    last = "ещё не было"
-    if last_s:
-        try:
-            last = datetime.fromisoformat(last_s).strftime("%d.%m %H:%M")
-        except Exception:
-            last = last_s
-    return (
-        f"📢 *Автопостинг в канал*\n\n"
-        f"Статус: {status}\n"
-        f"Канал: {ch}\n"
-        f"Частота: {autopost_freq_label(interval)}\n"
-        f"Последний пост: {last}\n\n"
-        f"Бот сам генерирует посты на тему ИИ/заработка и публикует в канал."
-    )
-
-def autopost_menu_kb(enabled: str):
-    b = InlineKeyboardBuilder()
-    if enabled == "1":
-        b.row(InlineKeyboardButton(text="⏸ Выключить", callback_data="ap_off"))
-    else:
-        b.row(InlineKeyboardButton(text="▶️ Включить", callback_data="ap_on"))
-    b.row(InlineKeyboardButton(text="📝 Опубликовать сейчас", callback_data="ap_now"))
-    b.row(InlineKeyboardButton(text="🔄 Сменить частоту", callback_data="ap_freq"))
-    return b.as_markup()
-
-@router.message(Command("set_contact"))
-async def cmd_set_contact(message: Message):
-    if message.from_user.id != ADMIN_ID:
-        return
-    parts = (message.text or "").split(maxsplit=1)
-    if len(parts) < 2:
-        await message.answer(
-            "Использование: /set_contact @username\n"
-            "(или ссылка https://t.me/username)\n\n"
-            "Это ссылка, по которой пользователи смогут написать тебе напрямую из раздела «❓ Помощь»."
-        )
-        return
-    contact = parts[1].strip()
-    await setting_set("admin_contact", contact)
-    url = contact if contact.startswith("http") else f"https://t.me/{contact.lstrip('@')}"
-    await message.answer(f"✅ Контакт поддержки установлен: {url}\n\nТеперь в «❓ Помощь» появилась кнопка «👨‍💼 Написать администратору».")
-
-@router.message(Command("autopost"))
-async def cmd_autopost(message: Message):
-    if message.from_user.id != ADMIN_ID:
-        return
-    enabled = await setting_get("autopost_enabled", "0")
-    await message.answer(await autopost_menu_text(), parse_mode="Markdown", reply_markup=autopost_menu_kb(enabled))
-
-@router.message(Command("set_channel"))
-async def cmd_set_channel(message: Message):
-    if message.from_user.id != ADMIN_ID:
-        return
-    parts = (message.text or "").split(maxsplit=1)
-    if len(parts) < 2:
-        await message.answer("Использование: /set_channel @username_канала\n\nИли просто добавь бота администратором в канал — он определится автоматически.")
-        return
-    ch = parts[1].strip()
-    await setting_set("autopost_channel", ch)
-    await setting_set("autopost_channel_title", ch)
-    await message.answer(f"✅ Канал установлен: {ch}\n\nПроверь, что бот — администратор этого канала. Затем /autopost → ▶️ Включить.")
-
-@router.callback_query(F.data == "ap_on")
-async def cb_ap_on(callback: CallbackQuery):
-    if callback.from_user.id != ADMIN_ID:
-        await callback.answer(); return
-    channel = await setting_get("autopost_channel", "")
-    if not channel:
-        await callback.answer("Сначала подключи канал (добавь бота админом).", show_alert=True); return
-    await setting_set("autopost_enabled", "1")
-    await setting_set("autopost_last", datetime.now().isoformat())  # следующий пост через интервал
-    await callback.answer("Включено ✅")
-    await callback.message.edit_text(await autopost_menu_text(), parse_mode="Markdown", reply_markup=autopost_menu_kb("1"))
-
-@router.callback_query(F.data == "ap_off")
-async def cb_ap_off(callback: CallbackQuery):
-    if callback.from_user.id != ADMIN_ID:
-        await callback.answer(); return
-    await setting_set("autopost_enabled", "0")
-    await callback.answer("Выключено")
-    await callback.message.edit_text(await autopost_menu_text(), parse_mode="Markdown", reply_markup=autopost_menu_kb("0"))
-
-@router.callback_query(F.data == "ap_now")
-async def cb_ap_now(callback: CallbackQuery):
-    if callback.from_user.id != ADMIN_ID:
-        await callback.answer(); return
-    await callback.answer("Генерирую и публикую…")
-    ok = await autopost_send(callback.bot, manual=True)
-    if ok:
-        await callback.message.answer("✅ Пост опубликован в канал!")
-    enabled = await setting_get("autopost_enabled", "0")
-    try:
-        await callback.message.edit_reply_markup(reply_markup=autopost_menu_kb(enabled))
-    except Exception:
-        pass
-
-@router.callback_query(F.data == "ap_freq")
-async def cb_ap_freq(callback: CallbackQuery):
-    if callback.from_user.id != ADMIN_ID:
-        await callback.answer(); return
-    cur = int(await setting_get("autopost_interval_min", "360"))
-    mins = [m for _, m in AUTOPOST_FREQ]
-    try:
-        nxt = mins[(mins.index(cur) + 1) % len(mins)]
-    except ValueError:
-        nxt = 360
-    await setting_set("autopost_interval_min", str(nxt))
-    await callback.answer(f"Частота: {autopost_freq_label(nxt)}")
-    enabled = await setting_get("autopost_enabled", "0")
-    await callback.message.edit_text(await autopost_menu_text(), parse_mode="Markdown", reply_markup=autopost_menu_kb(enabled))
-
 async def main():
     global anthropic_client, openai_client, deepseek_client
 
@@ -4018,10 +3340,7 @@ async def main():
     dp  = Dispatcher(storage=MemoryStorage())
     dp.include_router(router)
 
-    asyncio.create_task(autopost_loop(bot))
-    logging.info("✅ Автопостинг в канал активен (управление: /autopost)")
-
-    logging.info(f"🚀 Vatan AI Bot v3.1 ФОРМАТЫ запущен | @{BOT_USERNAME}")
+    logging.info(f"🚀 AuraAI Bot v3.1 ФОРМАТЫ запущен | @{BOT_USERNAME}")
     logging.info("✅ ВЕРСИЯ С ВЫБОРОМ ФОРМАТА 9:16 16:9 — если видишь это, новый код работает")
     await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
 

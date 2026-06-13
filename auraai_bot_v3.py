@@ -653,6 +653,13 @@ async def generate_nano_banana(prompt: str, aspect: str = "1:1") -> bytes:
         r.raise_for_status()
         return r.content
 
+def _preserve_face_video(prompt: str) -> str:
+    return (prompt.strip() +
+            ". Keep the EXACT same person and face throughout the whole video: same facial features, "
+            "same face shape, same identity. Do NOT distort, fatten, slim or change the face. "
+            "Animate naturally while keeping the person clearly recognizable as themselves.")
+
+
 def _preserve_face(prompt: str) -> str:
     return (
         "Edit this photo. Requested change: " + prompt.strip() + ". "
@@ -906,7 +913,7 @@ async def generate_video_kling(prompt: str, aspect: str = "16:9") -> str:
                 raise Exception(f"Kling failed: {result}")
         raise Exception("Таймаут генерации видео (3 мин)")
 
-async def generate_img2video(image_url: str, prompt: str) -> str:
+async def generate_img2video(image_url: str, prompt: str, aspect: str = "16:9") -> str:
     """Kling img2video — фото в видео через aimlapi.com"""
     if not AIML_KEY:
         raise Exception("AIML_KEY не настроен")
@@ -917,9 +924,9 @@ async def generate_img2video(image_url: str, prompt: str) -> str:
             json={
                 "model": "kling-video/v1.6/standard/image-to-video",
                 "image_url": image_url,
-                "prompt": prompt,
+                "prompt": _preserve_face_video(prompt),
                 "duration": "5",
-                "aspect_ratio": "16:9"
+                "aspect_ratio": aspect
             }
         )
         resp.raise_for_status()
@@ -1001,7 +1008,7 @@ async def generate_avatar(image_url: str, audio_url: str, model_id: str = "kling
 #  КЛАВИАТУРЫ
 # ══════════════════════════════════════════════════════
 
-def main_kb() -> ReplyKeyboardMarkup:
+def main_kb(is_admin: bool = False) -> ReplyKeyboardMarkup:
     b = ReplyKeyboardBuilder()
     b.row(KeyboardButton(text="💡 GPTs/Claude/Gemini"))
     b.row(
@@ -1022,6 +1029,9 @@ def main_kb() -> ReplyKeyboardMarkup:
         KeyboardButton(text="❓ Помощь"),
         KeyboardButton(text="📕 База знаний"),
     )
+    if is_admin:
+        b.row(KeyboardButton(text="📊 Доктора"), KeyboardButton(text="💰 Финансы бизнеса"))
+        b.row(KeyboardButton(text="🗓 Таблицы клиники"))
     return b.as_markup(resize_keyboard=True)
 
 def text_tools_kb() -> ReplyKeyboardMarkup:
@@ -1162,6 +1172,7 @@ class State_(StatesGroup):
     waiting_combine    = State()  # ожидание фото для соединения
     waiting_video_photo = State()
     waiting_video_photo_text = State()
+    waiting_video_aspect = State()
     nalog_phone = State()  # админ: ввод телефона для входа в «Мой налог»
     nalog_code  = State()  # админ: ввод SMS-кода
     course_chat = State()  # чат с ИИ-менеджером курса
@@ -1174,6 +1185,7 @@ class State_(StatesGroup):
     finance_input = State()  # финансовый агент: ввод отчёта
     biz_menu  = State()  # финансы бизнеса: меню
     biz_input = State()  # финансы бизнеса: ввод отчёта
+    biz_date  = State()  # финансы бизнеса: отчёт за конкретную дату
 
 user_tool:  dict[int, str] = {}
 user_model: dict[int, str] = {}
@@ -1258,7 +1270,7 @@ async def cmd_start(message: Message):
         bal = await get_balance(message.from_user.id)
         text = f"👋 С возвращением, *{message.from_user.first_name}*!\n\n💎 Кредиты: *{bal}*\n\nВыбери раздел:"
 
-    await message.answer(text, parse_mode="Markdown", reply_markup=main_kb())
+    await message.answer(text, parse_mode="Markdown", reply_markup=main_kb(message.from_user.id == ADMIN_ID))
 
     # Пришёл по ссылке с рекламы курса
     if len(args) > 1 and args[1] == "course":
@@ -1336,7 +1348,7 @@ async def cb_course_ask(callback: CallbackQuery, state: FSMContext):
 async def course_chat_exit(message: Message, state: FSMContext):
     await state.clear()
     bal = await get_balance(message.from_user.id)
-    await message.answer(f"🏠 *Главное меню*\n\n💎 Кредиты: *{bal}*", parse_mode="Markdown", reply_markup=main_kb())
+    await message.answer(f"🏠 *Главное меню*\n\n💎 Кредиты: *{bal}*", parse_mode="Markdown", reply_markup=main_kb(message.from_user.id == ADMIN_ID))
 
 @router.message(State_.course_chat)
 async def course_chat_answer(message: Message, state: FSMContext):
@@ -1390,7 +1402,32 @@ async def cmd_set_course_link(message: Message):
 async def to_main(message: Message, state: FSMContext):
     await state.clear()
     bal = await get_balance(message.from_user.id)
-    await message.answer(f"🏠 *Главное меню*\n\n💎 Кредиты: *{bal}*", parse_mode="Markdown", reply_markup=main_kb())
+    await message.answer(f"🏠 *Главное меню*\n\n💎 Кредиты: *{bal}*", parse_mode="Markdown", reply_markup=main_kb(message.from_user.id == ADMIN_ID))
+
+@router.message(F.text == "📊 Доктора")
+async def btn_doctors(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    await doctors_cmd(message)
+
+@router.message(F.text == "💰 Финансы бизнеса")
+async def btn_biz(message: Message, state: FSMContext):
+    if message.from_user.id != ADMIN_ID:
+        return
+    await biz_start(message, state)
+
+@router.message(F.text == "🗓 Таблицы клиники")
+async def btn_tables(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    await message.answer(
+        "🗓 *Таблицы клиники*\n\nДоступ к каждой таблице открой: «по ссылке: Читатель».\n\n"
+        "📅 Смены день/ночь → отчёт по врачам:\n`/setshift ссылка`\n\n"
+        "💼 Зарплата персонала → расход в /biz:\n`/setsalary ссылка`\n\n"
+        "📋 Простая таблица (Дата|Пациенты|Выручка|Расходы) → /biz:\n`/setsheet ссылка`\n\n"
+        "Списки/удаление: /visits · /sheets · /delshift N · /delsheet N\n"
+        "Отчёты — кнопки «📊 Доктора» и «💰 Финансы бизнеса».",
+        parse_mode="Markdown")
 
 @router.message(F.text == "❌ Отмена")
 async def cancel(message: Message, state: FSMContext):
@@ -1985,7 +2022,7 @@ async def process_image(message: Message, state: FSMContext):
             async def kling_task():
                 try:
                     if _kling_base:
-                        url = await generate_img2video(_kling_base, _kling_prompt)
+                        url = await generate_img2video(_kling_base, _kling_prompt, _kling_aspect)
                     else:
                         url = await generate_video_kling(_kling_prompt, _kling_aspect)
                     async with httpx.AsyncClient(timeout=180) as client:
@@ -2403,15 +2440,20 @@ async def img2video_photo_received(message: Message, state: FSMContext):
     file = await message.bot.get_file(photo.file_id)
     file_url = f"https://api.telegram.org/file/bot{message.bot.token}/{file.file_path}"
     user_video_photo_urls[message.from_user.id] = file_url
+    await state.set_state(State_.waiting_video_aspect)
+    await message.answer(
+        "✅ Фото получено!\n\n2️⃣ Выбери формат видео:",
+        reply_markup=aspect_kb()
+    )
+
+@router.message(State_.waiting_video_aspect, F.text.in_(ASPECT_MAP.keys()))
+async def img2video_aspect(message: Message, state: FSMContext):
+    await state.update_data(video_aspect=ASPECT_MAP[message.text])
     await state.set_state(State_.waiting_video_photo_text)
     await message.answer(
-        "✅ Фото получено!\n\n"
-        "2️⃣ Опиши что должно происходить в видео:\n\n"
-        "Примеры:\n"
-        "• *плавное движение камеры вперёд*\n"
-        "• *волосы развеваются на ветру*\n"
-        "• *облака медленно плывут*",
-        parse_mode="Markdown", reply_markup=cancel_kb()
+        f"Формат: {ASPECT_MAP[message.text]} ✅\n\n3️⃣ Опиши что должно происходить в видео:\n\n"
+        "Примеры: плавное движение камеры · волосы на ветру · облака плывут",
+        reply_markup=cancel_kb()
     )
 
 @router.message(State_.waiting_video_photo, F.text != "❌ Отмена")
@@ -2427,6 +2469,7 @@ async def img2video_video_process(message: Message, state: FSMContext):
 
     data = await state.get_data()
     cost = data.get("cost", 100)
+    aspect = data.get("video_aspect", "16:9")
     image_url = user_video_photo_urls.get(message.from_user.id)
 
     if not image_url:
@@ -2453,7 +2496,7 @@ async def img2video_video_process(message: Message, state: FSMContext):
 
     async def img2video_task():
         try:
-            url = await generate_img2video(image_url, prompt)
+            url = await generate_img2video(image_url, prompt, aspect)
             async with httpx.AsyncClient(timeout=180) as client:
                 vr = await client.get(url)
                 vr.raise_for_status()
@@ -4505,17 +4548,17 @@ async def _biz_agg(days):
     await _ensure_visits_table()
     prev, vp = [], []
     if days <= 1:
-        rows = await db_all("SELECT patients, revenue, expenses, exp_json FROM biz_finance WHERE day = date('now')")
-        v = await db_all("SELECT revenue FROM visits WHERE src='shift' AND day = date('now')")
+        rows = await db_all("SELECT patients, revenue, expenses, exp_json FROM biz_finance WHERE day = date('now') AND COALESCE(src,'') != 'salary'")
+        v = await db_all("SELECT doctor, revenue FROM visits WHERE src='shift' AND day = date('now')")
         label = "сегодня"
     else:
-        rows = await db_all("SELECT patients, revenue, expenses, exp_json FROM biz_finance WHERE day >= date('now', ?)",
+        rows = await db_all("SELECT patients, revenue, expenses, exp_json FROM biz_finance WHERE day >= date('now', ?) AND COALESCE(src,'') != 'salary'",
                             (f"-{days - 1} day",))
-        prev = await db_all("SELECT revenue, expenses FROM biz_finance WHERE day >= date('now', ?) AND day < date('now', ?)",
+        prev = await db_all("SELECT revenue, expenses FROM biz_finance WHERE day >= date('now', ?) AND day < date('now', ?) AND COALESCE(src,'') != 'salary'",
                             (f"-{2 * days - 1} day", f"-{days - 1} day"))
-        v = await db_all("SELECT revenue FROM visits WHERE src='shift' AND day >= date('now', ?)",
+        v = await db_all("SELECT doctor, revenue FROM visits WHERE src='shift' AND day >= date('now', ?)",
                          (f"-{days - 1} day",))
-        vp = await db_all("SELECT revenue FROM visits WHERE src='shift' AND day >= date('now', ?) AND day < date('now', ?)",
+        vp = await db_all("SELECT doctor, revenue FROM visits WHERE src='shift' AND day >= date('now', ?) AND day < date('now', ?)",
                           (f"-{2 * days - 1} day", f"-{days - 1} day"))
         label = f"{days} дней"
     pat = sum(r["patients"] for r in rows)
@@ -4532,8 +4575,15 @@ async def _biz_agg(days):
     vpat = len(v)
     pat += vpat
     rev += vrev
+    aliases = await _get_aliases()
+    pct_map = await _get_doctor_percents()
+    vsalary = sum((r["revenue"] or 0) * pct_map.get(_canon_with(r["doctor"], aliases), 0) / 100 for r in v)
+    if vsalary > 0:
+        exp += vsalary
+        cats["ФОТ врачей"] = cats.get("ФОТ врачей", 0) + vsalary
     prev_rev = sum(r["revenue"] for r in prev) + sum(r["revenue"] for r in vp)
-    prev_exp = sum(r["expenses"] for r in prev)
+    prev_exp = (sum(r["expenses"] for r in prev)
+                + sum((r["revenue"] or 0) * pct_map.get(_canon_with(r["doctor"], aliases), 0) / 100 for r in vp))
     return {"label": label, "n": len(rows) + vpat, "patients": pat, "revenue": rev, "expenses": exp,
             "profit": rev - exp, "check": (rev / pat) if pat else 0, "categories": cats,
             "prev_revenue": prev_rev, "prev_profit": prev_rev - prev_exp, "from_shift": vpat > 0}
@@ -4542,6 +4592,7 @@ def biz_kb():
     b = ReplyKeyboardBuilder()
     b.row(KeyboardButton(text="📥 Внести отчёт за сегодня"))
     b.row(KeyboardButton(text="📊 Сегодня"), KeyboardButton(text="📈 7 дней"), KeyboardButton(text="🗓 30 дней"))
+    b.row(KeyboardButton(text="📅 Выбрать дату"))
     b.row(KeyboardButton(text="✏️ Удалить последний"), KeyboardButton(text="📄 Выгрузить CSV"))
     b.row(KeyboardButton(text="🔄 Обновить из таблицы"))
     b.row(KeyboardButton(text="🏠 В главное меню"))
@@ -4599,6 +4650,9 @@ async def biz_menu(message: Message, state: FSMContext):
         await _biz_sync_from_sheet()
         await _sync_visits()
         await message.answer("✅ Обновлено. Жми период (Сегодня / 7 / 30 дней) 👇", reply_markup=biz_kb()); return
+    if txt == "📅 Выбрать дату":
+        await state.set_state(State_.biz_date)
+        await message.answer("Напиши дату в формате ДД.ММ.ГГГГ (например 12.06.2026):", reply_markup=biz_kb()); return
     period = {"📊 Сегодня": 1, "📈 7 дней": 7, "🗓 30 дней": 30}.get(txt)
     if period:
         await _send_biz_report(message, period); return
@@ -4638,6 +4692,53 @@ async def biz_input(message: Message, state: FSMContext):
     await message.answer(f"✅ *Записал за сегодня:*\n🧑‍⚕️ Пациентов: {pat}\n💰 Выручка: {_money(rev)}\n"
                          f"📤 Расходы: {_money(exp)}\n━━━━━━━━\n📈 Чистая прибыль: *{_money(rev - exp)}*",
                          parse_mode="Markdown", reply_markup=biz_kb())
+
+@router.message(State_.biz_date)
+async def biz_date_input(message: Message, state: FSMContext):
+    if message.from_user.id != ADMIN_ID:
+        return
+    txt = (message.text or "").strip()
+    if txt == "🏠 В главное меню":
+        await state.clear()
+        await message.answer("Главное меню", reply_markup=main_kb(True)); return
+    d = _norm_date(txt)
+    if not d:
+        await message.answer("Не понял дату. Формат: 12.06.2026", reply_markup=biz_kb()); return
+    await state.set_state(State_.biz_menu)
+    await _send_biz_report_date(message, d)
+
+async def _send_biz_report_date(message, date_iso):
+    await _ensure_biz_table()
+    await _ensure_visits_table()
+    rows = await db_all("SELECT patients, revenue, expenses, exp_json FROM biz_finance WHERE day = ? AND COALESCE(src,'') != 'salary'", (date_iso,))
+    v = await db_all("SELECT doctor, revenue FROM visits WHERE src='shift' AND day = ?", (date_iso,))
+    if not rows and not v:
+        await message.answer(f"За {date_iso} данных нет.", reply_markup=biz_kb()); return
+    pat = sum(r["patients"] for r in rows) + len(v)
+    rev = sum(r["revenue"] for r in rows) + sum((r["revenue"] or 0) for r in v)
+    exp = sum(r["expenses"] for r in rows)
+    cats = {}
+    for r in rows:
+        try:
+            for k, vv in (json.loads(r["exp_json"]) if r["exp_json"] else {}).items():
+                cats[k] = cats.get(k, 0) + float(vv)
+        except Exception:
+            pass
+    aliases = await _get_aliases()
+    pct_map = await _get_doctor_percents()
+    vsalary = sum((r["revenue"] or 0) * pct_map.get(_canon_with(r["doctor"], aliases), 0) / 100 for r in v)
+    if vsalary > 0:
+        exp += vsalary
+        cats["ФОТ врачей"] = cats.get("ФОТ врачей", 0) + vsalary
+    margin = (rev - exp) / rev * 100 if rev else 0
+    cat_str = ""
+    if cats:
+        top = sorted(cats.items(), key=lambda x: -x[1])[:5]
+        cat_str = "\nРасходы по статьям: " + ", ".join(f"{k} {_money(vv)}" for k, vv in top)
+    summary = (f"Дата: {date_iso}\nПациентов: {pat}\nВыручка: {_money(rev)}\nРасходы: {_money(exp)}\n"
+               f"Чистая прибыль: {_money(rev - exp)}\nРентабельность: {margin:.0f}%\n"
+               f"Средний чек: {_money(rev / pat) if pat else _money(0)}{cat_str}")
+    await message.answer(f"💰 *Финансы бизнеса · {date_iso}*\n\n{summary}", parse_mode="Markdown", reply_markup=biz_kb())
 
 async def _send_biz_report(message, days):
     agg = await _biz_agg(days)
@@ -4788,6 +4889,23 @@ async def _fetch_salary_rows(csv_url):
         exp = _num(row[exp_c]) if exp_c < len(row) else 0
         if exp > 0:
             out.append((d, exp))
+    try:
+        aliases = await _get_aliases()
+        percents = {}
+        for hrow in rows[:6]:
+            for cell in hrow:
+                c = (cell or "").strip()
+                pm = re.search(r"(\d{1,3})\s*%", c)
+                if pm:
+                    nm = re.sub(r"\d{1,3}\s*[-–]?\s*\d{0,3}\s*%.*$", "", c).strip()
+                    if len(nm) >= 3:
+                        percents[_canon_with(nm, aliases)] = int(pm.group(1))
+        if percents:
+            cur = await _get_doctor_percents()
+            cur.update(percents)
+            await set_setting("doctor_percents", json.dumps(cur, ensure_ascii=False))
+    except Exception as e:
+        logging.error(f"salary percents: {e}")
     return out, None
 
 async def _fetch_csv(csv_url):
@@ -5184,22 +5302,112 @@ async def visitsclear_cmd(message: Message):
     await db_run("DELETE FROM visits")
     await message.answer("🗑 Все таблицы по врачам отключены.")
 
+DEFAULT_ALIASES = [
+    ["Шарипов Давлат Зафарович", ["шарипов", "давлат"]],
+    ["Мостиева Кристина Алибековна", ["кристина", "мостиева", "алибеков"]],
+    ["Кисиев Михаил", ["кисиев"]],
+    ["Александров Михаил", ["александров"]],
+    ["Бега Балаевич", ["бега"]],
+    ["Бибо", ["бибо"]],
+]
+
+DEFAULT_PERCENTS = {
+    "Александров Михаил": 20,
+    "Мостиева Кристина Алибековна": 30,
+    "Кисиев Михаил": 25,
+    "Бибо": 20,
+    "Бега Балаевич": 20,
+}
+
+async def _get_aliases():
+    raw = await get_setting("doctor_aliases", "")
+    try:
+        a = json.loads(raw) if raw else []
+    except Exception:
+        a = []
+    return a if a else DEFAULT_ALIASES
+
+def _canon_with(name, aliases):
+    n = (name or "").strip().lower()
+    if not n:
+        return ""
+    for canon, keys in aliases:
+        if any(k.lower() in n for k in keys):
+            return canon
+    return (name or "").strip()
+
+async def _get_doctor_percents():
+    raw = await get_setting("doctor_percents", "")
+    try:
+        stored = json.loads(raw) if raw else {}
+    except Exception:
+        stored = {}
+    # заданные вручную проценты (приоритетные) поверх извлечённых из таблиц
+    return {**stored, **DEFAULT_PERCENTS}
+
+@router.message(Command("setpercent"))
+async def setpercent_cmd(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    m = re.match(r"/setpercent\s+(.+?)\s*=\s*(\d{1,3})", message.text or "", re.IGNORECASE)
+    if not m:
+        cur = await _get_doctor_percents()
+        lst = "\n".join(f"• {k}: {v}%" for k, v in cur.items()) or "пока пусто"
+        await message.answer(f"Проценты врачей:\n{lst}\n\nЗадать: /setpercent Имя = 40")
+        return
+    aliases = await _get_aliases()
+    name = _canon_with(m.group(1).strip(), aliases)
+    cur = await _get_doctor_percents()
+    cur[name] = int(m.group(2))
+    await set_setting("doctor_percents", json.dumps(cur, ensure_ascii=False))
+    await message.answer(f"✅ {name}: {m.group(2)}%")
+
+@router.message(Command("alias"))
+async def alias_cmd(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    m = re.match(r"/alias\s+(.+?)\s*=\s*(.+)", message.text or "", re.IGNORECASE)
+    if not m:
+        al = await _get_aliases()
+        lst = "\n".join(f"• {c} ← {', '.join(k)}" for c, k in al)
+        await message.answer(f"Объединение имён (один человек):\n{lst}\n\nДобавить: /alias Полное Имя = вариант1, вариант2")
+        return
+    canon = m.group(1).strip()
+    keys = [k.strip().lower() for k in m.group(2).split(",") if k.strip()]
+    al = await _get_aliases()
+    al.append([canon, keys])
+    await set_setting("doctor_aliases", json.dumps(al, ensure_ascii=False))
+    await message.answer(f"✅ {canon} ← {', '.join(keys)}")
+
 @router.message(Command("doctors"))
 async def doctors_cmd(message: Message):
     if message.from_user.id != ADMIN_ID:
         return
     parts = (message.text or "").split()
-    days = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 30
+    on_date = None
+    days = 30
+    if len(parts) > 1:
+        if parts[1].isdigit():
+            days = int(parts[1])
+        else:
+            on_date = _norm_date(parts[1])
     await _sync_visits()
     await _ensure_visits_table()
-    rows = await db_all("SELECT doctor,service,kind,ref_from,revenue,percent,pay,src FROM visits WHERE day >= date('now', ?)",
-                        (f"-{days - 1} day",))
+    if on_date:
+        rows = await db_all("SELECT doctor,service,kind,ref_from,revenue,percent,pay,src FROM visits WHERE day = ?", (on_date,))
+        period_label = on_date
+    else:
+        rows = await db_all("SELECT doctor,service,kind,ref_from,revenue,percent,pay,src FROM visits WHERE day >= date('now', ?)",
+                            (f"-{days - 1} day",))
+        period_label = f"{days} дн."
     if not rows:
         await message.answer("Нет данных по врачам за период.\nПодключи таблицу: /setshift (день/ночь) или /setvisits (простая вкладка)."); return
+    aliases = await _get_aliases()
+    pct_map = await _get_doctor_percents()
     docs = {}
     sent_to = {}
     for r in rows:
-        d = r["doctor"] or "—"
+        d = _canon_with(r["doctor"] or "—", aliases)
         x = docs.setdefault(d, {"total": 0, "first": 0, "repeat": 0, "rev": 0.0,
                                 "services": {}, "ref_in": 0, "ref_in_by": {}, "salary": 0.0, "pay": {}})
         x["total"] += 1
@@ -5214,6 +5422,7 @@ async def doctors_cmd(message: Message):
             sv = r["service"] or "—"
             x["services"][sv] = x["services"].get(sv, 0) + rev
         rf = (r["ref_from"] or "").strip()
+        rf = _canon_with(rf, aliases) if rf else ""
         if rf:
             x["ref_in"] += 1
             x["ref_in_by"][rf] = x["ref_in_by"].get(rf, 0) + 1
@@ -5238,8 +5447,10 @@ async def doctors_cmd(message: Message):
             tot = sum(sent_to[d].values())
             to_str = ", ".join(f"к {t} {n}" for t, n in sorted(sent_to[d].items(), key=lambda kv: -kv[1]))
             lines.append(f"Направил к другим: {tot} ({to_str})")
-        if x["salary"] > 0:
-            lines.append(f"ЗП по проценту: {_money(x['salary'])}")
+        pct = pct_map.get(d)
+        salary = x["rev"] * pct / 100 if pct else x["salary"]
+        if salary > 0:
+            lines.append(f"ЗП по проценту{f' ({pct}%)' if pct else ''}: {_money(salary)}")
         if x["pay"]:
             pays = ", ".join(f"{k} {_money(v)}" for k, v in sorted(x["pay"].items(), key=lambda kv: -kv[1]))
             lines.append(f"Оплата: {pays}")
@@ -5252,7 +5463,7 @@ async def doctors_cmd(message: Message):
     if flows:
         flows.sort(key=lambda x: -x[0])
         body += "\n\n🔁 Перенаправления (от кого → кому):\n" + "\n".join(f for _, f in flows)
-    await _send_block(message, f"📊 *Отчёт по врачам за {days} дн.*", body)
+    await _send_block(message, f"📊 *Отчёт по врачам · {period_label}*", body)
 
 
 @router.message(Command("fix"))

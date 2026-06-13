@@ -1062,6 +1062,7 @@ def model_kb() -> ReplyKeyboardMarkup:
 def cancel_kb() -> ReplyKeyboardMarkup:
     b = ReplyKeyboardBuilder()
     b.row(KeyboardButton(text="❌ Отмена"))
+    b.row(KeyboardButton(text="🏠 В главное меню"))
     return b.as_markup(resize_keyboard=True)
 
 def profile_kb() -> ReplyKeyboardMarkup:
@@ -1164,6 +1165,8 @@ class State_(StatesGroup):
     agent_solo  = State()  # команда агентов: прямой диалог
     finance_menu  = State()  # финансовый агент: меню
     finance_input = State()  # финансовый агент: ввод отчёта
+    biz_menu  = State()  # финансы бизнеса: меню
+    biz_input = State()  # финансы бизнеса: ввод отчёта
 
 user_tool:  dict[int, str] = {}
 user_model: dict[int, str] = {}
@@ -1709,7 +1712,7 @@ def image_mode_kb() -> ReplyKeyboardMarkup:
     b = ReplyKeyboardBuilder()
     b.row(KeyboardButton(text="✏️ С нуля по описанию"))
     b.row(KeyboardButton(text="🖼 На основе моего фото"))
-    b.row(KeyboardButton(text="❌ Отмена"))
+    b.row(KeyboardButton(text="❌ Отмена"), KeyboardButton(text="🏠 В главное меню"))
     return b.as_markup(resize_keyboard=True)
 
 def aspect_kb() -> ReplyKeyboardMarkup:
@@ -1717,7 +1720,7 @@ def aspect_kb() -> ReplyKeyboardMarkup:
     b.row(KeyboardButton(text="⬛ 1:1 Квадрат"))
     b.row(KeyboardButton(text="📱 9:16 Вертикальное"), KeyboardButton(text="🖥 16:9 Горизонтальное"))
     b.row(KeyboardButton(text="🖼 4:3"), KeyboardButton(text="📷 3:4"))
-    b.row(KeyboardButton(text="❌ Отмена"))
+    b.row(KeyboardButton(text="❌ Отмена"), KeyboardButton(text="🏠 В главное меню"))
     return b.as_markup(resize_keyboard=True)
 
 ASPECT_MAP = {
@@ -1774,6 +1777,35 @@ def video_mode_kb() -> ReplyKeyboardMarkup:
     b.row(KeyboardButton(text="❌ Отмена"))
     return b.as_markup(resize_keyboard=True)
 
+async def _generate_edit(message: Message, state: FSMContext):
+    data = await state.get_data()
+    base_photo = data.get("base_photo"); prompt = (data.get("base_caption") or "").strip()
+    aspect = data.get("aspect", "1:1"); cost = data.get("cost", 50)
+    model = data.get("image_model", "nano")
+    if not (base_photo and prompt):
+        await message.answer("Нужны фото и описание.", reply_markup=cancel_kb()); return
+    ok = await use_credits(message.from_user.id, f"image_{model}", cost)
+    if not ok:
+        await message.answer("❌ Недостаточно кредитов.", reply_markup=profile_kb()); await state.clear(); return
+    await state.clear()
+    thinking = await message.answer("🎨 Редактирую фото... (~15-30 сек)\nМожно вернуться в меню.", reply_markup=main_kb())
+    try:
+        bal = await get_balance(message.from_user.id)
+        img_bytes, _ = await generate_img2img(base_photo, prompt, aspect)
+        try:
+            await thinking.delete()
+        except Exception:
+            pass
+        await message.answer_photo(BufferedInputFile(img_bytes, filename="image.png"),
+            caption=f"🎨 Готово · Формат {aspect}\n\n💎 Потрачено: {cost} кр. · Остаток: {bal} кр.")
+        await state.set_state(State_.waiting_image)
+        await state.update_data(image_model=model, cost=cost, aspect=aspect, base_photo=base_photo, base_caption=None)
+        await message.answer("✅ Готово! Пришли ещё описание для этого фото — отредактирую снова. Или меню 👇",
+                             reply_markup=design_kb())
+    except Exception as e:
+        await add_credits(message.from_user.id, cost, "bonus", "Возврат: ошибка")
+        await message.answer(f"⚠️ Ошибка. Кредиты возвращены.\n{str(e)[:150]}", reply_markup=design_kb())
+
 @router.message(State_.waiting_image, F.text.in_(ASPECT_MAP.keys()))
 async def image_aspect_selected(message: Message, state: FSMContext):
     aspect = ASPECT_MAP[message.text]
@@ -1782,14 +1814,20 @@ async def image_aspect_selected(message: Message, state: FSMContext):
     model = data.get("image_model", "dalle")
     if model in ("video", "kling"):
         await message.answer(
-            f"Формат: *{aspect}* ✅\n\n"
-            "Как создать видео?",
+            f"Формат: *{aspect}* ✅\n\nКак создать видео?",
             parse_mode="Markdown", reply_markup=video_mode_kb()
+        )
+    elif data.get("base_photo") and data.get("base_caption"):
+        await _generate_edit(message, state)
+    elif data.get("base_photo"):
+        await message.answer(
+            f"Формат: *{aspect}* ✅\n\nТеперь опиши, что изменить на фото:\n\n"
+            "Примеры: *сделай фон космическим* · *стиль аниме* · *добавь снег*",
+            parse_mode="Markdown", reply_markup=cancel_kb()
         )
     else:
         await message.answer(
-            f"Формат: *{aspect}* ✅\n\n"
-            "Теперь опиши картинку которую хочешь создать:\n\n"
+            f"Формат: *{aspect}* ✅\n\nТеперь опиши картинку которую хочешь создать:\n\n"
             "Пример: *красивый закат над горами, фотореализм, 4K*",
             parse_mode="Markdown", reply_markup=cancel_kb()
         )
@@ -1813,9 +1851,10 @@ async def video_mode_photo(message: Message, state: FSMContext):
 
 @router.message(State_.waiting_image, F.text == "🖼 На основе моего фото")
 async def image_from_photo_prompt(message: Message, state: FSMContext):
-    await state.update_data(waiting_base_photo=True)
+    await state.update_data(waiting_base_photo=True, base_caption=None, base_photo=None)
     await message.answer(
-        "📸 Отправь своё фото которое хочешь использовать как основу:",
+        "📸 Отправь своё фото-основу.\n"
+        "Можно сразу добавить описание подписью к фото — тогда отвечу быстрее.",
         reply_markup=cancel_kb()
     )
 
@@ -1839,14 +1878,11 @@ async def image_base_photo_received(message: Message, state: FSMContext):
                 parse_mode="Markdown", reply_markup=cancel_kb()
             )
         else:
+            if message.caption:
+                await state.update_data(base_caption=message.caption.strip())
             await message.answer(
-                "✅ Фото получено!\n\n"
-                "Теперь опиши что хочешь изменить или создать на основе этого фото:\n\n"
-                "Примеры:\n"
-                "• *сделай фон космическим*\n"
-                "• *измени стиль на аниме*\n"
-                "• *добавь снег*",
-                parse_mode="Markdown", reply_markup=cancel_kb()
+                "✅ Фото получено!\n\nТеперь выбери формат (размер) результата:",
+                reply_markup=aspect_kb()
             )
 
 @router.message(State_.waiting_image)
@@ -1881,7 +1917,7 @@ async def process_image(message: Message, state: FSMContext):
         initial_text = "⏳ Запускаю генерацию..."
         thinking = await message.answer(initial_text, reply_markup=main_kb())
     else:
-        thinking = await message.answer("🎨 Генерирую картинку... (~15-30 сек)", reply_markup=ReplyKeyboardRemove())
+        thinking = await message.answer("🎨 Генерирую картинку... (~15-30 сек)\nМожно вернуться в меню — генерация продолжится.", reply_markup=main_kb())
 
     try:
         bal = await get_balance(message.from_user.id)
@@ -2034,7 +2070,7 @@ async def process_image(message: Message, state: FSMContext):
             aspect = data.get("aspect", "1:1")
             if base_photo:
                 # Использовать img2img с базовым фото
-                img_bytes, _ = await generate_img2img(base_photo, prompt)
+                img_bytes, _ = await generate_img2img(base_photo, prompt, aspect)
             elif model == "nano":
                 img_bytes = await generate_nano_banana(prompt, aspect)
             elif model == "gpt":
@@ -3414,10 +3450,13 @@ AGENT_DEFS = {
     },
     "marketer": {
         "emoji": "📊", "name": "Маркетолог", "use_data": True,
-        "prompt": ("Ты — Маркетолог-аналитик AuraAI. Следишь за лидами, конверсией и продажами. "
-                   "В начале сообщения тебе дают свежие цифры из базы (лиды, продажи, конверсия, "
-                   "CPL, средний чек, выручка, ROMI). Анализируй динамику, давай конкретные выводы "
-                   "и 1–3 рекомендации по росту продаж. Коротко, по-деловому, на цифрах."),
+        "prompt": ("Ты — Маркетолог-аналитик AuraAI. САМ следишь за РЕЗУЛЬТАТОМ, РАСХОДОМ и "
+                   "ВОВЛЕЧЁННОСТЬЮ: лиды, конверсия, продажи, выручка, прибыль, ROMI, расходы "
+                   "(реклама + прочие), сколько постов вышло и сколько РЕАКЦИЙ они собрали. Цифры "
+                   "тебе дают в начале сообщения — анализируй сам. ОСОБОЕ внимание вовлечённости: "
+                   "находи, какие посты заходят (много реакций), и рекомендуй ДАВИТЬ на эти темы и "
+                   "форматы. Делай выводы: что окупается, где сливается бюджет, как контент влияет "
+                   "на продажи; давай 1–3 конкретные рекомендации. Коротко, строго на цифрах."),
     },
 }
 
@@ -3577,7 +3616,7 @@ async def marketing_context(days: int = 7) -> str:
         pass
     try:
         rows = await db_all(
-            "SELECT leads, sales, revenue, ad_spend FROM finance_log WHERE day >= date('now', ?)",
+            "SELECT leads, sales, revenue, ad_spend, payouts FROM finance_log WHERE day >= date('now', ?)",
             (f"-{days - 1} day",)
         )
     except Exception:
@@ -3592,9 +3631,22 @@ async def marketing_context(days: int = 7) -> str:
     cpl = (ad / leads) if leads else 0
     check = (rev / sales) if sales else 0
     romi = ((rev - ad) / ad * 100) if ad else 0
+    pay = sum(r["payouts"] for r in rows)
+    expenses = ad + pay
+    profit = rev - expenses
+    try:
+        await _ensure_posts_table()
+        prows = await db_all("SELECT reactions FROM posts_log WHERE day >= date('now', ?)", (f"-{days - 1} day",))
+    except Exception:
+        prows = []
+    nposts = len(prows)
+    total_react = sum((p["reactions"] or 0) for p in prows)
+    avg_react = (total_react / nposts) if nposts else 0
     return (f"Данные за {days} дн.: лиды {leads}, продажи {sales}, конверсия {conv:.1f}%, "
             f"CPL {_money(cpl)}, средний чек {_money(check)}, выручка {_money(rev)}, "
-            f"реклама {_money(ad)}, ROMI {romi:.0f}%.")
+            f"реклама {_money(ad)}, прочие расходы {_money(pay)}, общий расход {_money(expenses)}, "
+            f"прибыль {_money(profit)}, ROMI {romi:.0f}%, постов {nposts}, "
+            f"реакций всего {total_react} (в среднем {avg_react:.1f} на пост).")
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -3606,6 +3658,188 @@ POST_NOW_LABEL = "📰 Пост сейчас"
 SWITCH_LABEL = "🔄 Сменить режим"
 HOME_LABEL = "🏠 В главное меню"
 AGENT_LABELS = {f"{d['emoji']} {d['name']}": role for role, d in AGENT_DEFS.items()}
+
+
+pending_posts = {}
+
+def _post_confirm_kb(token):
+    b = InlineKeyboardBuilder()
+    b.row(InlineKeyboardButton(text="✅ Опубликовать", callback_data=f"pub:{token}"))
+    b.row(InlineKeyboardButton(text="🔁 Другой вариант", callback_data=f"redo:{token}"),
+          InlineKeyboardButton(text="❌ Отмена", callback_data=f"cxl:{token}"))
+    return b.as_markup()
+
+async def _smm_make_post(brief):
+    smm_sys = AGENT_DEFS["smm"]["prompt"] + await _smm_brand_note() + (
+        "\n\nСделай ОДИН готовый пост для Telegram-канала по брифу ниже — без плейсхолдеров, "
+        "конкретный текст с эмодзи и призывом. Верни СТРОГО JSON: "
+        '{"caption":"готовый текст поста","image_prompt":"detailed English image prompt, no text on image"}')
+    raw = await _agent_call(f"Бриф: {brief}", smm_sys, timeout_s=40)
+    d = _extract_json(raw) or {}
+    return (d.get("caption") or brief), (d.get("image_prompt") or brief)
+
+async def _preview_post_to(bot, chat_id, caption, image_prompt=None, image_url=None, brief=""):
+    import uuid
+    token = uuid.uuid4().hex[:12]
+    photo_input = None
+    if image_url:
+        photo_input = URLInputFile(image_url)
+    else:
+        try:
+            img = await generate_nano_banana(image_prompt or caption, "1:1")
+            photo_input = BufferedInputFile(img, "preview.png")
+        except Exception as e:
+            logging.error(f"preview img: {e}")
+    fid = None
+    cap_preview = ("📝 ЧЕРНОВИК (НЕ опубликован). Нажми «✅ Опубликовать», если ок:\n\n" + (caption or ""))[:1024]
+    if photo_input:
+        try:
+            sent = await bot.send_photo(chat_id, photo_input, caption=cap_preview, reply_markup=_post_confirm_kb(token))
+            fid = sent.photo[-1].file_id
+        except Exception as e:
+            logging.error(f"preview send: {e}")
+            await bot.send_message(chat_id, cap_preview, reply_markup=_post_confirm_kb(token))
+    else:
+        await bot.send_message(chat_id, cap_preview, reply_markup=_post_confirm_kb(token))
+    pending_posts[token] = {"caption": caption, "file_id": fid, "image_prompt": image_prompt, "brief": brief}
+
+async def _preview_post(target_msg, uid, caption, image_prompt=None, image_url=None, brief=""):
+    await _preview_post_to(target_msg.bot, target_msg.chat.id, caption, image_prompt, image_url, brief)
+
+@router.callback_query(F.data.startswith("pub:"))
+async def cb_post_pub(cq):
+    token = cq.data.split(":", 1)[1]
+    draft = pending_posts.get(token)
+    if not draft:
+        await cq.answer("Черновик уже обработан", show_alert=True); return
+    chat = os.getenv("TG_POST_CHANNEL", "") or await get_setting("tg_channel", "")
+    if not chat:
+        await cq.message.answer("⚠️ Канал не задан. Команда: /setchannel @канал"); await cq.answer(); return
+    try:
+        if draft.get("file_id"):
+            sent = await cq.message.bot.send_photo(chat, draft["file_id"], caption=(draft["caption"] or "")[:1024])
+        else:
+            sent = await cq.message.bot.send_message(chat, draft["caption"] or "(пусто)")
+        await cq.message.answer(f"✅ Опубликовано в {chat}")
+        await _log_post(draft.get("caption"), getattr(sent, "message_id", None), sent.chat.id)
+    except Exception as e:
+        await cq.message.answer(f"⚠️ Ошибка публикации: {str(e)[:200]}")
+    pending_posts.pop(token, None)
+    await cq.answer()
+
+@router.callback_query(F.data.startswith("redo:"))
+async def cb_post_redo(cq):
+    token = cq.data.split(":", 1)[1]
+    brief = (pending_posts.get(token) or {}).get("brief") or "пост про курс AuraAI"
+    await cq.answer("Готовлю другой вариант...")
+    caption, image_prompt = await _smm_make_post(brief)
+    await _preview_post_to(cq.message.bot, cq.message.chat.id, caption, image_prompt, brief=brief)
+
+@router.callback_query(F.data.startswith("cxl:"))
+async def cb_post_cancel(cq):
+    token = cq.data.split(":", 1)[1]
+    pending_posts.pop(token, None)
+    await cq.message.answer("❌ Пост отменён — в канал НЕ опубликован.")
+    await cq.answer()
+
+async def fetch_ai_news(n=6):
+    import httpx, xml.etree.ElementTree as ET
+    url = ("https://news.google.com/rss/search?q=artificial+intelligence+OR+"
+           "%D0%B8%D1%81%D0%BA%D1%83%D1%81%D1%81%D1%82%D0%B2%D0%B5%D0%BD%D0%BD%D1%8B%D0%B9+"
+           "%D0%B8%D0%BD%D1%82%D0%B5%D0%BB%D0%BB%D0%B5%D0%BA%D1%82&hl=ru&gl=RU&ceid=RU:ru")
+    try:
+        async with httpx.AsyncClient(timeout=20, follow_redirects=True) as c:
+            r = await c.get(url, headers={"User-Agent": "Mozilla/5.0"})
+            r.raise_for_status()
+        root = ET.fromstring(r.text)
+        items = []
+        for it in root.iter("item"):
+            t = (it.findtext("title") or "").strip()
+            l = (it.findtext("link") or "").strip()
+            if t and l:
+                items.append({"title": t, "link": l})
+            if len(items) >= n:
+                break
+        return items
+    except Exception as e:
+        logging.error(f"fetch_ai_news: {e}")
+        return []
+
+async def _make_news_post():
+    import random
+    news = await fetch_ai_news(6)
+    if not news:
+        return None
+    item = random.choice(news)
+    sys = (AGENT_DEFS["smm"]["prompt"] + await _smm_brand_note() +
+        "\n\nНапиши короткий НОВОСТНОЙ пост для Telegram на основе новости про ИИ ниже: 1-2 абзаца, "
+        "эмодзи, мысль «ИИ уже делает крутые вещи», и мягко свяжи с тем, что в нашем боте тоже можно "
+        "пользоваться ИИ. В конце ОБЯЗАТЕЛЬНО дай ссылку на источник (ИМЕННО присланную) и ссылку на бот. "
+        "Верни СТРОГО JSON: "
+        '{"caption":"текст со ссылкой на источник","image_prompt":"english image prompt, no text on image"}')
+    raw = await _agent_call(f"Новость: {item['title']}\nСсылка источника: {item['link']}", sys, timeout_s=40)
+    d = _extract_json(raw) or {}
+    cap = d.get("caption") or f"🤖 {item['title']}\n\nИсточник: {item['link']}\n\nПопробуй ИИ сам: https://t.me/{BOT_USERNAME}"
+    if item["link"] not in cap:
+        cap += f"\n\n🔗 Источник: {item['link']}"
+    return cap, (d.get("image_prompt") or "AI technology news, futuristic minimal illustration, no text")
+
+async def _autopublish(bot, caption, image_prompt):
+    chat = os.getenv("TG_POST_CHANNEL", "") or await get_setting("tg_channel", "")
+    if not chat:
+        logging.error("autopost: канал не задан"); return
+    try:
+        img = await generate_nano_banana(image_prompt or caption, "1:1")
+        sent = await bot.send_photo(chat, BufferedInputFile(img, "post.png"), caption=(caption or "")[:1024])
+        await _log_post(caption, getattr(sent, "message_id", None), sent.chat.id)
+    except Exception as e:
+        logging.error(f"autopublish: {e}")
+
+AUTOPOST_PER_DAY = 5
+
+def start_autoposter(bot):
+    import random
+    async def loop():
+        await asyncio.sleep(60)
+        interval = max(300, 24 * 3600 // AUTOPOST_PER_DAY)
+        while True:
+            try:
+                mode = await get_setting("autopost", "off")
+                if mode in ("approve", "auto"):
+                    if random.random() < 0.6:
+                        res = await _make_news_post()
+                    else:
+                        topic = await suggest_autopost_topic([]) or "польза курса AuraAI"
+                        res = await _smm_make_post(topic)
+                    if res:
+                        cap, iprompt = res
+                        if mode == "auto":
+                            await _autopublish(bot, cap, iprompt)
+                        else:
+                            await _preview_post_to(bot, ADMIN_ID, cap, iprompt, brief="")
+            except Exception as e:
+                logging.error(f"autopost loop: {e}")
+            await asyncio.sleep(interval)
+    asyncio.create_task(loop())
+
+@router.message(Command("autopost"))
+async def autopost_cmd(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    parts = (message.text or "").split(maxsplit=1)
+    arg = parts[1].strip().lower() if len(parts) > 1 else ""
+    if arg in ("on", "approve"):
+        await set_setting("autopost", "approve")
+        await message.answer("✅ Автопостинг ВКЛ (5 в день). Черновики придут тебе на подтверждение кнопкой ✅.")
+    elif arg == "auto":
+        await set_setting("autopost", "auto")
+        await message.answer("✅ Автопостинг ВКЛ в режиме АВТО (5 в день, сразу в канал без подтверждения).")
+    elif arg == "off":
+        await set_setting("autopost", "off")
+        await message.answer("⏹ Автопостинг ВЫКЛ.")
+    else:
+        cur = await get_setting("autopost", "off")
+        await message.answer(f"Текущий режим: {cur}\n\n/autopost on — 5/день с подтверждением\n/autopost auto — 5/день сразу\n/autopost off — выключить")
 
 
 async def suggest_autopost_topic(recent=None) -> str:
@@ -3628,28 +3862,21 @@ async def suggest_autopost_topic(recent=None) -> str:
 
 
 async def _post_now(message: Message):
-    status = await message.answer("📊 Маркетолог выбирает тему...")
+    status = await message.answer("📊 Маркетолог выбирает тему по конверсии...")
     topic = await suggest_autopost_topic([])
     if not topic:
         topic = "польза курса AuraAI: как новичку начать зарабатывать на ИИ-картинках"
     try:
-        await status.edit_text(f"📊 Тема: {topic}\n📣 SMM готовит пост...")
+        await status.edit_text(f"📊 Маркетолог выбрал тему: {topic}\n📣 SMM готовит пост...")
     except Exception:
         pass
-    smm_sys = AGENT_DEFS["smm"]["prompt"] + (
-        "\n\nСгенерируй ОДИН пост для Telegram-канала на тему ниже. Верни СТРОГО JSON: "
-        '{"caption":"текст поста с эмодзи и призывом","image_prompt":"detailed English image prompt, no text on image"}')
-    raw = await _agent_call(f"Тема поста: {topic}", smm_sys, timeout_s=40)
-    d = _extract_json(raw) or {}
-    caption = d.get("caption") or topic
-    image_prompt = d.get("image_prompt") or topic
-    result = await _tg_post(message.bot, {"caption": caption, "image_prompt": image_prompt})
+    caption, image_prompt = await _smm_make_post(topic)
     try:
         await status.delete()
     except Exception:
         pass
-    await message.answer(f"{result}\n\n📝 Тема: {topic}",
-                         reply_markup=team_menu_kb(message.from_user.id == ADMIN_ID))
+    await message.answer(f"📊 *Маркетолог:* лучшая тема сейчас — _{topic}_", parse_mode="Markdown")
+    await _preview_post(message, message.from_user.id, caption, image_prompt, brief=topic)
 
 
 def team_menu_kb(is_admin: bool = False) -> ReplyKeyboardMarkup:
@@ -3763,6 +3990,7 @@ async def team_auto(message: Message, state: FSMContext):
         pass
 
     work_log = []
+    smm_drafts = []
     for step in plan["steps"][:3]:
         role = step.get("agent")
         agent = AGENT_DEFS.get(role)
@@ -3772,22 +4000,33 @@ async def team_auto(message: Message, state: FSMContext):
         prior = "\n\n".join(work_log) if work_log else "(пока ничего)"
         extra = (await marketing_context() + "\n\n") if agent.get("use_data") else ""
         system = agent["prompt"] + (ACTION_AGENT_NOTE if agent.get("can_act") else "")
+        if role == "smm":
+            system += await _smm_brand_note()
         prompt = f"{extra}{ctx}Общая задача: {task}\n\nТвоя подзадача: {sub}\n\nЧто сделали коллеги:\n{prior}"
         await message.answer(f"{agent['emoji']} *{agent['name']} работает...*", parse_mode="Markdown")
         reply = await _agent_call(prompt, system, timeout_s=50) or "(нет ответа)"
 
         if agent.get("can_act"):
             cmd = _extract_json(reply)
-            if isinstance(cmd, dict) and cmd.get("action"):
-                result = await dispatch_action(message.bot, cmd)
-                await message.answer(f"{agent['emoji']} {result}")
-                work_log.append(f"{agent['name']}: {result}")
-                continue
             if role == "smm":
-                # SMM не вернул команду — публикуем его текст как пост
-                result = await _tg_post(message.bot, {"caption": reply})
-                await message.answer(f"{agent['emoji']} {result}")
-                work_log.append(f"{agent['name']}: {result}")
+                if isinstance(cmd, dict):
+                    cap = cmd.get("caption") or reply
+                    iprompt = cmd.get("image_prompt") or cap
+                else:
+                    cap, iprompt = reply, reply
+                smm_drafts.append({"caption": cap, "image_prompt": iprompt})
+                work_log.append(f"{agent['name']}: подготовил пост (ждёт подтверждения)")
+                await _send_block(message, f"{agent['emoji']} *{agent['name']}* подготовил пост:", cap)
+                continue
+            if isinstance(cmd, dict) and cmd.get("action"):
+                if cmd.get("action") in ("tg_post", "tg_story", "ig_post"):
+                    smm_drafts.append({"caption": cmd.get("caption") or reply,
+                                       "image_prompt": cmd.get("image_prompt") or cmd.get("caption") or reply})
+                    work_log.append(f"{agent['name']}: подготовил пост (ждёт подтверждения)")
+                else:
+                    result = await dispatch_action(message.bot, cmd)
+                    await message.answer(f"{agent['emoji']} {result}")
+                    work_log.append(f"{agent['name']}: {result}")
                 continue
         work_log.append(f"{agent['name']}: {reply}")
         await _send_block(message, f"{agent['emoji']} *{agent['name']}*", reply)
@@ -3800,6 +4039,10 @@ async def team_auto(message: Message, state: FSMContext):
         await _send_block(message, "✅ *Итог от Менеджера*", final)
     else:
         final = work_log[-1] if work_log else ""
+
+    if smm_drafts:
+        d0 = smm_drafts[-1]
+        await _preview_post(message, message.from_user.id, d0["caption"], d0["image_prompt"])
 
     try:
         await log_request(message.from_user.id, "team", "claude", TEAM_COST_AUTO)
@@ -3851,6 +4094,8 @@ async def team_solo(message: Message, state: FSMContext):
 
     extra = (await marketing_context() + "\n\n") if agent.get("use_data") else ""
     system = agent["prompt"] + (ACTION_AGENT_NOTE if agent.get("can_act") else "")
+    if role == "smm":
+        system += await _smm_brand_note()
     reply = await _agent_call(extra + user_msg, system, history_msgs=history, timeout_s=45)
 
     try:
@@ -3866,18 +4111,20 @@ async def team_solo(message: Message, state: FSMContext):
     acted = False
     if agent.get("can_act"):
         cmd = _extract_json(reply)
-        if isinstance(cmd, dict) and cmd.get("action"):
-            if attached_img and not cmd.get("image_url"):
-                cmd["image_url"] = attached_img
-            result = await dispatch_action(message.bot, cmd)
-            await message.answer(f"{agent['emoji']} {result}", reply_markup=team_work_kb())
+        if role == "smm":
+            cap = (cmd.get("caption") if isinstance(cmd, dict) else None) or reply
+            iprompt = (cmd.get("image_prompt") if isinstance(cmd, dict) else None) or cap
+            await _preview_post(message, message.from_user.id, cap, iprompt, image_url=attached_img, brief=cap)
             acted = True
-        elif role == "smm":
-            act = {"caption": reply}
-            if attached_img:
-                act["image_url"] = attached_img
-            result = await _tg_post(message.bot, act)
-            await message.answer(f"{agent['emoji']} {result}", reply_markup=team_work_kb())
+        elif isinstance(cmd, dict) and cmd.get("action"):
+            if cmd.get("action") in ("tg_post", "tg_story", "ig_post"):
+                await _preview_post(message, message.from_user.id,
+                                    cmd.get("caption") or reply,
+                                    cmd.get("image_prompt") or cmd.get("caption") or reply,
+                                    image_url=(attached_img or cmd.get("image_url")))
+            else:
+                result = await dispatch_action(message.bot, cmd)
+                await message.answer(f"{agent['emoji']} {result}", reply_markup=team_work_kb())
             acted = True
     if not acted:
         await _send_block(message, f"{agent['emoji']} *{agent['name']}*", reply)
@@ -4123,6 +4370,778 @@ async def setchannel_cmd(message: Message):
     await message.answer(f"✅ Канал для постов сохранён: {ch}\nПроверь командой /testpost")
 
 
+DEFAULT_BRAND = (
+    f"Продукт: AuraAI — Telegram-бот с ИИ-инструментами. Умеет: генерация и обработка фото "
+    f"(Nano Banana Pro, GPT Image, DALL-E), оживление фото в видео (Kling/Seedance), музыка, "
+    f"озвучка, ИИ-аватар. Монетизация — кредиты и подписки. Есть курс {COURSE['name']} за "
+    f"{COURSE['rub']}₽ (в подарок {COURSE['credits']} кредитов). "
+    f"Ссылка на бота: https://t.me/{BOT_USERNAME}"
+)
+
+async def get_brand():
+    return await get_setting("brand_info", DEFAULT_BRAND)
+
+async def _smm_brand_note():
+    return ("\n\nДАННЫЕ О ПРОДУКТЕ (пиши КОНКРЕТНО, НИКОГДА не используй плейсхолдеры "
+            "вроде [название] или [ссылка] — бери только реальные данные):\n" + await get_brand() +
+            "\nВ каждом посте: цепляющий ЗАГОЛОВОК + реальная ССЫЛКА на бота + призыв к действию.")
+
+@router.message(Command("setbrand"))
+async def setbrand_cmd(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    parts = (message.text or "").split(maxsplit=1)
+    if len(parts) < 2:
+        cur = await get_brand()
+        await message.answer(f"Текущее описание продукта:\n\n{cur}\n\nИзменить: /setbrand <текст>")
+        return
+    await set_setting("brand_info", parts[1].strip())
+    await message.answer("✅ Описание продукта обновлено. Теперь SMM пишет по нему.")
+
+
+async def _ensure_posts_table():
+    await db_run("CREATE TABLE IF NOT EXISTS posts_log (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT DEFAULT (datetime('now')), day TEXT, caption TEXT, msg_id INTEGER, chat_id TEXT, reactions INTEGER DEFAULT 0)")
+    for ddl in ("msg_id INTEGER", "chat_id TEXT", "reactions INTEGER DEFAULT 0"):
+        try:
+            await db_run(f"ALTER TABLE posts_log ADD COLUMN {ddl}")
+        except Exception:
+            pass
+
+async def _log_post(caption, msg_id=None, chat_id=None):
+    try:
+        await _ensure_posts_table()
+        await db_run("INSERT INTO posts_log (day, caption, msg_id, chat_id, reactions) VALUES (date('now'), ?, ?, ?, 0)",
+                     ((caption or "")[:300], msg_id, str(chat_id) if chat_id is not None else None))
+    except Exception as e:
+        logging.error(f"log_post: {e}")
+
+@router.message_reaction_count()
+async def on_reaction_count(event):
+    try:
+        total = sum(getattr(rc, "total_count", 0) for rc in (event.reactions or []))
+        await _ensure_posts_table()
+        await db_run("UPDATE posts_log SET reactions=? WHERE msg_id=? AND chat_id=?",
+                     (total, event.message_id, str(event.chat.id)))
+    except Exception as e:
+        logging.error(f"reaction count: {e}")
+
+
+@router.message(Command("analytics"))
+async def analytics_cmd(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    parts = (message.text or "").split()
+    days = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 7
+    status = await message.answer(f"📊 Маркетолог анализирует за {days} дн...")
+    stats = await marketing_context(days)
+    reply = await _agent_call(stats + "\n\nДай свежий разбор и конкретные рекомендации.", AGENT_DEFS["marketer"]["prompt"], timeout_s=45)
+    try:
+        await status.delete()
+    except Exception:
+        pass
+    if not reply:
+        await message.answer("Не получилось получить разбор, попробуй ещё раз 🙏"); return
+    await message.answer(f"📊 Цифры: {stats}")
+    await _send_block(message, "📈 *Аналитика от Маркетолога*", reply)
+
+
+# ====================================================================
+#  💰 ФИНАНСЫ БИЗНЕСА (пациенты / выручка / расходы / чистая прибыль)
+#  Только админ. Вход: /biz
+# ====================================================================
+
+BIZ_PARSE_PROMPT = (
+    "Из дневного отчёта бизнеса вытащи числа и верни СТРОГО JSON без markdown:\n"
+    '{"patients":целое,"revenue":число,"expenses":число,"expenses_by":{"статья":число},"note":"кратко"}\n'
+    "patients — сколько пациентов/клиентов пришло; revenue — выручка; expenses — ОБЩИЕ расходы; "
+    "expenses_by — разбивка расходов по статьям (аренда, зарплаты, материалы, реклама, прочее), "
+    "если они указаны, иначе пустой объект {}. Чего нет — ставь 0. Бери только числа."
+)
+
+BIZ_REPORT_PROMPT = (
+    "Ты — финансовый директор бизнеса. По готовым сводным цифрам составь короткий деловой отчёт: "
+    "итоги (пациенты, выручка, расходы, ЧИСТАЯ ПРИБЫЛЬ, средний чек), 1-2 наблюдения и 1 рекомендацию. "
+    "Без воды. Цифры уже посчитаны — опирайся на них."
+)
+
+async def _ensure_biz_table():
+    await db_run("""CREATE TABLE IF NOT EXISTS biz_finance (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts TEXT DEFAULT (datetime('now')),
+        day TEXT, patients INTEGER DEFAULT 0,
+        revenue REAL DEFAULT 0, expenses REAL DEFAULT 0, exp_json TEXT, note TEXT
+    )""")
+    try:
+        await db_run("ALTER TABLE biz_finance ADD COLUMN exp_json TEXT")
+    except Exception:
+        pass
+    try:
+        await db_run("ALTER TABLE biz_finance ADD COLUMN src TEXT")
+    except Exception:
+        pass
+
+async def _save_biz(d):
+    await _ensure_biz_table()
+    by = d.get("expenses_by") or {}
+    total = float(d.get("expenses") or 0)
+    if not total and by:
+        try:
+            total = sum(float(v) for v in by.values())
+        except Exception:
+            total = 0
+    await db_run("INSERT INTO biz_finance (day, patients, revenue, expenses, exp_json, note, src) VALUES (date('now'), ?, ?, ?, ?, ?, 'manual')",
+                 (int(d.get("patients") or 0), float(d.get("revenue") or 0), total,
+                  json.dumps(by, ensure_ascii=False), str(d.get("note") or "")))
+
+async def _biz_agg(days):
+    await _ensure_biz_table()
+    prev = []
+    if days <= 1:
+        rows = await db_all("SELECT patients, revenue, expenses, exp_json FROM biz_finance WHERE day = date('now')")
+        label = "сегодня"
+    else:
+        rows = await db_all("SELECT patients, revenue, expenses, exp_json FROM biz_finance WHERE day >= date('now', ?)",
+                            (f"-{days - 1} day",))
+        prev = await db_all("SELECT revenue, expenses FROM biz_finance WHERE day >= date('now', ?) AND day < date('now', ?)",
+                            (f"-{2 * days - 1} day", f"-{days - 1} day"))
+        label = f"{days} дней"
+    pat = sum(r["patients"] for r in rows)
+    rev = sum(r["revenue"] for r in rows)
+    exp = sum(r["expenses"] for r in rows)
+    cats = {}
+    for r in rows:
+        try:
+            for k, v in (json.loads(r["exp_json"]) if r["exp_json"] else {}).items():
+                cats[k] = cats.get(k, 0) + float(v)
+        except Exception:
+            pass
+    prev_rev = sum(r["revenue"] for r in prev)
+    prev_exp = sum(r["expenses"] for r in prev)
+    return {"label": label, "n": len(rows), "patients": pat, "revenue": rev, "expenses": exp,
+            "profit": rev - exp, "check": (rev / pat) if pat else 0, "categories": cats,
+            "prev_revenue": prev_rev, "prev_profit": prev_rev - prev_exp}
+
+def biz_kb():
+    b = ReplyKeyboardBuilder()
+    b.row(KeyboardButton(text="📥 Внести отчёт за сегодня"))
+    b.row(KeyboardButton(text="📊 Сегодня"), KeyboardButton(text="📈 7 дней"), KeyboardButton(text="🗓 30 дней"))
+    b.row(KeyboardButton(text="✏️ Удалить последний"), KeyboardButton(text="📄 Выгрузить CSV"))
+    b.row(KeyboardButton(text="🔄 Обновить из таблицы"))
+    b.row(KeyboardButton(text="🏠 В главное меню"))
+    return b.as_markup(resize_keyboard=True)
+
+@router.message(Command("biz"))
+async def biz_start(message: Message, state: FSMContext):
+    if message.from_user.id != ADMIN_ID:
+        return
+    await state.set_state(State_.biz_menu)
+    await message.answer(
+        "💰 *Финансы бизнеса*\n\n"
+        "📥 Внеси дневной отчёт свободным текстом — посчитаю пациентов, выручку, расходы и чистую прибыль.\n"
+        "📊 Кнопки периодов — отчёт за день / 7 / 30 дней.",
+        parse_mode="Markdown", reply_markup=biz_kb())
+
+@router.message(State_.biz_menu)
+async def biz_menu(message: Message, state: FSMContext):
+    if message.from_user.id != ADMIN_ID:
+        return
+    txt = message.text or ""
+    if txt == "🏠 В главное меню":
+        await state.clear()
+        await message.answer("Главное меню", reply_markup=main_kb()); return
+    if txt == "📥 Внести отчёт за сегодня":
+        await state.set_state(State_.biz_input)
+        await message.answer("Пришли отчёт. Например:\n_пришло 12 пациентов, выручка 80000, расходы 30000_",
+                             parse_mode="Markdown", reply_markup=biz_kb()); return
+    if txt == "✏️ Удалить последний":
+        await _ensure_biz_table()
+        row = await db_get("SELECT id, day, patients, revenue FROM biz_finance ORDER BY id DESC LIMIT 1")
+        if not row:
+            await message.answer("Записей нет.", reply_markup=biz_kb()); return
+        await db_run("DELETE FROM biz_finance WHERE id=?", (row["id"],))
+        await message.answer(f"🗑 Удалён последний отчёт за {row['day']} (пациентов {row['patients']}, "
+                             f"выручка {_money(row['revenue'])}). Можешь внести заново.", reply_markup=biz_kb()); return
+    if txt == "📄 Выгрузить CSV":
+        await _ensure_biz_table()
+        rows = await db_all("SELECT day, patients, revenue, expenses, note FROM biz_finance ORDER BY day")
+        if not rows:
+            await message.answer("Данных нет.", reply_markup=biz_kb()); return
+        import io, csv
+        buf = io.StringIO()
+        w = csv.writer(buf)
+        w.writerow(["Дата", "Пациенты", "Выручка", "Расходы", "Чистая прибыль", "Заметка"])
+        for r in rows:
+            w.writerow([r["day"], r["patients"], r["revenue"], r["expenses"],
+                        (r["revenue"] - r["expenses"]), r["note"] or ""])
+        data = buf.getvalue().encode("utf-8-sig")
+        await message.answer_document(BufferedInputFile(data, "biz_finance.csv"),
+                                      caption="📄 Выгрузка для бухгалтера (открывается в Excel)")
+        return
+    if txt == "🔄 Обновить из таблицы":
+        await message.answer("🔄 Тяну данные из таблицы...")
+        imported, err = await _biz_sync_from_sheet()
+        await message.answer(f"⚠️ {err}" if err else f"✅ Обновлено строк: {imported}.", reply_markup=biz_kb()); return
+    period = {"📊 Сегодня": 1, "📈 7 дней": 7, "🗓 30 дней": 30}.get(txt)
+    if period:
+        await _send_biz_report(message, period); return
+    await message.answer("Выбери действие кнопкой ниже 👇", reply_markup=biz_kb())
+
+@router.message(State_.biz_input)
+async def biz_input(message: Message, state: FSMContext):
+    if message.from_user.id != ADMIN_ID:
+        return
+    txt = (message.text or "").strip()
+    if txt == "🏠 В главное меню":
+        await state.clear()
+        await message.answer("Главное меню", reply_markup=main_kb()); return
+    if not txt:
+        await message.answer("Напиши отчёт текстом 🙏", reply_markup=biz_kb()); return
+    thinking = await message.answer("💰 Считаю...")
+    parsed = None
+    for mid in ("claude", "gpt4o", "deepseek"):
+        try:
+            raw = await call_text_ai(txt, BIZ_PARSE_PROMPT, mid, timeout_s=30)
+            parsed = _extract_json(raw)
+            if parsed:
+                break
+        except Exception as e:
+            logging.error(f"biz parse [{mid}]: {e}")
+    try:
+        await thinking.delete()
+    except Exception:
+        pass
+    if not parsed:
+        await message.answer("Не разобрал. Проще: «пришло 12 пациентов, выручка 80000, расходы 30000».",
+                             reply_markup=biz_kb()); return
+    await _save_biz(parsed)
+    pat = int(parsed.get("patients") or 0); rev = float(parsed.get("revenue") or 0)
+    exp = float(parsed.get("expenses") or 0)
+    await state.set_state(State_.biz_menu)
+    await message.answer(f"✅ *Записал за сегодня:*\n🧑‍⚕️ Пациентов: {pat}\n💰 Выручка: {_money(rev)}\n"
+                         f"📤 Расходы: {_money(exp)}\n━━━━━━━━\n📈 Чистая прибыль: *{_money(rev - exp)}*",
+                         parse_mode="Markdown", reply_markup=biz_kb())
+
+async def _send_biz_report(message, days):
+    agg = await _biz_agg(days)
+    if agg["n"] == 0:
+        await message.answer("За этот период данных нет. Внеси отчёт 👇", reply_markup=biz_kb()); return
+    margin = (agg["profit"] / agg["revenue"] * 100) if agg["revenue"] else 0
+    growth = ""
+    if agg.get("prev_revenue"):
+        dr = (agg["revenue"] - agg["prev_revenue"]) / agg["prev_revenue"] * 100
+        growth = f"\nВыручка к пред. периоду: {dr:+.0f}%"
+    cats = agg.get("categories") or {}
+    cat_str = ""
+    if cats:
+        top = sorted(cats.items(), key=lambda x: -x[1])[:5]
+        cat_str = "\nРасходы по статьям: " + ", ".join(f"{k} {_money(v)}" for k, v in top)
+    summary = (f"Период: {agg['label']} ({agg['n']} записей)\nПациентов: {agg['patients']}\n"
+               f"Выручка: {_money(agg['revenue'])}\nРасходы: {_money(agg['expenses'])}\n"
+               f"Чистая прибыль: {_money(agg['profit'])}\nРентабельность: {margin:.0f}%\n"
+               f"Средний чек: {_money(agg['check'])}{growth}{cat_str}")
+    thinking = await message.answer("💰 Готовлю отчёт...")
+    narrative = None
+    for mid in ("claude", "gpt4o", "deepseek"):
+        try:
+            narrative = await call_text_ai(f"Цифры за период:\n{summary}\n\nСоставь деловой отчёт.",
+                                           BIZ_REPORT_PROMPT, mid, timeout_s=40)
+            if narrative and not narrative.startswith("❌"):
+                break
+        except Exception as e:
+            logging.error(f"biz report [{mid}]: {e}")
+    try:
+        await thinking.delete()
+    except Exception:
+        pass
+    await message.answer(f"💰 *Финансы бизнеса · {agg['label']}*\n\n{summary}", parse_mode="Markdown")
+    if narrative:
+        await _send_block(message, "🧠 *Аналитика:*", narrative)
+    await message.answer("Что дальше? 👇", reply_markup=biz_kb())
+
+
+# ====================================================================
+#  📊 GOOGLE ТАБЛИЦЫ → финансы бизнеса (чтение по ссылке, без паролей)
+# ====================================================================
+
+def _sheet_csv_url(url):
+    m = re.search(r"/spreadsheets/d/([a-zA-Z0-9_-]+)", url)
+    if not m:
+        return None
+    sid = m.group(1)
+    g = re.search(r"[#&?]gid=(\d+)", url)
+    gid = g.group(1) if g else "0"
+    return f"https://docs.google.com/spreadsheets/d/{sid}/export?format=csv&gid={gid}"
+
+def _num(s):
+    s = re.sub(r"[^\d.,-]", "", str(s)).replace(" ", "").replace(",", ".")
+    try:
+        return float(s) if s not in ("", "-", ".") else 0.0
+    except Exception:
+        return 0.0
+
+def _norm_date(s):
+    s = (s or "").strip()
+    for fmt in ("%Y-%m-%d", "%d.%m.%Y", "%d/%m/%Y", "%d-%m-%Y", "%m/%d/%Y", "%Y.%m.%d"):
+        try:
+            return datetime.datetime.strptime(s, fmt).date().isoformat()
+        except Exception:
+            pass
+    return None
+
+async def _get_sheets():
+    raw = await get_setting("biz_sheets", "")
+    sheets = []
+    if raw:
+        try:
+            sheets = json.loads(raw)
+        except Exception:
+            sheets = []
+    legacy = await get_setting("biz_sheet_csv", "")
+    if legacy and legacy not in sheets:
+        sheets.append(legacy)
+    return sheets
+
+async def _fetch_sheet_rows(csv_url):
+    import httpx, csv as _csv, io
+    try:
+        async with httpx.AsyncClient(timeout=25, follow_redirects=True) as c:
+            r = await c.get(csv_url)
+            r.raise_for_status()
+        text = r.text
+    except Exception as e:
+        return None, f"не открылась ({str(e)[:80]})"
+    if "<html" in text[:500].lower():
+        return None, "закрыта (нужен доступ «по ссылке: просмотр»)"
+    out = []
+    for row in _csv.reader(io.StringIO(text)):
+        if len(row) < 4:
+            continue
+        day = _norm_date(row[0])
+        if not day:
+            continue
+        out.append((day, int(_num(row[1])), _num(row[2]), _num(row[3]), row[4] if len(row) > 4 else ""))
+    return out, None
+
+async def _biz_sync_from_sheet():
+    sheets = await _get_sheets()
+    if not sheets:
+        return None, "Таблицы не заданы. Команда: /setsheet <ссылка>"
+    all_rows, errors = [], []
+    for i, url in enumerate(sheets, 1):
+        rows, err = await _fetch_sheet_rows(url)
+        if err:
+            errors.append(f"таблица {i}: {err}")
+        else:
+            all_rows.extend(rows)
+    await _ensure_biz_table()
+    await db_run("DELETE FROM biz_finance WHERE src='sheet'")
+    for (day, patients, revenue, expenses, note) in all_rows:
+        await db_run("INSERT INTO biz_finance (day, patients, revenue, expenses, exp_json, note, src) VALUES (?,?,?,?,?,?, 'sheet')",
+                     (day, patients, revenue, expenses, "{}", note))
+    return len(all_rows), ("; ".join(errors) if errors else None)
+
+@router.message(Command("setsheet"))
+async def setsheet_cmd(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    parts = (message.text or "").split(maxsplit=1)
+    if len(parts) < 2:
+        n = len(await _get_sheets())
+        await message.answer(f"Сейчас подключено таблиц: {n}.\n\nДобавить ещё одну:\n"
+                             "/setsheet https://docs.google.com/spreadsheets/d/.../edit\n\n"
+                             "В таблице сначала: Настройки доступа → «Всем, у кого есть ссылка: Просмотр».\n"
+                             "Колонки: Дата | Пациенты | Выручка | Расходы | Заметка.\n\n"
+                             "Список: /sheets · Очистить все: /sheetsclear")
+        return
+    csv_url = _sheet_csv_url(parts[1].strip())
+    if not csv_url:
+        await message.answer("Это не похоже на ссылку Google-таблицы. Скопируй её целиком.")
+        return
+    sheets = await _get_sheets()
+    if csv_url not in sheets:
+        sheets.append(csv_url)
+    await set_setting("biz_sheets", json.dumps(sheets))
+    await message.answer(f"✅ Таблица добавлена (всего: {len(sheets)}). Тяну данные...")
+    imported, err = await _biz_sync_from_sheet()
+    await message.answer((f"⚠️ {err}\n" if err else "") + f"✅ Загружено строк: {imported}. Отчёт: /biz")
+
+@router.message(Command("sheets"))
+async def sheets_cmd(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    sheets = await _get_sheets()
+    if not sheets:
+        await message.answer("Таблицы не подключены. Добавь: /setsheet <ссылка>"); return
+    lines = "\n".join(f"{i}. …{s[-35:]}" for i, s in enumerate(sheets, 1))
+    await message.answer(f"📊 Подключено таблиц: {len(sheets)}\n{lines}\n\nОчистить все: /sheetsclear")
+
+@router.message(Command("sheetsclear"))
+async def sheetsclear_cmd(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    await set_setting("biz_sheets", "[]")
+    await set_setting("biz_sheet_csv", "")
+    await _ensure_biz_table()
+    await db_run("DELETE FROM biz_finance WHERE src='sheet'")
+    await message.answer("🗑 Все таблицы отключены, данные из них убраны (ручные отчёты остались).")
+
+@router.message(Command("bizsync"))
+async def bizsync_cmd(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    await message.answer("🔄 Тяну данные из таблицы...")
+    imported, err = await _biz_sync_from_sheet()
+    await message.answer(f"⚠️ {err}" if err else f"✅ Обновлено строк: {imported}. Отчёт: /biz")
+
+def start_biz_sync(bot):
+    async def loop():
+        await asyncio.sleep(120)
+        while True:
+            try:
+                if await _get_sheets():
+                    await _biz_sync_from_sheet()
+                if await _get_visit_sheets():
+                    await _sync_visits()
+            except Exception as e:
+                logging.error(f"biz sync loop: {e}")
+            await asyncio.sleep(6 * 3600)
+    asyncio.create_task(loop())
+
+
+# ====================================================================
+#  👨‍⚕️ ОТЧЁТ ПО ВРАЧАМ (визиты: услуги, первичные/повторные, направления, ЗП)
+#  Таблица визитов, колонки по порядку:
+#    Дата | Врач | Услуга | Тип | Откуда | Выручка | Процент
+#  Тип: первичный/повторный. Откуда: имя врача, который направил (или пусто).
+# ====================================================================
+
+async def _ensure_visits_table():
+    await db_run("""CREATE TABLE IF NOT EXISTS visits (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, day TEXT, doctor TEXT, service TEXT,
+        kind TEXT, ref_from TEXT, revenue REAL DEFAULT 0, percent REAL DEFAULT 0,
+        pay TEXT, src TEXT)""")
+    for ddl in ("pay TEXT", "src TEXT"):
+        try:
+            await db_run(f"ALTER TABLE visits ADD COLUMN {ddl}")
+        except Exception:
+            pass
+
+async def _get_visit_sheets():
+    raw = await get_setting("visit_sheets", "")
+    try:
+        return json.loads(raw) if raw else []
+    except Exception:
+        return []
+
+async def _get_shift_sheets():
+    raw = await get_setting("shift_sheets", "")
+    try:
+        return json.loads(raw) if raw else []
+    except Exception:
+        return []
+
+async def _fetch_shift_rows(csv_url):
+    # Парсер таблиц "ЗП день/ночь": блок на каждый день, сверху "врач - X", ниже строки пациентов.
+    import httpx, csv as _csv, io
+    try:
+        async with httpx.AsyncClient(timeout=25, follow_redirects=True) as c:
+            r = await c.get(csv_url)
+            r.raise_for_status()
+        text = r.text
+    except Exception as e:
+        return None, f"не открылась ({str(e)[:80]})"
+    if "<html" in text[:500].lower():
+        return None, "закрыта (нужен доступ «по ссылке: просмотр»)"
+    cur_doc, cur_date = "", ""
+    out = []
+    for row in _csv.reader(io.StringIO(text)):
+        cells = [(c or "").strip() for c in row]
+        joined = " ".join(cells)
+        m = re.search(r"(\d{1,2})\s*[.\-/]\s*(\d{1,2})\s*[.\-/]\s*(\d{4})", joined)
+        if m:
+            try:
+                cur_date = datetime.date(int(m.group(3)), int(m.group(2)), int(m.group(1))).isoformat()
+            except Exception:
+                pass
+        is_patient = bool(cells) and bool(re.fullmatch(r"\d{1,3}", cells[0]))
+        if ("врач" in joined.lower()) and not is_patient:
+            dm = re.search(r"врач\s*[-–—:]*\s*([^,\n]+)", joined, re.IGNORECASE)
+            if dm and dm.group(1).strip():
+                cur_doc = dm.group(1).strip()[:40]
+            continue
+        if is_patient:
+            service = cells[1] if len(cells) > 1 else ""
+            amount = 0.0
+            for c in cells[2:]:
+                v = _num(c)
+                if v > 0:
+                    amount = v
+                    break
+            pay = ""
+            for c in reversed(cells[2:]):
+                if c and (not c.replace(".", "").replace(",", "").isdigit()):
+                    pay = c.lower()
+                    break
+            if cur_doc and (amount > 0 or service):
+                out.append((cur_date or datetime.date.today().isoformat(), cur_doc, service, amount, pay))
+    return out, None
+
+async def _fetch_visit_rows(csv_url):
+    import httpx, csv as _csv, io
+    try:
+        async with httpx.AsyncClient(timeout=25, follow_redirects=True) as c:
+            r = await c.get(csv_url)
+            r.raise_for_status()
+        text = r.text
+    except Exception as e:
+        return None, f"не открылась ({str(e)[:80]})"
+    if "<html" in text[:500].lower():
+        return None, "закрыта (нужен доступ «по ссылке: просмотр»)"
+    out = []
+    for row in _csv.reader(io.StringIO(text)):
+        if len(row) < 6:
+            continue
+        day = _norm_date(row[0])
+        if not day:
+            continue
+        doctor = (row[1] or "").strip()
+        if not doctor:
+            continue
+        service = (row[2] or "").strip()
+        kind = (row[3] or "").strip().lower()
+        ref_from = (row[4] or "").strip()
+        revenue = _num(row[5])
+        percent = _num(row[6]) if len(row) > 6 else 0
+        out.append((day, doctor, service, kind, ref_from, revenue, percent))
+    return out, None
+
+def _patient_key(text):
+    """Достаёт из ячейки «ФИО + услуга» ключ пациента: фамилия + инициалы (для сопоставления)."""
+    t = (text or "").strip()
+    if not t:
+        return ""
+    m = re.match(r"\s*([А-ЯЁA-Z][а-яёa-z]+)\.?\s*((?:[А-ЯЁA-Z]\.?\s*){0,2})", t)
+    if m:
+        surname = m.group(1)
+        initials = re.sub(r"[^А-ЯЁA-Za-z]", "", m.group(2) or "")
+        return (surname + initials).lower()
+    return re.split(r"[\s.]+", t)[0].lower()
+
+async def _sync_visits():
+    clean = await _get_visit_sheets()
+    shift = await _get_shift_sheets()
+    if not clean and not shift:
+        return None, "Таблицы не заданы. /setvisits (простая вкладка) или /setshift (день/ночь)."
+    all_rows, errors = [], []
+    for i, url in enumerate(clean, 1):
+        rows, err = await _fetch_visit_rows(url)
+        if err:
+            errors.append(f"приёмы {i}: {err}")
+        else:
+            for (day, doctor, service, kind, ref_from, revenue, percent) in rows:
+                all_rows.append((day, doctor, service, kind, ref_from, revenue, percent, "", "clean"))
+    # Смены: собрать все приёмы, затем по ФИО определить первичный/повторный и перенаправление
+    shift_rows = []
+    for i, url in enumerate(shift, 1):
+        rows, err = await _fetch_shift_rows(url)
+        if err:
+            errors.append(f"смена {i}: {err}")
+        elif rows:
+            for (day, doctor, service, revenue, pay) in rows:
+                shift_rows.append([day, doctor, service, revenue, pay, _patient_key(service)])
+    shift_rows.sort(key=lambda r: r[0])  # по дате: кто раньше — тот первичный
+    first_doctor = {}
+    seen_visit = set()
+    for (day, doctor, service, revenue, pay, key) in shift_rows:
+        kind, ref = "", ""
+        if key:
+            if key not in first_doctor:
+                first_doctor[key] = doctor
+                if (key, day) not in seen_visit:
+                    kind = "первичный"
+                    seen_visit.add((key, day))
+            elif (key, day) not in seen_visit:
+                kind = "повторный"
+                seen_visit.add((key, day))
+                if doctor != first_doctor[key]:
+                    ref = first_doctor[key]  # пациент перешёл от первого врача к этому
+        all_rows.append((day, doctor, service, kind, ref, revenue, 0, pay, "shift"))
+    await _ensure_visits_table()
+    await db_run("DELETE FROM visits")
+    for r in all_rows:
+        await db_run("INSERT INTO visits (day,doctor,service,kind,ref_from,revenue,percent,pay,src) VALUES (?,?,?,?,?,?,?,?,?)", r)
+    return len(all_rows), ("; ".join(errors) if errors else None)
+
+@router.message(Command("setvisits"))
+async def setvisits_cmd(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    parts = (message.text or "").split(maxsplit=1)
+    if len(parts) < 2:
+        n = len(await _get_visit_sheets())
+        await message.answer(f"Таблиц визитов подключено: {n}.\n\nДобавить:\n/setvisits <ссылка на Google-таблицу>\n\n"
+            "Колонки по порядку:\nДата | Врач | Услуга | Тип | Откуда | Выручка | Процент\n\n"
+            "Тип: первичный / повторный. Откуда: имя врача, который направил (или пусто).\n"
+            "Доступ к таблице: «по ссылке: просмотр».\n\nСписок: /visits · Очистить: /visitsclear")
+        return
+    url = _sheet_csv_url(parts[1].strip())
+    if not url:
+        await message.answer("Не похоже на ссылку Google-таблицы.")
+        return
+    sheets = await _get_visit_sheets()
+    if url not in sheets:
+        sheets.append(url)
+    await set_setting("visit_sheets", json.dumps(sheets))
+    await message.answer(f"✅ Добавлено (всего: {len(sheets)}). Тяну визиты...")
+    n, err = await _sync_visits()
+    await message.answer((f"⚠️ {err}\n" if err else "") + f"✅ Загружено визитов: {n}. Отчёт: /doctors")
+
+@router.message(Command("setshift"))
+async def setshift_cmd(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    parts = (message.text or "").split(maxsplit=1)
+    if len(parts) < 2:
+        n = len(await _get_shift_sheets())
+        await message.answer(f"Таблиц смен (день/ночь) подключено: {n}.\n\nДобавить:\n"
+            "/setshift <ссылка на ЗП день или ЗП ночь>\n\n"
+            "Это твои таблицы, где день идёт блоком: сверху «врач - Имя», ниже строки пациентов.\n"
+            "Бот возьмёт по каждому врачу смены выручку, число приёмов и виды оплаты.\n"
+            "Доступ к таблице: «по ссылке: просмотр». Ссылка ведёт на нужный месяц (вкладку).")
+        return
+    url = _sheet_csv_url(parts[1].strip())
+    if not url:
+        await message.answer("Не похоже на ссылку Google-таблицы.")
+        return
+    sheets = await _get_shift_sheets()
+    if url not in sheets:
+        sheets.append(url)
+    await set_setting("shift_sheets", json.dumps(sheets))
+    await message.answer(f"✅ Таблица смены добавлена (всего: {len(sheets)}). Читаю...")
+    n, err = await _sync_visits()
+    await message.answer((f"⚠️ {err}\n" if err else "") + f"✅ Загружено приёмов: {n}. Отчёт: /doctors")
+
+@router.message(Command("visits"))
+async def visits_cmd(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    clean = await _get_visit_sheets()
+    shift = await _get_shift_sheets()
+    if not clean and not shift:
+        await message.answer("Не подключены. /setvisits (простая вкладка) или /setshift (день/ночь)."); return
+    txt = f"📋 Простых вкладок «Приёмы»: {len(clean)}\n📅 Таблиц смен (день/ночь): {len(shift)}"
+    await message.answer(txt + "\n\nОчистить все: /visitsclear")
+
+@router.message(Command("visitsclear"))
+async def visitsclear_cmd(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    await set_setting("visit_sheets", "[]")
+    await set_setting("shift_sheets", "[]")
+    await _ensure_visits_table()
+    await db_run("DELETE FROM visits")
+    await message.answer("🗑 Все таблицы по врачам отключены.")
+
+@router.message(Command("doctors"))
+async def doctors_cmd(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    parts = (message.text or "").split()
+    days = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 30
+    await _sync_visits()
+    await _ensure_visits_table()
+    rows = await db_all("SELECT doctor,service,kind,ref_from,revenue,percent,pay,src FROM visits WHERE day >= date('now', ?)",
+                        (f"-{days - 1} day",))
+    if not rows:
+        await message.answer("Нет данных по врачам за период.\nПодключи таблицу: /setshift (день/ночь) или /setvisits (простая вкладка)."); return
+    docs = {}
+    sent_to = {}
+    for r in rows:
+        d = r["doctor"] or "—"
+        x = docs.setdefault(d, {"total": 0, "first": 0, "repeat": 0, "rev": 0.0,
+                                "services": {}, "ref_in": 0, "ref_in_by": {}, "salary": 0.0, "pay": {}})
+        x["total"] += 1
+        k = r["kind"] or ""
+        if k.startswith("перв"):
+            x["first"] += 1
+        elif k.startswith("повт"):
+            x["repeat"] += 1
+        rev = r["revenue"] or 0
+        x["rev"] += rev
+        if r["src"] == "clean":
+            sv = r["service"] or "—"
+            x["services"][sv] = x["services"].get(sv, 0) + rev
+        rf = (r["ref_from"] or "").strip()
+        if rf:
+            x["ref_in"] += 1
+            x["ref_in_by"][rf] = x["ref_in_by"].get(rf, 0) + 1
+            sent_to.setdefault(rf, {})
+            sent_to[rf][d] = sent_to[rf].get(d, 0) + 1
+        x["salary"] += rev * (r["percent"] or 0) / 100
+        p = (r["pay"] or "").strip()
+        if p:
+            x["pay"][p] = x["pay"].get(p, 0) + rev
+    blocks = []
+    for d, x in sorted(docs.items(), key=lambda kv: -kv[1]["rev"]):
+        lines = [f"Приёмов: {x['total']} · Выручка: {_money(x['rev'])}"]
+        if x["first"] or x["repeat"]:
+            lines.append(f"Первичных {x['first']}, повторных {x['repeat']}")
+        if x["services"]:
+            svc = ", ".join(f"{k} {_money(v)}" for k, v in sorted(x["services"].items(), key=lambda kv: -kv[1])[:6])
+            lines.append(f"По услугам: {svc}")
+        if x["ref_in"]:
+            refin = "; ".join(f"от {k} {v}" for k, v in x["ref_in_by"].items())
+            lines.append(f"Пришло по направлению: {x['ref_in']} ({refin})")
+        if sent_to.get(d):
+            tot = sum(sent_to[d].values())
+            to_str = ", ".join(f"к {t} {n}" for t, n in sorted(sent_to[d].items(), key=lambda kv: -kv[1]))
+            lines.append(f"Направил к другим: {tot} ({to_str})")
+        if x["salary"] > 0:
+            lines.append(f"ЗП по проценту: {_money(x['salary'])}")
+        if x["pay"]:
+            pays = ", ".join(f"{k} {_money(v)}" for k, v in sorted(x["pay"].items(), key=lambda kv: -kv[1]))
+            lines.append(f"Оплата: {pays}")
+        blocks.append(f"👨‍⚕️ {d}\n" + "\n".join(lines))
+    flows = []
+    for a, targets in sent_to.items():
+        for b, n in targets.items():
+            flows.append((n, f"от {a} → к {b}: {n}"))
+    body = "\n\n".join(blocks)
+    if flows:
+        flows.sort(key=lambda x: -x[0])
+        body += "\n\n🔁 Перенаправления (от кого → кому):\n" + "\n".join(f for _, f in flows)
+    await _send_block(message, f"📊 *Отчёт по врачам за {days} дн.*", body)
+
+
+@router.message(Command("fix"))
+async def fix_cmd(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    parts = (message.text or "").split(maxsplit=1)
+    if len(parts) < 2:
+        await message.answer("🛠 Опиши проблему после команды. Например:\n"
+                             "/fix в отчёте по врачам не считаются первичные\n"
+                             "/fix кнопка «Обновить из таблицы» не работает")
+        return
+    problem = parts[1].strip()
+    status = await message.answer("🛠 Инженер разбирается...")
+    sys = (AGENT_DEFS["engineer"]["prompt"] +
+        "\n\nПользователь описал проблему в его Telegram-боте (Python, aiogram 3). "
+        "Дай коротко: 1) диагноз — в чём, вероятно, причина; 2) решение — что и где исправить, "
+        "с готовым блоком кода; 3) как применить. По-русски, по делу, без воды.")
+    reply = await _agent_call(problem, sys, timeout_s=60)
+    try:
+        await status.delete()
+    except Exception:
+        pass
+    if not reply:
+        await message.answer("Не получилось. Попробуй ещё раз или опиши подробнее.")
+        return
+    await _send_block(message, "🛠 *Инженер — диагноз и исправление:*", reply)
+    await message.answer("ℹ️ Чтобы применить правку к самому боту — нужно обновить файл бота и перезапустить. "
+                         "Бот не меняет свой код сам — это защита от поломки.")
+
+
 async def main():
     global anthropic_client, openai_client, deepseek_client
 
@@ -4150,6 +5169,8 @@ async def main():
     bot = Bot(token=BOT_TOKEN)
     dp  = Dispatcher(storage=MemoryStorage())
     dp.include_router(router)
+    start_autoposter(bot)
+    start_biz_sync(bot)
 
     logging.info(f"🚀 AuraAI Bot v3.1 ФОРМАТЫ запущен | @{BOT_USERNAME}")
     logging.info("✅ ВЕРСИЯ С ВЫБОРОМ ФОРМАТА 9:16 16:9 — если видишь это, новый код работает")

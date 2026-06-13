@@ -654,9 +654,16 @@ async def generate_nano_banana(prompt: str, aspect: str = "1:1") -> bytes:
         return r.content
 
 def _preserve_face(prompt: str) -> str:
-    return (prompt.strip() +
-            ". Keep the person's face, identity, facial features, skin tone "
-            "and proportions exactly as in the original photo. Do not change the face.")
+    return (
+        "Edit this photo. Requested change: " + prompt.strip() + ". "
+        "IDENTITY LOCK — ABSOLUTELY CRITICAL: keep the EXACT SAME person. "
+        "Preserve the face 100% identical to the original photo: same facial features, same face shape and jawline, "
+        "same eyes, nose, mouth, eyebrows, cheekbones, hairline, skin tone and skin texture. "
+        "Do NOT change the person's weight, face width or body size. Do NOT make the face or body fatter, rounder, puffier, thinner or wider. "
+        "Do NOT beautify, do NOT smooth the skin, do NOT slim or fatten, do NOT change age, do NOT change proportions. "
+        "The result MUST be instantly recognizable as the very same person, like the same photo lightly edited. "
+        "Change ONLY what is explicitly requested above and keep the person's identity and likeness completely unchanged."
+    )
 
 
 async def generate_img2img(image_url: str, prompt: str, aspect: str = "1:1") -> tuple:
@@ -4495,15 +4502,21 @@ async def _save_biz(d):
 
 async def _biz_agg(days):
     await _ensure_biz_table()
-    prev = []
+    await _ensure_visits_table()
+    prev, vp = [], []
     if days <= 1:
         rows = await db_all("SELECT patients, revenue, expenses, exp_json FROM biz_finance WHERE day = date('now')")
+        v = await db_all("SELECT revenue FROM visits WHERE src='shift' AND day = date('now')")
         label = "сегодня"
     else:
         rows = await db_all("SELECT patients, revenue, expenses, exp_json FROM biz_finance WHERE day >= date('now', ?)",
                             (f"-{days - 1} day",))
         prev = await db_all("SELECT revenue, expenses FROM biz_finance WHERE day >= date('now', ?) AND day < date('now', ?)",
                             (f"-{2 * days - 1} day", f"-{days - 1} day"))
+        v = await db_all("SELECT revenue FROM visits WHERE src='shift' AND day >= date('now', ?)",
+                         (f"-{days - 1} day",))
+        vp = await db_all("SELECT revenue FROM visits WHERE src='shift' AND day >= date('now', ?) AND day < date('now', ?)",
+                          (f"-{2 * days - 1} day", f"-{days - 1} day"))
         label = f"{days} дней"
     pat = sum(r["patients"] for r in rows)
     rev = sum(r["revenue"] for r in rows)
@@ -4511,15 +4524,19 @@ async def _biz_agg(days):
     cats = {}
     for r in rows:
         try:
-            for k, v in (json.loads(r["exp_json"]) if r["exp_json"] else {}).items():
-                cats[k] = cats.get(k, 0) + float(v)
+            for k, val in (json.loads(r["exp_json"]) if r["exp_json"] else {}).items():
+                cats[k] = cats.get(k, 0) + float(val)
         except Exception:
             pass
-    prev_rev = sum(r["revenue"] for r in prev)
+    vrev = sum(r["revenue"] for r in v)
+    vpat = len(v)
+    pat += vpat
+    rev += vrev
+    prev_rev = sum(r["revenue"] for r in prev) + sum(r["revenue"] for r in vp)
     prev_exp = sum(r["expenses"] for r in prev)
-    return {"label": label, "n": len(rows), "patients": pat, "revenue": rev, "expenses": exp,
+    return {"label": label, "n": len(rows) + vpat, "patients": pat, "revenue": rev, "expenses": exp,
             "profit": rev - exp, "check": (rev / pat) if pat else 0, "categories": cats,
-            "prev_revenue": prev_rev, "prev_profit": prev_rev - prev_exp}
+            "prev_revenue": prev_rev, "prev_profit": prev_rev - prev_exp, "from_shift": vpat > 0}
 
 def biz_kb():
     b = ReplyKeyboardBuilder()
@@ -4578,9 +4595,10 @@ async def biz_menu(message: Message, state: FSMContext):
                                       caption="📄 Выгрузка для бухгалтера (открывается в Excel)")
         return
     if txt == "🔄 Обновить из таблицы":
-        await message.answer("🔄 Тяну данные из таблицы...")
-        imported, err = await _biz_sync_from_sheet()
-        await message.answer(f"⚠️ {err}" if err else f"✅ Обновлено строк: {imported}.", reply_markup=biz_kb()); return
+        await message.answer("🔄 Обновляю данные...")
+        await _biz_sync_from_sheet()
+        await _sync_visits()
+        await message.answer("✅ Обновлено. Жми период (Сегодня / 7 / 30 дней) 👇", reply_markup=biz_kb()); return
     period = {"📊 Сегодня": 1, "📈 7 дней": 7, "🗓 30 дней": 30}.get(txt)
     if period:
         await _send_biz_report(message, period); return
@@ -4635,10 +4653,11 @@ async def _send_biz_report(message, days):
     if cats:
         top = sorted(cats.items(), key=lambda x: -x[1])[:5]
         cat_str = "\nРасходы по статьям: " + ", ".join(f"{k} {_money(v)}" for k, v in top)
-    summary = (f"Период: {agg['label']} ({agg['n']} записей)\nПациентов: {agg['patients']}\n"
+    src_note = "\n\n📋 Выручка и пациенты взяты из таблиц «день/ночь». Расходы вносятся вручную (кнопка «📥 Внести отчёт»)." if agg.get("from_shift") else ""
+    summary = (f"Период: {agg['label']} ({agg['n']} записей)\nПациентов/приёмов: {agg['patients']}\n"
                f"Выручка: {_money(agg['revenue'])}\nРасходы: {_money(agg['expenses'])}\n"
                f"Чистая прибыль: {_money(agg['profit'])}\nРентабельность: {margin:.0f}%\n"
-               f"Средний чек: {_money(agg['check'])}{growth}{cat_str}")
+               f"Средний чек: {_money(agg['check'])}{growth}{cat_str}{src_note}")
     thinking = await message.answer("💰 Готовлю отчёт...")
     narrative = None
     for mid in ("claude", "gpt4o", "deepseek"):
@@ -4701,17 +4720,107 @@ async def _get_sheets():
         sheets.append(legacy)
     return sheets
 
-async def _fetch_sheet_rows(csv_url):
-    import httpx, csv as _csv, io
+async def _get_salary_sheets():
+    raw = await get_setting("salary_sheets", "")
     try:
-        async with httpx.AsyncClient(timeout=25, follow_redirects=True) as c:
-            r = await c.get(csv_url)
-            r.raise_for_status()
-        text = r.text
-    except Exception as e:
-        return None, f"не открылась ({str(e)[:80]})"
-    if "<html" in text[:500].lower():
-        return None, "закрыта (нужен доступ «по ссылке: просмотр»)"
+        return json.loads(raw) if raw else []
+    except Exception:
+        return []
+
+async def _fetch_salary_rows(csv_url):
+    # Таблица "Зарплата персонала": матрица по дням; берём колонку "расход" по названию.
+    import csv as _csv, io
+    text, err = await _fetch_csv(csv_url)
+    if err:
+        return None, err
+    rows = list(_csv.reader(io.StringIO(text)))
+    months = [("январ", 1), ("феврал", 2), ("март", 3), ("апрел", 4), ("мая", 5), ("май", 5),
+              ("июн", 6), ("июл", 7), ("август", 8), ("сентябр", 9), ("октябр", 10), ("ноябр", 11), ("декабр", 12)]
+    month = year = None
+    for row in rows[:8]:
+        for cell in row:
+            c = (cell or "").lower()
+            for name, num in months:
+                if name in c:
+                    month = num
+                    y = re.search(r"(20\d{2})", c)
+                    if y:
+                        year = int(y.group(1))
+                    break
+            if month:
+                break
+        if month:
+            break
+    today = datetime.date.today()
+    month = month or today.month
+    year = year or today.year
+    exp_c = None
+    date_c = None
+    header_idx = -1
+    for i, row in enumerate(rows[:15]):
+        for j, cell in enumerate(row):
+            c = (cell or "").lower().strip()
+            if "расход" in c:
+                exp_c = j
+            elif c in ("дата", "число", "день"):
+                date_c = j
+        if exp_c is not None:
+            header_idx = i
+            break
+    if exp_c is None:
+        return None, "не нашёл колонку «расход» — проверь заголовок таблицы"
+    if date_c is None:
+        date_c = 0
+    out = []
+    for row in rows[header_idx + 1:]:
+        if date_c >= len(row):
+            continue
+        daycell = (row[date_c] or "").strip()
+        if not re.fullmatch(r"\d{1,2}", daycell):
+            continue
+        day = int(daycell)
+        if not (1 <= day <= 31):
+            continue
+        try:
+            d = datetime.date(year, month, day).isoformat()
+        except Exception:
+            continue
+        exp = _num(row[exp_c]) if exp_c < len(row) else 0
+        if exp > 0:
+            out.append((d, exp))
+    return out, None
+
+async def _fetch_csv(csv_url):
+    import httpx
+    urls = [csv_url]
+    m = re.search(r"/spreadsheets/d/([a-zA-Z0-9_-]+)", csv_url)
+    g = re.search(r"[?&]gid=(\d+)", csv_url)
+    if m:
+        sid = m.group(1)
+        gid = g.group(1) if g else "0"
+        urls.append(f"https://docs.google.com/spreadsheets/d/{sid}/gviz/tq?tqx=out:csv&gid={gid}")
+    last = "не удалось открыть"
+    for u in urls:
+        try:
+            async with httpx.AsyncClient(timeout=30, follow_redirects=True) as c:
+                r = await c.get(u, headers={"User-Agent": "Mozilla/5.0"})
+                r.raise_for_status()
+            text = r.text
+        except Exception as e:
+            last = f"не открылась ({str(e)[:60]})"
+            continue
+        low = text[:600].lower()
+        if "<html" in low or "<!doctype" in low:
+            last = "таблица закрыта — открой доступ «Всем, у кого есть ссылка: Читатель»"
+            continue
+        return text, None
+    return None, last
+
+async def _fetch_sheet_rows(csv_url):
+    import csv as _csv, io
+    text, err = await _fetch_csv(csv_url)
+    if err:
+        return None, err
     out = []
     for row in _csv.reader(io.StringIO(text)):
         if len(row) < 4:
@@ -4724,21 +4833,57 @@ async def _fetch_sheet_rows(csv_url):
 
 async def _biz_sync_from_sheet():
     sheets = await _get_sheets()
-    if not sheets:
-        return None, "Таблицы не заданы. Команда: /setsheet <ссылка>"
-    all_rows, errors = [], []
+    salary = await _get_salary_sheets()
+    if not sheets and not salary:
+        return None, "Таблицы не заданы. Команда: /setsheet <ссылка> или /setsalary <ссылка>"
+    all_rows, sal_rows, errors = [], [], []
     for i, url in enumerate(sheets, 1):
         rows, err = await _fetch_sheet_rows(url)
         if err:
             errors.append(f"таблица {i}: {err}")
         else:
             all_rows.extend(rows)
+    for i, url in enumerate(salary, 1):
+        rows, err = await _fetch_salary_rows(url)
+        if err:
+            errors.append(f"зарплата {i}: {err}")
+        else:
+            sal_rows.extend(rows)
     await _ensure_biz_table()
     await db_run("DELETE FROM biz_finance WHERE src='sheet'")
+    await db_run("DELETE FROM biz_finance WHERE src='salary'")
     for (day, patients, revenue, expenses, note) in all_rows:
         await db_run("INSERT INTO biz_finance (day, patients, revenue, expenses, exp_json, note, src) VALUES (?,?,?,?,?,?, 'sheet')",
                      (day, patients, revenue, expenses, "{}", note))
-    return len(all_rows), ("; ".join(errors) if errors else None)
+    for (day, expenses) in sal_rows:
+        await db_run("INSERT INTO biz_finance (day, patients, revenue, expenses, exp_json, note, src) VALUES (?, 0, 0, ?, '{}', 'Зарплата персонала', 'salary')",
+                     (day, expenses))
+    return len(all_rows) + len(sal_rows), ("; ".join(errors) if errors else None)
+
+@router.message(Command("setsalary"))
+async def setsalary_cmd(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    parts = (message.text or "").split(maxsplit=1)
+    if len(parts) < 2:
+        n = len(await _get_salary_sheets())
+        await message.answer(f"Таблиц «Зарплата персонала» подключено: {n}.\n\nДобавить:\n"
+            "/setsalary <ссылка на «Зарплата персонала»>\n\n"
+            "Бот возьмёт из неё РАСХОД по дням (колонка «расход»), месяц определит по заголовку вкладки.\n"
+            "Выручка и пациенты при этом берутся из таблиц «день/ночь» (/setshift).\n"
+            "Доступ к таблице: «по ссылке: Читатель».")
+        return
+    url = _sheet_csv_url(parts[1].strip())
+    if not url:
+        await message.answer("Не похоже на ссылку Google-таблицы.")
+        return
+    sheets = await _get_salary_sheets()
+    if url not in sheets:
+        sheets.append(url)
+    await set_setting("salary_sheets", json.dumps(sheets))
+    await message.answer(f"✅ Таблица зарплаты добавлена (всего: {len(sheets)}). Читаю расход...")
+    n, err = await _biz_sync_from_sheet()
+    await message.answer((f"⚠️ {err}\n" if err else "") + f"✅ Готово. Смотри /biz (расход подтянется в отчёт).")
 
 @router.message(Command("setsheet"))
 async def setsheet_cmd(message: Message):
@@ -4772,8 +4917,10 @@ async def sheets_cmd(message: Message):
     sheets = await _get_sheets()
     if not sheets:
         await message.answer("Таблицы не подключены. Добавь: /setsheet <ссылка>"); return
-    lines = "\n".join(f"{i}. …{s[-35:]}" for i, s in enumerate(sheets, 1))
-    await message.answer(f"📊 Подключено таблиц: {len(sheets)}\n{lines}\n\nОчистить все: /sheetsclear")
+    lines = "\n".join(f"{i}. …{s[-35:]}" for i, s in enumerate(sheets, 1)) or "—"
+    salary = await _get_salary_sheets()
+    sal_lines = ("\n\n💼 Зарплата персонала (расход):\n" + "\n".join(f"…{s[-35:]}" for s in salary)) if salary else ""
+    await message.answer(f"📊 Таблицы /biz: {len(sheets)}\n{lines}{sal_lines}\n\nУдалить одну: /delsheet N · Очистить все: /sheetsclear")
 
 @router.message(Command("sheetsclear"))
 async def sheetsclear_cmd(message: Message):
@@ -4781,9 +4928,11 @@ async def sheetsclear_cmd(message: Message):
         return
     await set_setting("biz_sheets", "[]")
     await set_setting("biz_sheet_csv", "")
+    await set_setting("salary_sheets", "[]")
     await _ensure_biz_table()
     await db_run("DELETE FROM biz_finance WHERE src='sheet'")
-    await message.answer("🗑 Все таблицы отключены, данные из них убраны (ручные отчёты остались).")
+    await db_run("DELETE FROM biz_finance WHERE src='salary'")
+    await message.answer("🗑 Все таблицы /biz и «Зарплата персонала» отключены (ручные отчёты остались).")
 
 @router.message(Command("bizsync"))
 async def bizsync_cmd(message: Message):
@@ -4798,7 +4947,7 @@ def start_biz_sync(bot):
         await asyncio.sleep(120)
         while True:
             try:
-                if await _get_sheets():
+                if await _get_sheets() or await _get_salary_sheets():
                     await _biz_sync_from_sheet()
                 if await _get_visit_sheets():
                     await _sync_visits()
@@ -4842,16 +4991,10 @@ async def _get_shift_sheets():
 
 async def _fetch_shift_rows(csv_url):
     # Парсер таблиц "ЗП день/ночь": блок на каждый день, сверху "врач - X", ниже строки пациентов.
-    import httpx, csv as _csv, io
-    try:
-        async with httpx.AsyncClient(timeout=25, follow_redirects=True) as c:
-            r = await c.get(csv_url)
-            r.raise_for_status()
-        text = r.text
-    except Exception as e:
-        return None, f"не открылась ({str(e)[:80]})"
-    if "<html" in text[:500].lower():
-        return None, "закрыта (нужен доступ «по ссылке: просмотр»)"
+    import csv as _csv, io
+    text, err = await _fetch_csv(csv_url)
+    if err:
+        return None, err
     cur_doc, cur_date = "", ""
     out = []
     for row in _csv.reader(io.StringIO(text)):
@@ -4887,16 +5030,10 @@ async def _fetch_shift_rows(csv_url):
     return out, None
 
 async def _fetch_visit_rows(csv_url):
-    import httpx, csv as _csv, io
-    try:
-        async with httpx.AsyncClient(timeout=25, follow_redirects=True) as c:
-            r = await c.get(csv_url)
-            r.raise_for_status()
-        text = r.text
-    except Exception as e:
-        return None, f"не открылась ({str(e)[:80]})"
-    if "<html" in text[:500].lower():
-        return None, "закрыта (нужен доступ «по ссылке: просмотр»)"
+    import csv as _csv, io
+    text, err = await _fetch_csv(csv_url)
+    if err:
+        return None, err
     out = []
     for row in _csv.reader(io.StringIO(text)):
         if len(row) < 6:
@@ -5029,8 +5166,13 @@ async def visits_cmd(message: Message):
     shift = await _get_shift_sheets()
     if not clean and not shift:
         await message.answer("Не подключены. /setvisits (простая вкладка) или /setshift (день/ночь)."); return
-    txt = f"📋 Простых вкладок «Приёмы»: {len(clean)}\n📅 Таблиц смен (день/ночь): {len(shift)}"
-    await message.answer(txt + "\n\nОчистить все: /visitsclear")
+    txt = ""
+    if shift:
+        txt += "📅 Смены (день/ночь):\n" + "\n".join(f"{i}. …{s[-30:]}" for i, s in enumerate(shift, 1)) + "\nУдалить: /delshift N\n\n"
+    if clean:
+        txt += "📋 Вкладки «Приёмы»:\n" + "\n".join(f"{i}. …{s[-30:]}" for i, s in enumerate(clean, 1)) + "\nУдалить: /delvisits N\n\n"
+    txt += "Очистить всё: /visitsclear"
+    await message.answer(txt)
 
 @router.message(Command("visitsclear"))
 async def visitsclear_cmd(message: Message):
@@ -5140,6 +5282,53 @@ async def fix_cmd(message: Message):
     await _send_block(message, "🛠 *Инженер — диагноз и исправление:*", reply)
     await message.answer("ℹ️ Чтобы применить правку к самому боту — нужно обновить файл бота и перезапустить. "
                          "Бот не меняет свой код сам — это защита от поломки.")
+
+
+@router.message(Command("delshift"))
+async def delshift_cmd(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    sheets = await _get_shift_sheets()
+    parts = (message.text or "").split()
+    idx = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0
+    if not (1 <= idx <= len(sheets)):
+        lst = "\n".join(f"{i}. …{s[-30:]}" for i, s in enumerate(sheets, 1)) or "пусто"
+        await message.answer(f"Укажи номер: /delshift N\n\nТаблицы смен:\n{lst}"); return
+    sheets.pop(idx - 1)
+    await set_setting("shift_sheets", json.dumps(sheets))
+    n, err = await _sync_visits()
+    await message.answer(f"🗑 Таблица смены №{idx} удалена. Осталось: {len(sheets)}. Приёмов в базе: {n}.")
+
+@router.message(Command("delvisits"))
+async def delvisits_cmd(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    sheets = await _get_visit_sheets()
+    parts = (message.text or "").split()
+    idx = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0
+    if not (1 <= idx <= len(sheets)):
+        lst = "\n".join(f"{i}. …{s[-30:]}" for i, s in enumerate(sheets, 1)) or "пусто"
+        await message.answer(f"Укажи номер: /delvisits N\n\nВкладки «Приёмы»:\n{lst}"); return
+    sheets.pop(idx - 1)
+    await set_setting("visit_sheets", json.dumps(sheets))
+    n, err = await _sync_visits()
+    await message.answer(f"🗑 Вкладка «Приёмы» №{idx} удалена. Осталось: {len(sheets)}. Приёмов в базе: {n}.")
+
+@router.message(Command("delsheet"))
+async def delsheet_cmd(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    sheets = await _get_sheets()
+    parts = (message.text or "").split()
+    idx = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0
+    if not (1 <= idx <= len(sheets)):
+        lst = "\n".join(f"{i}. …{s[-30:]}" for i, s in enumerate(sheets, 1)) or "пусто"
+        await message.answer(f"Укажи номер: /delsheet N\n\nТаблицы /biz:\n{lst}"); return
+    sheets.pop(idx - 1)
+    await set_setting("biz_sheets", json.dumps(sheets))
+    await set_setting("biz_sheet_csv", "")
+    n, err = await _biz_sync_from_sheet()
+    await message.answer(f"🗑 Таблица №{idx} удалена. Осталось: {len(sheets)}. Строк в базе: {n}.")
 
 
 async def main():

@@ -5239,7 +5239,7 @@ async def _sync_visits():
                 all_rows.append((day, doctor, service, kind, ref_from, revenue, percent, "", "clean", ""))
     # Смены: собрать все приёмы, затем по ФИО определить первичный/повторный и перенаправление
     shift_rows = []
-    for i, url in enumerate(shift, 1):
+    for i, (url, _lbl) in enumerate(await _expand_shift_csv(shift), 1):
         rows, err = await _fetch_shift_rows(url)
         if err:
             errors.append(f"смена {i}: {err}")
@@ -5293,6 +5293,61 @@ async def setvisits_cmd(message: Message):
     n, err = await _sync_visits()
     await message.answer((f"⚠️ {err}\n" if err else "") + f"✅ Загружено визитов: {n}. Отчёт: /doctors")
 
+async def _list_sheet_tabs(sid):
+    """Все вкладки таблицы [(gid, name)] без авторизации (через htmlview)."""
+    import httpx
+    text = ""
+    for u in (f"https://docs.google.com/spreadsheets/d/{sid}/htmlview",
+              f"https://docs.google.com/spreadsheets/d/{sid}/pubhtml"):
+        try:
+            async with httpx.AsyncClient(timeout=30, follow_redirects=True) as c:
+                r = await c.get(u, headers={"User-Agent": "Mozilla/5.0"})
+                r.raise_for_status()
+                text = r.text
+            if text:
+                break
+        except Exception:
+            continue
+    if not text:
+        return []
+    pairs = []
+    for m in re.finditer(r'#gid=(\d+)"[^>]*>\s*([^<]{1,60}?)\s*<', text):
+        pairs.append((m.group(1), m.group(2)))
+    if not pairs:
+        for m in re.finditer(r'"name"\s*:\s*"([^"]{1,60})"[^}]{0,150}?"gid"\s*:\s*"?(\d+)', text):
+            pairs.append((m.group(2), m.group(1)))
+    seen = {}
+    for g, n in pairs:
+        n = re.sub(r"\s+", " ", (n or "")).strip()
+        if g not in seen and n and "untitled" not in n.lower():
+            seen[g] = n
+    return list(seen.items())
+
+async def _expand_shift_csv(shift):
+    """По уже добавленным ссылкам вернуть [(csv_url, label)] ВСЕХ вкладок их таблиц."""
+    out, seen_sid, seen_u = [], set(), set()
+    for url in shift:
+        sm = re.search(r"/spreadsheets/d/([a-zA-Z0-9_-]+)", url)
+        if not sm:
+            if url not in seen_u:
+                seen_u.add(url); out.append((url, "ссылка"))
+            continue
+        sid = sm.group(1)
+        if sid in seen_sid:
+            continue
+        seen_sid.add(sid)
+        tabs = await _list_sheet_tabs(sid)
+        if tabs:
+            for gid, name in tabs:
+                u = f"https://docs.google.com/spreadsheets/d/{sid}/export?format=csv&gid={gid}"
+                if u not in seen_u:
+                    seen_u.add(u); out.append((u, f"{name} (gid={gid})"))
+        else:
+            for u2 in shift:
+                if sid in u2 and u2 not in seen_u:
+                    seen_u.add(u2); out.append((u2, "вкладка по ссылке"))
+    return out
+
 @router.message(Command("setshift"))
 async def setshift_cmd(message: Message):
     if message.from_user.id != ADMIN_ID:
@@ -5306,17 +5361,34 @@ async def setshift_cmd(message: Message):
             "Бот возьмёт по каждому врачу смены выручку, число приёмов и виды оплаты.\n"
             "Доступ к таблице: «по ссылке: просмотр». Ссылка ведёт на нужный месяц (вкладку).")
         return
-    url = _sheet_csv_url(parts[1].strip())
-    if not url:
+    raw_link = parts[1].strip()
+    mm = re.search(r"/spreadsheets/d/([a-zA-Z0-9_-]+)", raw_link)
+    if not mm:
         await message.answer("Не похоже на ссылку Google-таблицы.")
         return
+    sid = mm.group(1)
     sheets = await _get_shift_sheets()
-    if url not in sheets:
-        sheets.append(url)
+    await message.answer("🔎 Ищу все вкладки таблицы…")
+    tabs = await _list_sheet_tabs(sid)
+    added = []
+    if len(tabs) >= 2:
+        for gid, name in tabs:
+            u = f"https://docs.google.com/spreadsheets/d/{sid}/export?format=csv&gid={gid}"
+            if u not in sheets:
+                sheets.append(u)
+                added.append(f"{name} (gid={gid})")
+        head = f"✅ Нашёл вкладок: {len(tabs)}. Добавил новые:\n• " + ("\n• ".join(added) if added else "(все уже были)")
+    else:
+        u = _sheet_csv_url(raw_link)
+        if u and u not in sheets:
+            sheets.append(u)
+            added.append("вкладка по ссылке")
+        head = ("✅ Добавил вкладку по ссылке." if added else "Эта вкладка уже была.") + \
+               "\n(Список всех вкладок автоматически получить не вышло — добавляй каждую вкладку ссылкой с #gid из адресной строки.)"
     await set_setting("shift_sheets", json.dumps(sheets))
-    await message.answer(f"✅ Таблица смены добавлена (всего: {len(sheets)}). Читаю...")
+    await message.answer(head + f"\n\nВсего вкладок: {len(sheets)}. Читаю…")
     n, err = await _sync_visits()
-    await message.answer((f"⚠️ {err}\n" if err else "") + f"✅ Загружено приёмов: {n}. Отчёт: /doctors")
+    await message.answer((f"⚠️ {err}\n" if err else "") + f"✅ Загружено приёмов: {n}.\nОтчёт: /doctors или кнопка «📊 Доктора». Проверка: /diag")
 
 @router.message(Command("visits"))
 async def visits_cmd(message: Message):
@@ -5425,22 +5497,27 @@ async def alias_cmd(message: Message):
 async def diag_cmd(message: Message):
     if message.from_user.id != ADMIN_ID:
         return
-    await message.answer("🔧 Проверяю таблицы…")
+    await message.answer("🔧 Проверяю таблицы по очереди…")
     shift = await _get_shift_sheets()
     clean = await _get_visit_sheets()
-    cnt, err = await _sync_visits()
-    await _ensure_visits_table()
+    lines = [f"🔧 Диагностика\n\nВкладок смен (/setshift): {len(shift)}\nВкладок приёмов (/setvisits): {len(clean)}"]
+    expanded = await _expand_shift_csv(shift)
+    lines.append(f"Найдено вкладок в этих таблицах: {len(expanded)}")
+    for i, (url, lbl) in enumerate(expanded, 1):
+        rows, err = await _fetch_shift_rows(url)
+        if err:
+            lines.append(f"\n{i}) {lbl} — ⚠️ {err}")
+        else:
+            docs = sorted(set(r[1] for r in rows))
+            lines.append(f"\n{i}) {lbl} — строк: {len(rows)}\n    врачи: {', '.join(docs[:10]) or '— не найдено'}")
+    cnt, serr = await _sync_visits()
     total = await db_get("SELECT COUNT(*) c, MIN(day) a, MAX(day) b FROM visits")
-    docs = await db_all("SELECT doctor, COUNT(*) c, SUM(revenue) s FROM visits GROUP BY doctor ORDER BY c DESC LIMIT 20")
-    msg = f"🔧 *Диагностика*\n\nВкладок смен (/setshift): {len(shift)}\nВкладок приёмов (/setvisits): {len(clean)}\nЗагружено строк сейчас: {cnt if cnt is not None else 0}\n"
-    if err:
-        msg += f"\n⚠️ Ошибки: {err}\n"
     if total and total["c"]:
-        msg += f"\nВсего в базе: {total['c']} приёмов\nДиапазон дат: {total['a']} — {total['b']}\n\nВрачи (как прочитались):\n"
-        msg += "\n".join(f"• {r['doctor']}: {r['c']} приёмов, {_money(r['s'] or 0)}" for r in docs)
+        lines.append(f"\n\nИтого в базе: {total['c']} приёмов, даты {total['a']} — {total['b']}")
     else:
-        msg += "\n❗️База пустая — парсер не нашёл ни одной строки пациента.\nПришли мне 3-4 строки из таблицы (заголовок врача + пару пациентов), подгоню парсер."
-    await message.answer(msg[:3900], parse_mode="Markdown")
+        lines.append("\n\nБаза пустая — ни одной строки пациента не прочиталось.")
+    lines.append("\n\nℹ️ Бот сам читает все вкладки по уже добавленным ссылкам. Если какой-то вкладки нет в списке выше или врач не распознан — пришли мне пару строк из неё.")
+    await message.answer("\n".join(lines)[:3900])
 
 @router.message(Command("doctors"))
 async def doctors_cmd(message: Message):

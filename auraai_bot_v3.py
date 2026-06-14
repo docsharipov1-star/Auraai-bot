@@ -5111,17 +5111,12 @@ async def _get_shift_sheets():
     except Exception:
         return []
 
-async def _fetch_shift_rows(csv_url):
-    # Парсер "ЗП день/ночь": блок на каждый день, сверху "врач - X" (или просто имя врача), ниже строки пациентов.
-    import csv as _csv, io
-    text, err = await _fetch_csv(csv_url)
-    if err:
-        return None, err
-    aliases = await _get_aliases()
-    name_keys = [k.lower() for _canon, keys in aliases for k in keys]
+def _parse_shift_rows(rows, name_keys):
+    """Разбор строк одной вкладки (день/ночь, блоками) -> [(date,doctor,service,amount,pay,patient)]."""
+    import datetime as _dt
     cur_doc, cur_date = "", ""
     out = []
-    for row in _csv.reader(io.StringIO(text)):
+    for row in rows:
         cells = [(c or "").strip() for c in row]
         if not any(cells):
             continue
@@ -5130,18 +5125,18 @@ async def _fetch_shift_rows(csv_url):
         m = re.search(r"(\d{1,2})\s*[.\-/]\s*(\d{1,2})\s*[.\-/]\s*(\d{4})", joined)
         if m:
             try:
-                cur_date = datetime.date(int(m.group(3)), int(m.group(2)), int(m.group(1))).isoformat()
+                cur_date = _dt.date(int(m.group(3)), int(m.group(2)), int(m.group(1))).isoformat()
             except Exception:
                 pass
         is_patient = bool(cells) and bool(re.fullmatch(r"\d{1,3}", cells[0]))
-        # 1) явный заголовок врача
-        if (("врач" in low) or ("доктор" in low)) and not is_patient:
-            dm = re.search(r"(?:врач|доктор)\s*[-–—:]*\s*([^,\n]+)", joined, re.IGNORECASE)
+        # 1) явный заголовок врача (но не строка аренды)
+        if (("врач" in low) or ("доктор" in low)) and not is_patient and "аренд" not in low:
+            dm = re.search(r"(?:врач|доктор)\s*[-\u2013\u2014:.]*\s*([^,\n]+)", joined, re.IGNORECASE)
             if dm and dm.group(1).strip():
                 cur_doc = dm.group(1).strip()[:40]
             continue
-        # 2) заголовок врача без слова "врач": короткая строка, ячейка совпадает с именем из справочника
-        if not is_patient and not re.search(r"итог|услуг|оплат|анестез|вид опл|фио|дата|смена|ночь|день", low):
+        # 2) заголовок врача без слова "врач": короткая строка с именем из справочника
+        if not is_patient and not re.search(r"итог|услуг|оплат|анестез|вид опл|фио|дата|смена|ночь|день|аренд|наличн|перевод|терминал", low):
             non_empty = [c for c in cells if c]
             if 1 <= len(non_empty) <= 3:
                 hit = ""
@@ -5168,8 +5163,164 @@ async def _fetch_shift_rows(csv_url):
                     pay = c.lower()
                     break
             if cur_doc and (amount > 0 or service):
-                out.append((cur_date or datetime.date.today().isoformat(), cur_doc, service, amount, pay, _patient_name(service)))
-    return out, None
+                out.append((cur_date or _dt.date.today().isoformat(), cur_doc, service, amount, pay, _patient_name(service)))
+    return out
+
+
+async def _fetch_shift_rows(csv_url):
+    import csv as _csv, io
+    text, err = await _fetch_csv(csv_url)
+    if err:
+        return None, err
+    aliases = await _get_aliases()
+    name_keys = [k.lower() for _canon, keys in aliases for k in keys]
+    rows = list(_csv.reader(io.StringIO(text)))
+    return _parse_shift_rows(rows, name_keys), None
+
+
+async def _fetch_xlsx(sid):
+    """Скачать всю книгу Google-таблицы как xlsx (работает при доступе «по ссылке»)."""
+    import httpx
+    url = f"https://docs.google.com/spreadsheets/d/{sid}/export?format=xlsx"
+    try:
+        async with httpx.AsyncClient(timeout=60, follow_redirects=True) as c:
+            r = await c.get(url, headers={"User-Agent": "Mozilla/5.0"})
+            r.raise_for_status()
+            data = r.content
+        if data[:2] == b"PK":
+            return data
+    except Exception:
+        return None
+    return None
+
+
+def _parse_xlsx(data):
+    """Разобрать xlsx-книгу -> [(имя_листа, rows)]; только стандартная библиотека."""
+    import zipfile, io as _io
+    from xml.etree import ElementTree as ET
+    M = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
+    R = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
+    try:
+        z = zipfile.ZipFile(_io.BytesIO(data))
+        names = z.namelist()
+    except Exception:
+        return None
+    shared = []
+    if "xl/sharedStrings.xml" in names:
+        try:
+            root = ET.fromstring(z.read("xl/sharedStrings.xml"))
+            for si in root.findall(M + "si"):
+                shared.append("".join(t.text or "" for t in si.iter(M + "t")))
+        except Exception:
+            shared = []
+    try:
+        wb = ET.fromstring(z.read("xl/workbook.xml"))
+    except Exception:
+        return None
+    sh_parent = wb.find(M + "sheets")
+    if sh_parent is None:
+        return None
+    sheets = [(s.get("name") or "", s.get(R + "id")) for s in sh_parent.findall(M + "sheet")]
+    rid_target = {}
+    if "xl/_rels/workbook.xml.rels" in names:
+        try:
+            rels = ET.fromstring(z.read("xl/_rels/workbook.xml.rels"))
+            for rel in rels:
+                rid_target[rel.get("Id")] = rel.get("Target")
+        except Exception:
+            pass
+
+    def col_idx(ref):
+        i = 0
+        for ch in ref:
+            if ch.isalpha():
+                i = i * 26 + (ord(ch.upper()) - 64)
+            else:
+                break
+        return i - 1 if i > 0 else 0
+
+    out = []
+    for name, rid in sheets:
+        target = rid_target.get(rid, "")
+        if not target:
+            continue
+        t = target.replace("\\", "/").lstrip("/")
+        cand = []
+        if t.startswith("xl/"):
+            cand.append(t)
+        cand.append("xl/" + t)
+        cand.append("xl/" + t.split("xl/")[-1])
+        path = next((p for p in cand if p in names), None)
+        if not path:
+            base = t.split("/")[-1]
+            path = next((p for p in names if p.endswith("worksheets/" + base)), None)
+        if not path:
+            continue
+        try:
+            sx = ET.fromstring(z.read(path))
+        except Exception:
+            continue
+        sd = sx.find(M + "sheetData")
+        rows = []
+        if sd is not None:
+            for row in sd.findall(M + "row"):
+                tmp = {}
+                maxc = -1
+                for c in row.findall(M + "c"):
+                    ci = col_idx(c.get("r") or "")
+                    tp = c.get("t")
+                    val = ""
+                    if tp == "s":
+                        v = c.find(M + "v")
+                        if v is not None and v.text is not None:
+                            try:
+                                val = shared[int(v.text)]
+                            except Exception:
+                                val = ""
+                    elif tp == "inlineStr":
+                        is_ = c.find(M + "is")
+                        if is_ is not None:
+                            val = "".join(tt.text or "" for tt in is_.iter(M + "t"))
+                    else:
+                        v = c.find(M + "v")
+                        if v is not None:
+                            val = v.text or ""
+                    tmp[ci] = val
+                    if ci > maxc:
+                        maxc = ci
+                rows.append([tmp.get(i, "") for i in range(maxc + 1)])
+        out.append((name, rows))
+    return out
+
+
+async def _iter_shift_sheets(shift):
+    """Все вкладки [(label, rows)]: качаем книгу xlsx целиком, иначе fallback на CSV по ссылке."""
+    import csv as _csv, io
+    out, seen_sid = [], set()
+    for url in shift:
+        sm = re.search(r"/spreadsheets/d/([a-zA-Z0-9_-]+)", url)
+        if not sm:
+            text, err = await _fetch_csv(url)
+            if not err and text:
+                out.append(("ссылка", list(_csv.reader(io.StringIO(text)))))
+            continue
+        sid = sm.group(1)
+        if sid in seen_sid:
+            continue
+        seen_sid.add(sid)
+        data = await _fetch_xlsx(sid)
+        parsed = _parse_xlsx(data) if data else None
+        if parsed:
+            for nm, rows in parsed:
+                out.append((nm, rows))
+        else:
+            for u2 in shift:
+                if sid in u2:
+                    text, err = await _fetch_csv(u2)
+                    if not err and text:
+                        out.append(("вкладка по ссылке", list(_csv.reader(io.StringIO(text)))))
+    return out
+
 
 async def _fetch_visit_rows(csv_url):
     import csv as _csv, io
@@ -5239,13 +5390,14 @@ async def _sync_visits():
                 all_rows.append((day, doctor, service, kind, ref_from, revenue, percent, "", "clean", ""))
     # Смены: собрать все приёмы, затем по ФИО определить первичный/повторный и перенаправление
     shift_rows = []
-    for i, (url, _lbl) in enumerate(await _expand_shift_csv(shift), 1):
-        rows, err = await _fetch_shift_rows(url)
-        if err:
-            errors.append(f"смена {i}: {err}")
-        elif rows:
-            for (day, doctor, service, revenue, pay, patient) in rows:
-                shift_rows.append([day, doctor, service, revenue, pay, _patient_key(service), patient])
+    _akeys = [k.lower() for _c, _ks in (await _get_aliases()) for k in _ks]
+    for i, (lbl, rows) in enumerate(await _iter_shift_sheets(shift), 1):
+        try:
+            parsed = _parse_shift_rows(rows, _akeys)
+        except Exception as e:
+            errors.append(f"вкладка {lbl}: {str(e)[:50]}"); continue
+        for (day, doctor, service, revenue, pay, patient) in parsed:
+            shift_rows.append([day, doctor, service, revenue, pay, _patient_key(service), patient])
     shift_rows.sort(key=lambda r: r[0])  # по дате: кто раньше — тот первичный
     first_doctor = {}
     seen_visit = set()
@@ -5501,15 +5653,16 @@ async def diag_cmd(message: Message):
     shift = await _get_shift_sheets()
     clean = await _get_visit_sheets()
     lines = [f"🔧 Диагностика\n\nВкладок смен (/setshift): {len(shift)}\nВкладок приёмов (/setvisits): {len(clean)}"]
-    expanded = await _expand_shift_csv(shift)
+    expanded = await _iter_shift_sheets(shift)
     lines.append(f"Найдено вкладок в этих таблицах: {len(expanded)}")
-    for i, (url, lbl) in enumerate(expanded, 1):
-        rows, err = await _fetch_shift_rows(url)
-        if err:
-            lines.append(f"\n{i}) {lbl} — ⚠️ {err}")
-        else:
-            docs = sorted(set(r[1] for r in rows))
-            lines.append(f"\n{i}) {lbl} — строк: {len(rows)}\n    врачи: {', '.join(docs[:10]) or '— не найдено'}")
+    _akeys = [k.lower() for _c, _ks in (await _get_aliases()) for k in _ks]
+    for i, (lbl, rows) in enumerate(expanded, 1):
+        try:
+            parsed = _parse_shift_rows(rows, _akeys)
+        except Exception as e:
+            lines.append(f"\n{i}) {lbl} — ⚠️ {str(e)[:40]}"); continue
+        docs = sorted(set(r[1] for r in parsed))
+        lines.append(f"\n{i}) {lbl} — строк: {len(parsed)}\n    врачи: {', '.join(docs[:12]) or '— не найдено'}")
     cnt, serr = await _sync_visits()
     total = await db_get("SELECT COUNT(*) c, MIN(day) a, MAX(day) b FROM visits")
     if total and total["c"]:

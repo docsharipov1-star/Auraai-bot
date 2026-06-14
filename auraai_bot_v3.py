@@ -5293,8 +5293,57 @@ def _parse_xlsx(data):
     return out
 
 
+_RU_MONTHS = ["январь", "февраль", "март", "апрель", "май", "июнь",
+              "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь"]
+
+
+def _recent_month_names(n=14):
+    """Названия вкладок-месяцев: текущий и предыдущие n месяцев ('июнь 2026', 'Май 2026' ...)."""
+    import datetime as _dt
+    today = _dt.date.today()
+    y, mo = today.year, today.month
+    out = []
+    for _ in range(n):
+        m = _RU_MONTHS[mo - 1]
+        out.append((m, y))
+        mo -= 1
+        if mo == 0:
+            mo = 12
+            y -= 1
+    return out
+
+
+async def _gviz_sheet(sid, name):
+    """Прочитать вкладку по её НАЗВАНИЮ (без gid) через gviz -> rows или None."""
+    import httpx, csv as _csv, io, urllib.parse
+    url = (f"https://docs.google.com/spreadsheets/d/{sid}/gviz/tq"
+           f"?tqx=out:csv&sheet={urllib.parse.quote(name)}")
+    try:
+        async with httpx.AsyncClient(timeout=30, follow_redirects=True) as c:
+            r = await c.get(url, headers={"User-Agent": "Mozilla/5.0"})
+            if r.status_code != 200:
+                return None
+            text = r.text
+    except Exception:
+        return None
+    low = text[:200].lower()
+    if ("google.visualization" in low) or text.strip().startswith("/*") or ("does not exist" in low):
+        return None  # такой вкладки нет
+    rows = list(_csv.reader(io.StringIO(text)))
+    if not any(any((c or "").strip() for c in row) for row in rows):
+        return None
+    return rows
+
+
+def _sheet_has_data(rows):
+    return any(any((c or "").strip() for c in row) for row in rows)
+
+
 async def _iter_shift_sheets(shift):
-    """Все вкладки [(label, rows)]: качаем книгу xlsx целиком, иначе fallback на CSV по ссылке."""
+    """Все вкладки [(label, rows)] по уже добавленным ссылкам.
+    Три уровня надёжности: 1) вся книга xlsx; 2) свежие месяцы по названию (gviz);
+    3) старые ссылки как CSV. Используется первый уровень, который реально дал данные —
+    повторного чтения одной вкладки нет (без двойного счёта)."""
     import csv as _csv, io
     out, seen_sid = [], set()
     for url in shift:
@@ -5308,17 +5357,36 @@ async def _iter_shift_sheets(shift):
         if sid in seen_sid:
             continue
         seen_sid.add(sid)
+        sheets = {}
+        # 1) вся книга целиком
         data = await _fetch_xlsx(sid)
         parsed = _parse_xlsx(data) if data else None
         if parsed:
             for nm, rows in parsed:
-                out.append((nm, rows))
-        else:
+                if _sheet_has_data(rows):
+                    sheets[nm or f"лист {len(sheets) + 1}"] = rows
+        # 2) если книга не отдалась — добираем свежие месяцы по названию
+        if not sheets:
+            for m, y in _recent_month_names(14):
+                got = None
+                for nm in (f"{m.capitalize()} {y}", f"{m} {y}", f"{m.upper()} {y}"):
+                    if nm in sheets:
+                        got = True
+                        break
+                    rows = await _gviz_sheet(sid, nm)
+                    if rows:
+                        sheets[f"{m.capitalize()} {y}"] = rows
+                        got = True
+                        break
+        # 3) совсем ничего — читаем старые ссылки как CSV
+        if not sheets:
             for u2 in shift:
                 if sid in u2:
                     text, err = await _fetch_csv(u2)
                     if not err and text:
-                        out.append(("вкладка по ссылке", list(_csv.reader(io.StringIO(text)))))
+                        sheets[f"вкладка по ссылке {len(sheets) + 1}"] = list(_csv.reader(io.StringIO(text)))
+        for nm, rows in sheets.items():
+            out.append((nm, rows))
     return out
 
 

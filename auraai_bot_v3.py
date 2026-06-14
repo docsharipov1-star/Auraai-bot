@@ -5339,11 +5339,39 @@ def _sheet_has_data(rows):
     return any(any((c or "").strip() for c in row) for row in rows)
 
 
+def _rows_have_text(parsed):
+    """Есть ли в распарсенном xlsx кириллический текст (а не только числа)."""
+    n = 0
+    for _nm, rows in parsed:
+        for r in rows:
+            for c in r:
+                if c and re.search(r"[А-Яа-яЁё]", c):
+                    n += 1
+                    if n >= 3:
+                        return True
+    return False
+
+
+def _xlsx_looks_parseable(parsed):
+    """xlsx годен, только если в нём есть строки пациентов: номер в кол.A + текст рядом."""
+    pat = 0
+    for _nm, rows in parsed:
+        for r in rows:
+            if r and re.fullmatch(r"\d{1,3}", (r[0] or "").strip()) and len(r) >= 2 \
+               and any(re.search(r"[А-Яа-яЁё]", (c or "")) for c in r[1:]):
+                pat += 1
+                if pat >= 2:
+                    return True
+    return False
+
+
 async def _iter_shift_sheets(shift):
     """Все вкладки [(label, rows)] по уже добавленным ссылкам.
-    Три уровня надёжности: 1) вся книга xlsx; 2) свежие месяцы по названию (gviz);
-    3) старые ссылки как CSV. Используется первый уровень, который реально дал данные —
-    повторного чтения одной вкладки нет (без двойного счёта)."""
+    Уровни надёжности (используется первый, реально давший данные — без двойного счёта):
+    1) вся книга xlsx, если из неё читается текст;
+    2) вкладки по их НАЗВАНИЯМ из книги через gviz-CSV (надёжное чтение текста);
+    3) свежие месяцы по названию (если имена неизвестны);
+    4) старые ссылки как CSV."""
     import csv as _csv, io
     out, seen_sid = [], set()
     for url in shift:
@@ -5358,27 +5386,38 @@ async def _iter_shift_sheets(shift):
             continue
         seen_sid.add(sid)
         sheets = {}
-        # 1) вся книга целиком
+        # скачиваем книгу: из неё точно берём СПИСОК вкладок, а если повезёт — и данные
         data = await _fetch_xlsx(sid)
         parsed = _parse_xlsx(data) if data else None
-        if parsed:
+        names_from_book = [nm for nm, _ in parsed] if parsed else []
+        # 1) если из xlsx реально читаются строки пациентов — берём данные из книги (быстро)
+        if parsed and _xlsx_looks_parseable(parsed):
             for nm, rows in parsed:
                 if _sheet_has_data(rows):
                     sheets[nm or f"лист {len(sheets) + 1}"] = rows
-        # 2) если книга не отдалась — добираем свежие месяцы по названию
+        # 2) текст не прочитался — читаем вкладки по их названиям через gviz-CSV
+        if not sheets:
+            names = names_from_book or [f"{m.capitalize()} {y}" for m, y in _recent_month_names(14)]
+            cnt = 0
+            for nm in names:
+                if cnt >= 18:
+                    break
+                low = (nm or "").lower()
+                if not nm or any(x in low for x in ("чек", "конверс", "итог", "шаблон")):
+                    continue
+                rows = await _gviz_sheet(sid, nm)
+                if rows:
+                    sheets[nm] = rows
+                    cnt += 1
+        # 3) имена неизвестны и gviz не дал — пробуем свежие месяцы по названию
         if not sheets:
             for m, y in _recent_month_names(14):
-                got = None
                 for nm in (f"{m.capitalize()} {y}", f"{m} {y}", f"{m.upper()} {y}"):
-                    if nm in sheets:
-                        got = True
-                        break
                     rows = await _gviz_sheet(sid, nm)
                     if rows:
                         sheets[f"{m.capitalize()} {y}"] = rows
-                        got = True
                         break
-        # 3) совсем ничего — читаем старые ссылки как CSV
+        # 4) совсем ничего — читаем старые ссылки как CSV
         if not sheets:
             for u2 in shift:
                 if sid in u2:

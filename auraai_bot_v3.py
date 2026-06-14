@@ -5390,14 +5390,20 @@ async def _sync_visits():
                 all_rows.append((day, doctor, service, kind, ref_from, revenue, percent, "", "clean", ""))
     # Смены: собрать все приёмы, затем по ФИО определить первичный/повторный и перенаправление
     shift_rows = []
+    tabs_info = []
     _akeys = [k.lower() for _c, _ks in (await _get_aliases()) for k in _ks]
     for i, (lbl, rows) in enumerate(await _iter_shift_sheets(shift), 1):
         try:
             parsed = _parse_shift_rows(rows, _akeys)
         except Exception as e:
-            errors.append(f"вкладка {lbl}: {str(e)[:50]}"); continue
+            errors.append(f"вкладка {lbl}: {str(e)[:50]}"); tabs_info.append((lbl, -1)); continue
+        tabs_info.append((lbl, len(parsed)))
         for (day, doctor, service, revenue, pay, patient) in parsed:
             shift_rows.append([day, doctor, service, revenue, pay, _patient_key(service), patient])
+    try:
+        await set_setting("shift_tabs", json.dumps(tabs_info, ensure_ascii=False))
+    except Exception:
+        pass
     shift_rows.sort(key=lambda r: r[0])  # по дате: кто раньше — тот первичный
     first_doctor = {}
     seen_visit = set()
@@ -5774,6 +5780,16 @@ async def doctors_cmd(message: Message):
     if flows:
         flows.sort(key=lambda x: -x[0])
         body += "\n\n🔁 Перенаправления (кто кого направил):\n" + "\n".join(f for _, f in flows)
+    # Список прочитанных вкладок — чтобы было видно, подтянулась ли дневная
+    try:
+        ti = json.loads(await get_setting("shift_tabs") or "[]")
+    except Exception:
+        ti = []
+    if ti:
+        head = "📂 Прочитано вкладок: " + str(len(ti)) + "\n" + "\n".join(
+            f"• {nm} — {('⚠️ ошибка' if cnt == -1 else str(cnt) + ' приёмов')}" for nm, cnt in ti)
+        head += "\n(Если вашей дневной вкладки тут нет — пришлите её отдельной ссылкой.)\n\n"
+        body = head + body
     await _send_block(message, f"📊 *Отчёт по врачам · {period_label}*", body)
 
 

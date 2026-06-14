@@ -5087,6 +5087,10 @@ async def _ensure_visits_table():
         id INTEGER PRIMARY KEY AUTOINCREMENT, day TEXT, doctor TEXT, service TEXT,
         kind TEXT, ref_from TEXT, revenue REAL DEFAULT 0, percent REAL DEFAULT 0,
         pay TEXT, src TEXT)""")
+    try:
+        await db_run("ALTER TABLE visits ADD COLUMN patient TEXT")
+    except Exception:
+        pass
     for ddl in ("pay TEXT", "src TEXT"):
         try:
             await db_run(f"ALTER TABLE visits ADD COLUMN {ddl}")
@@ -5108,16 +5112,21 @@ async def _get_shift_sheets():
         return []
 
 async def _fetch_shift_rows(csv_url):
-    # Парсер таблиц "ЗП день/ночь": блок на каждый день, сверху "врач - X", ниже строки пациентов.
+    # Парсер "ЗП день/ночь": блок на каждый день, сверху "врач - X" (или просто имя врача), ниже строки пациентов.
     import csv as _csv, io
     text, err = await _fetch_csv(csv_url)
     if err:
         return None, err
+    aliases = await _get_aliases()
+    name_keys = [k.lower() for _canon, keys in aliases for k in keys]
     cur_doc, cur_date = "", ""
     out = []
     for row in _csv.reader(io.StringIO(text)):
         cells = [(c or "").strip() for c in row]
-        joined = " ".join(cells)
+        if not any(cells):
+            continue
+        joined = " ".join(c for c in cells if c)
+        low = joined.lower()
         m = re.search(r"(\d{1,2})\s*[.\-/]\s*(\d{1,2})\s*[.\-/]\s*(\d{4})", joined)
         if m:
             try:
@@ -5125,11 +5134,25 @@ async def _fetch_shift_rows(csv_url):
             except Exception:
                 pass
         is_patient = bool(cells) and bool(re.fullmatch(r"\d{1,3}", cells[0]))
-        if ("врач" in joined.lower()) and not is_patient:
-            dm = re.search(r"врач\s*[-–—:]*\s*([^,\n]+)", joined, re.IGNORECASE)
+        # 1) явный заголовок врача
+        if (("врач" in low) or ("доктор" in low)) and not is_patient:
+            dm = re.search(r"(?:врач|доктор)\s*[-–—:]*\s*([^,\n]+)", joined, re.IGNORECASE)
             if dm and dm.group(1).strip():
                 cur_doc = dm.group(1).strip()[:40]
             continue
+        # 2) заголовок врача без слова "врач": короткая строка, ячейка совпадает с именем из справочника
+        if not is_patient and not re.search(r"итог|услуг|оплат|анестез|вид опл|фио|дата|смена|ночь|день", low):
+            non_empty = [c for c in cells if c]
+            if 1 <= len(non_empty) <= 3:
+                hit = ""
+                for c in non_empty:
+                    if any(k in c.lower() for k in name_keys):
+                        hit = c.strip()
+                        break
+                if hit:
+                    cur_doc = hit[:40]
+                    continue
+        # 3) строка пациента
         if is_patient:
             service = cells[1] if len(cells) > 1 else ""
             amount = 0.0
@@ -5140,11 +5163,12 @@ async def _fetch_shift_rows(csv_url):
                     break
             pay = ""
             for c in reversed(cells[2:]):
-                if c and (not c.replace(".", "").replace(",", "").isdigit()):
+                cc = c.replace(".", "").replace(",", "").replace(" ", "")
+                if c and not cc.isdigit():
                     pay = c.lower()
                     break
             if cur_doc and (amount > 0 or service):
-                out.append((cur_date or datetime.date.today().isoformat(), cur_doc, service, amount, pay))
+                out.append((cur_date or datetime.date.today().isoformat(), cur_doc, service, amount, pay, _patient_name(service)))
     return out, None
 
 async def _fetch_visit_rows(csv_url):
@@ -5170,6 +5194,24 @@ async def _fetch_visit_rows(csv_url):
         out.append((day, doctor, service, kind, ref_from, revenue, percent))
     return out, None
 
+def _patient_name(text):
+    """Достаёт ФИО пациента из ячейки «ФИО + услуга» — ведущие слова с заглавной буквы."""
+    t = (text or "").strip()
+    if not t:
+        return ""
+    name_words = []
+    for w in re.split(r"\s+", t):
+        if re.match(r"^[А-ЯЁA-Z][А-Яа-яЁёA-Za-z.\-]*$", w):
+            name_words.append(w.strip("."))
+            if len(name_words) >= 3:
+                break
+        else:
+            break
+    if name_words:
+        return " ".join(name_words)[:40]
+    return re.split(r"\s+", t)[0][:40]
+
+
 def _patient_key(text):
     """Достаёт из ячейки «ФИО + услуга» ключ пациента: фамилия + инициалы (для сопоставления)."""
     t = (text or "").strip()
@@ -5194,7 +5236,7 @@ async def _sync_visits():
             errors.append(f"приёмы {i}: {err}")
         else:
             for (day, doctor, service, kind, ref_from, revenue, percent) in rows:
-                all_rows.append((day, doctor, service, kind, ref_from, revenue, percent, "", "clean"))
+                all_rows.append((day, doctor, service, kind, ref_from, revenue, percent, "", "clean", ""))
     # Смены: собрать все приёмы, затем по ФИО определить первичный/повторный и перенаправление
     shift_rows = []
     for i, url in enumerate(shift, 1):
@@ -5202,12 +5244,12 @@ async def _sync_visits():
         if err:
             errors.append(f"смена {i}: {err}")
         elif rows:
-            for (day, doctor, service, revenue, pay) in rows:
-                shift_rows.append([day, doctor, service, revenue, pay, _patient_key(service)])
+            for (day, doctor, service, revenue, pay, patient) in rows:
+                shift_rows.append([day, doctor, service, revenue, pay, _patient_key(service), patient])
     shift_rows.sort(key=lambda r: r[0])  # по дате: кто раньше — тот первичный
     first_doctor = {}
     seen_visit = set()
-    for (day, doctor, service, revenue, pay, key) in shift_rows:
+    for (day, doctor, service, revenue, pay, key, patient) in shift_rows:
         kind, ref = "", ""
         if key:
             if key not in first_doctor:
@@ -5220,11 +5262,11 @@ async def _sync_visits():
                 seen_visit.add((key, day))
                 if doctor != first_doctor[key]:
                     ref = first_doctor[key]  # пациент перешёл от первого врача к этому
-        all_rows.append((day, doctor, service, kind, ref, revenue, 0, pay, "shift"))
+        all_rows.append((day, doctor, service, kind, ref, revenue, 0, pay, "shift", patient))
     await _ensure_visits_table()
     await db_run("DELETE FROM visits")
     for r in all_rows:
-        await db_run("INSERT INTO visits (day,doctor,service,kind,ref_from,revenue,percent,pay,src) VALUES (?,?,?,?,?,?,?,?,?)", r)
+        await db_run("INSERT INTO visits (day,doctor,service,kind,ref_from,revenue,percent,pay,src,patient) VALUES (?,?,?,?,?,?,?,?,?,?)", r)
     return len(all_rows), ("; ".join(errors) if errors else None)
 
 @router.message(Command("setvisits"))
@@ -5379,6 +5421,27 @@ async def alias_cmd(message: Message):
     await set_setting("doctor_aliases", json.dumps(al, ensure_ascii=False))
     await message.answer(f"✅ {canon} ← {', '.join(keys)}")
 
+@router.message(Command("diag"))
+async def diag_cmd(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    await message.answer("🔧 Проверяю таблицы…")
+    shift = await _get_shift_sheets()
+    clean = await _get_visit_sheets()
+    cnt, err = await _sync_visits()
+    await _ensure_visits_table()
+    total = await db_get("SELECT COUNT(*) c, MIN(day) a, MAX(day) b FROM visits")
+    docs = await db_all("SELECT doctor, COUNT(*) c, SUM(revenue) s FROM visits GROUP BY doctor ORDER BY c DESC LIMIT 20")
+    msg = f"🔧 *Диагностика*\n\nВкладок смен (/setshift): {len(shift)}\nВкладок приёмов (/setvisits): {len(clean)}\nЗагружено строк сейчас: {cnt if cnt is not None else 0}\n"
+    if err:
+        msg += f"\n⚠️ Ошибки: {err}\n"
+    if total and total["c"]:
+        msg += f"\nВсего в базе: {total['c']} приёмов\nДиапазон дат: {total['a']} — {total['b']}\n\nВрачи (как прочитались):\n"
+        msg += "\n".join(f"• {r['doctor']}: {r['c']} приёмов, {_money(r['s'] or 0)}" for r in docs)
+    else:
+        msg += "\n❗️База пустая — парсер не нашёл ни одной строки пациента.\nПришли мне 3-4 строки из таблицы (заголовок врача + пару пациентов), подгоню парсер."
+    await message.answer(msg[:3900], parse_mode="Markdown")
+
 @router.message(Command("doctors"))
 async def doctors_cmd(message: Message):
     if message.from_user.id != ADMIN_ID:
@@ -5391,17 +5454,30 @@ async def doctors_cmd(message: Message):
             days = int(parts[1])
         else:
             on_date = _norm_date(parts[1])
-    await _sync_visits()
+    synced, sync_err = await _sync_visits()
     await _ensure_visits_table()
     if on_date:
-        rows = await db_all("SELECT doctor,service,kind,ref_from,revenue,percent,pay,src FROM visits WHERE day = ?", (on_date,))
+        rows = await db_all("SELECT doctor,service,kind,ref_from,revenue,percent,pay,src,patient FROM visits WHERE day = ?", (on_date,))
         period_label = on_date
     else:
-        rows = await db_all("SELECT doctor,service,kind,ref_from,revenue,percent,pay,src FROM visits WHERE day >= date('now', ?)",
+        rows = await db_all("SELECT doctor,service,kind,ref_from,revenue,percent,pay,src,patient FROM visits WHERE day >= date('now', ?)",
                             (f"-{days - 1} day",))
         period_label = f"{days} дн."
     if not rows:
-        await message.answer("Нет данных по врачам за период.\nПодключи таблицу: /setshift (день/ночь) или /setvisits (простая вкладка)."); return
+        # за период пусто — возможно, данные за прошлые месяцы. Покажем всё, что есть.
+        allrows = await db_all("SELECT doctor,service,kind,ref_from,revenue,percent,pay,src,patient FROM visits")
+        if not allrows:
+            msg = "📊 По врачам пока нет данных.\n\n"
+            if sync_err:
+                msg += f"⚠️ Таблица: {sync_err}\n\n"
+            msg += ("Проверь:\n"
+                    "• таблица открыта «по ссылке: Читатель»\n"
+                    "• ссылка ведёт на нужную вкладку (день/ночь)\n"
+                    "• /visits — что подключено, /diag — диагностика")
+            await message.answer(msg); return
+        rng = await db_get("SELECT MIN(day) a, MAX(day) b FROM visits")
+        rows = allrows
+        period_label = f"все данные ({rng['a']} — {rng['b']})"
     aliases = await _get_aliases()
     pct_map = await _get_doctor_percents()
     docs = {}
@@ -5427,7 +5503,8 @@ async def doctors_cmd(message: Message):
             x["ref_in"] += 1
             x["ref_in_by"][rf] = x["ref_in_by"].get(rf, 0) + 1
             sent_to.setdefault(rf, {})
-            sent_to[rf][d] = sent_to[rf].get(d, 0) + 1
+            sent_to[rf].setdefault(d, [])
+            sent_to[rf][d].append((r["patient"] or "").strip() or "пациент")
         x["salary"] += rev * (r["percent"] or 0) / 100
         p = (r["pay"] or "").strip()
         if p:
@@ -5444,8 +5521,8 @@ async def doctors_cmd(message: Message):
             refin = "; ".join(f"от {k} {v}" for k, v in x["ref_in_by"].items())
             lines.append(f"Пришло по направлению: {x['ref_in']} ({refin})")
         if sent_to.get(d):
-            tot = sum(sent_to[d].values())
-            to_str = ", ".join(f"к {t} {n}" for t, n in sorted(sent_to[d].items(), key=lambda kv: -kv[1]))
+            tot = sum(len(v) for v in sent_to[d].values())
+            to_str = ", ".join(f"к {t} {len(v)}" for t, v in sorted(sent_to[d].items(), key=lambda kv: -len(kv[1])))
             lines.append(f"Направил к другим: {tot} ({to_str})")
         pct = pct_map.get(d)
         salary = x["rev"] * pct / 100 if pct else x["salary"]
@@ -5457,12 +5534,16 @@ async def doctors_cmd(message: Message):
         blocks.append(f"👨‍⚕️ {d}\n" + "\n".join(lines))
     flows = []
     for a, targets in sent_to.items():
-        for b, n in targets.items():
-            flows.append((n, f"от {a} → к {b}: {n}"))
+        for b, plist in targets.items():
+            names = ", ".join(p for p in plist if p and p != "пациент")
+            label = f"от {a} → к {b}: {len(plist)}"
+            if names:
+                label += f" — {names}"
+            flows.append((len(plist), label))
     body = "\n\n".join(blocks)
     if flows:
         flows.sort(key=lambda x: -x[0])
-        body += "\n\n🔁 Перенаправления (от кого → кому):\n" + "\n".join(f for _, f in flows)
+        body += "\n\n🔁 Перенаправления (кто кого направил):\n" + "\n".join(f for _, f in flows)
     await _send_block(message, f"📊 *Отчёт по врачам · {period_label}*", body)
 
 

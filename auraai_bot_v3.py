@@ -4592,7 +4592,7 @@ def biz_kb():
     b = ReplyKeyboardBuilder()
     b.row(KeyboardButton(text="📥 Внести отчёт за сегодня"))
     b.row(KeyboardButton(text="📊 Сегодня"), KeyboardButton(text="📈 7 дней"), KeyboardButton(text="🗓 30 дней"))
-    b.row(KeyboardButton(text="📅 Выбрать дату"))
+    b.row(KeyboardButton(text="📅 По месяцам"), KeyboardButton(text="📅 Выбрать дату"))
     b.row(KeyboardButton(text="✏️ Удалить последний"), KeyboardButton(text="📄 Выгрузить CSV"))
     b.row(KeyboardButton(text="🔄 Обновить из таблицы"))
     b.row(KeyboardButton(text="🏠 В главное меню"))
@@ -4653,6 +4653,8 @@ async def biz_menu(message: Message, state: FSMContext):
     if txt == "📅 Выбрать дату":
         await state.set_state(State_.biz_date)
         await message.answer("Напиши дату в формате ДД.ММ.ГГГГ (например 12.06.2026):", reply_markup=biz_kb()); return
+    if txt == "📅 По месяцам":
+        await _send_biz_monthly(message); return
     period = {"📊 Сегодня": 1, "📈 7 дней": 7, "🗓 30 дней": 30}.get(txt)
     if period:
         await _send_biz_report(message, period); return
@@ -4777,6 +4779,124 @@ async def _send_biz_report(message, days):
     if narrative:
         await _send_block(message, "🧠 *Аналитика:*", narrative)
     await message.answer("Что дальше? 👇", reply_markup=biz_kb())
+
+
+async def _biz_period_map():
+    await _ensure_biz_table()
+    await _ensure_visits_table()
+    aliases = await _get_aliases()
+    pct = await _get_doctor_percents()
+    per = {}
+    v = await db_all("SELECT period, day, doctor, revenue FROM visits WHERE src IN ('shift','clean')")
+    for r in v:
+        p = r["period"] or ((r["day"] or "")[:7]) or "—"
+        s = per.setdefault(p, {"rev": 0.0, "fot": 0.0, "exp": 0.0, "n": 0})
+        rev = r["revenue"] or 0
+        s["rev"] += rev
+        s["n"] += 1
+        s["fot"] += rev * pct.get(_canon_with(r["doctor"] or "", aliases), 0) / 100
+    bf = await db_all("SELECT day, revenue, expenses, src FROM biz_finance")
+    for r in bf:
+        if (r["src"] or "") == "salary":
+            continue
+        p = (r["day"] or "")[:7] or "—"
+        s = per.setdefault(p, {"rev": 0.0, "fot": 0.0, "exp": 0.0, "n": 0})
+        s["rev"] += r["revenue"] or 0
+        s["exp"] += r["expenses"] or 0
+    return per
+
+
+async def _send_biz_monthly(message):
+    await message.answer("💰 Считаю по месяцам...")
+    await _biz_sync_from_sheet()
+    await _sync_visits()
+    await _ensure_biz_table()
+    await _ensure_visits_table()
+    per = await _biz_period_map()
+    if not per:
+        await message.answer("Данных нет. Подключи таблицы командой /setshift или внеси отчёт вручную.",
+                             reply_markup=biz_kb())
+        return
+    out = []
+    for p in sorted(per.keys(), reverse=True)[:6]:
+        s = per[p]
+        profit = s["rev"] - s["fot"] - s["exp"]
+        block = (f"📅 *{_period_label(p)}*\n"
+                 f"Выручка: {_money(s['rev'])} ({s['n']} приёмов)\n"
+                 f"ФОТ врачей (%): {_money(s['fot'])}\n")
+        if s["exp"]:
+            block += f"Прочие расходы: {_money(s['exp'])}\n"
+        block += f"Прибыль: {_money(profit)}"
+        out.append(block)
+    note = ("\n\n📋 Выручка — из таблиц «день/ночь». ФОТ — по процентам врачей "
+            "(/setpercent). Прочие расходы — что внесёшь вручную кнопкой «📥 Внести отчёт».")
+    await _send_block(message, "💰 *Финансы по месяцам*", "\n\n".join(out) + note)
+    ps = await _doctor_periods()
+    if ps:
+        await message.answer("📅 Открыть конкретный месяц — выбери год:", reply_markup=_biz_year_kb(ps))
+    await message.answer("Что дальше? 👇", reply_markup=biz_kb())
+
+
+
+def _biz_year_kb(periods):
+    b = InlineKeyboardBuilder()
+    for y in sorted({p[:4] for p in periods if p and p[0].isdigit()}, reverse=True):
+        b.row(InlineKeyboardButton(text=f"📅 {y} год", callback_data=f"byear_{y}"))
+    return b.as_markup()
+
+
+def _biz_month_kb(periods, year):
+    b = InlineKeyboardBuilder()
+    for p in [x for x in periods if x.startswith(year)]:
+        b.row(InlineKeyboardButton(text=_period_label(p), callback_data=f"bmon_{p}"))
+    b.row(InlineKeyboardButton(text="◀️ К годам", callback_data="byears"))
+    return b.as_markup()
+
+
+async def _render_biz_month(message, period):
+    per = await _biz_period_map()
+    s = per.get(period)
+    if not s:
+        await message.answer(f"За {_period_label(period)} данных нет.", reply_markup=biz_kb())
+        return
+    profit = s["rev"] - s["fot"] - s["exp"]
+    margin = (profit / s["rev"] * 100) if s["rev"] else 0
+    txt = (f"💰 *Финансы · {_period_label(period)}*\n\n"
+           f"Выручка: {_money(s['rev'])} ({s['n']} приёмов)\n"
+           f"ФОТ врачей (%): {_money(s['fot'])}\n")
+    if s["exp"]:
+        txt += f"Прочие расходы: {_money(s['exp'])}\n"
+    txt += f"Чистая прибыль: {_money(profit)}\nРентабельность: {margin:.0f}%"
+    await message.answer(txt, parse_mode="Markdown", reply_markup=biz_kb())
+
+
+@router.callback_query(F.data == "byears")
+async def cb_byears(cq: CallbackQuery):
+    if cq.from_user.id != ADMIN_ID:
+        return
+    ps = await _doctor_periods()
+    if ps:
+        await cq.message.answer("📅 Выбери год:", reply_markup=_biz_year_kb(ps))
+    await cq.answer()
+
+
+@router.callback_query(F.data.startswith("byear_"))
+async def cb_byear(cq: CallbackQuery):
+    if cq.from_user.id != ADMIN_ID:
+        return
+    year = cq.data.split("_", 1)[1]
+    ps = await _doctor_periods()
+    await cq.message.answer(f"📅 {year} — выбери месяц:", reply_markup=_biz_month_kb(ps, year))
+    await cq.answer()
+
+
+@router.callback_query(F.data.startswith("bmon_"))
+async def cb_bmon(cq: CallbackQuery):
+    if cq.from_user.id != ADMIN_ID:
+        return
+    period = cq.data.split("_", 1)[1]
+    await cq.answer("Считаю...")
+    await _render_biz_month(cq.message, period)
 
 
 # ====================================================================
@@ -5091,11 +5211,34 @@ async def _ensure_visits_table():
         await db_run("ALTER TABLE visits ADD COLUMN patient TEXT")
     except Exception:
         pass
-    for ddl in ("pay TEXT", "src TEXT"):
+    for ddl in ("pay TEXT", "src TEXT", "period TEXT"):
         try:
             await db_run(f"ALTER TABLE visits ADD COLUMN {ddl}")
         except Exception:
             pass
+
+
+def _label_to_period(label):
+    """Название вкладки -> 'ГГГГ-ММ'. 'Июнь 2026'/'март 2026'/'ИЮЛЬ 2025' -> '2026-06'. Иначе None."""
+    low = (label or "").lower()
+    ym = re.search(r"(20\d{2})", low)
+    mo = 0
+    for i, mn in enumerate(_RU_MONTHS, 1):
+        if mn in low:
+            mo = i
+            break
+    if mo and ym:
+        return f"{ym.group(1)}-{mo:02d}"
+    return None
+
+
+def _period_label(p):
+    """'2026-06' -> 'Июнь 2026'."""
+    try:
+        y, m = p.split("-")
+        return f"{_RU_MONTHS[int(m) - 1].capitalize()} {y}"
+    except Exception:
+        return p or "—"
 
 async def _get_visit_sheets():
     raw = await get_setting("visit_sheets", "")
@@ -5133,7 +5276,11 @@ def _parse_shift_rows(rows, name_keys):
         if (("врач" in low) or ("доктор" in low)) and not is_patient and "аренд" not in low:
             dm = re.search(r"(?:врач|доктор)\s*[-\u2013\u2014:.]*\s*([^,\n]+)", joined, re.IGNORECASE)
             if dm and dm.group(1).strip():
-                cur_doc = dm.group(1).strip()[:40]
+                cand = dm.group(1).strip()
+                # отрезаем приклеившуюся шапку таблицы
+                cand = re.split(r"\s*(?:№|фио|вид оказ|оплат|анестез|сумма)", cand, maxsplit=1, flags=re.IGNORECASE)[0].strip()
+                if cand and re.search(r"[А-Яа-яЁё]", cand):
+                    cur_doc = cand[:40]
             continue
         # 2) заголовок врача без слова "врач": короткая строка с именем из справочника
         if not is_patient and not re.search(r"итог|услуг|оплат|анестез|вид опл|фио|дата|смена|ночь|день|аренд|наличн|перевод|терминал", low):
@@ -5367,12 +5514,13 @@ def _xlsx_looks_parseable(parsed):
 
 async def _iter_shift_sheets(shift):
     """Все вкладки [(label, rows)] по уже добавленным ссылкам.
-    Уровни надёжности (используется первый, реально давший данные — без двойного счёта):
-    1) вся книга xlsx, если из неё читается текст;
-    2) вкладки по их НАЗВАНИЯМ из книги через gviz-CSV (надёжное чтение текста);
-    3) свежие месяцы по названию (если имена неизвестны);
-    4) старые ссылки как CSV."""
+    Список вкладок берём из книги (xlsx), а ДАННЫЕ читаем по названию через gviz-CSV
+    (надёжное чтение текста). Берём только свежие месяцы — по каждой подключённой книге."""
     import csv as _csv, io
+    # множество допустимых названий свежих месяцев в нижнем регистре: 'июнь 2026' ...
+    recent = {}
+    for m, y in _recent_month_names(15):
+        recent[f"{m} {y}".lower()] = (m, y)
     out, seen_sid = [], set()
     for url in shift:
         sm = re.search(r"/spreadsheets/d/([a-zA-Z0-9_-]+)", url)
@@ -5386,38 +5534,31 @@ async def _iter_shift_sheets(shift):
             continue
         seen_sid.add(sid)
         sheets = {}
-        # скачиваем книгу: из неё точно берём СПИСОК вкладок, а если повезёт — и данные
+        # узнаём реальные названия вкладок книги
         data = await _fetch_xlsx(sid)
         parsed = _parse_xlsx(data) if data else None
-        names_from_book = [nm for nm, _ in parsed] if parsed else []
-        # 1) если из xlsx реально читаются строки пациентов — берём данные из книги (быстро)
-        if parsed and _xlsx_looks_parseable(parsed):
-            for nm, rows in parsed:
-                if _sheet_has_data(rows):
-                    sheets[nm or f"лист {len(sheets) + 1}"] = rows
-        # 2) текст не прочитался — читаем вкладки по их названиям через gviz-CSV
-        if not sheets:
-            names = names_from_book or [f"{m.capitalize()} {y}" for m, y in _recent_month_names(14)]
-            cnt = 0
-            for nm in names:
-                if cnt >= 18:
-                    break
-                low = (nm or "").lower()
-                if not nm or any(x in low for x in ("чек", "конверс", "итог", "шаблон")):
+        names_from_book = [nm for nm, _ in parsed if nm] if parsed else []
+        # реальные названия свежих месяцев из этой книги
+        targets = [nm for nm in names_from_book if nm.strip().lower() in recent]
+        if targets:
+            seen_nm = set()
+            for nm in targets:
+                k = nm.strip().lower()
+                if k in seen_nm:
                     continue
+                seen_nm.add(k)
                 rows = await _gviz_sheet(sid, nm)
                 if rows:
                     sheets[nm] = rows
-                    cnt += 1
-        # 3) имена неизвестны и gviz не дал — пробуем свежие месяцы по названию
-        if not sheets:
-            for m, y in _recent_month_names(14):
+        else:
+            # имена не получили — пробуем сгенерированные варианты, по месяцу до первого успеха
+            for m, y in _recent_month_names(15):
                 for nm in (f"{m.capitalize()} {y}", f"{m} {y}", f"{m.upper()} {y}"):
                     rows = await _gviz_sheet(sid, nm)
                     if rows:
                         sheets[f"{m.capitalize()} {y}"] = rows
                         break
-        # 4) совсем ничего — читаем старые ссылки как CSV
+        # совсем ничего — читаем старые ссылки как CSV
         if not sheets:
             for u2 in shift:
                 if sid in u2:
@@ -5494,7 +5635,8 @@ async def _sync_visits():
             errors.append(f"приёмы {i}: {err}")
         else:
             for (day, doctor, service, kind, ref_from, revenue, percent) in rows:
-                all_rows.append((day, doctor, service, kind, ref_from, revenue, percent, "", "clean", ""))
+                per = day[:7] if (day and len(day) >= 7) else None
+                all_rows.append((day, doctor, service, kind, ref_from, revenue, percent, "", "clean", "", per))
     # Смены: собрать все приёмы, затем по ФИО определить первичный/повторный и перенаправление
     shift_rows = []
     tabs_info = []
@@ -5505,8 +5647,9 @@ async def _sync_visits():
         except Exception as e:
             errors.append(f"вкладка {lbl}: {str(e)[:50]}"); tabs_info.append((lbl, -1)); continue
         tabs_info.append((lbl, len(parsed)))
+        per = _label_to_period(lbl)
         for (day, doctor, service, revenue, pay, patient) in parsed:
-            shift_rows.append([day, doctor, service, revenue, pay, _patient_key(service), patient])
+            shift_rows.append([day, doctor, service, revenue, pay, _patient_key(service), patient, per])
     try:
         await set_setting("shift_tabs", json.dumps(tabs_info, ensure_ascii=False))
     except Exception:
@@ -5514,7 +5657,7 @@ async def _sync_visits():
     shift_rows.sort(key=lambda r: r[0])  # по дате: кто раньше — тот первичный
     first_doctor = {}
     seen_visit = set()
-    for (day, doctor, service, revenue, pay, key, patient) in shift_rows:
+    for (day, doctor, service, revenue, pay, key, patient, per) in shift_rows:
         kind, ref = "", ""
         if key:
             if key not in first_doctor:
@@ -5527,11 +5670,12 @@ async def _sync_visits():
                 seen_visit.add((key, day))
                 if doctor != first_doctor[key]:
                     ref = first_doctor[key]  # пациент перешёл от первого врача к этому
-        all_rows.append((day, doctor, service, kind, ref, revenue, 0, pay, "shift", patient))
+        per2 = per or (day[:7] if (day and len(day) >= 7) else None)
+        all_rows.append((day, doctor, service, kind, ref, revenue, 0, pay, "shift", patient, per2))
     await _ensure_visits_table()
     await db_run("DELETE FROM visits")
     for r in all_rows:
-        await db_run("INSERT INTO visits (day,doctor,service,kind,ref_from,revenue,percent,pay,src,patient) VALUES (?,?,?,?,?,?,?,?,?,?)", r)
+        await db_run("INSERT INTO visits (day,doctor,service,kind,ref_from,revenue,percent,pay,src,patient,period) VALUES (?,?,?,?,?,?,?,?,?,?,?)", r)
     return len(all_rows), ("; ".join(errors) if errors else None)
 
 @router.message(Command("setvisits"))
@@ -5786,41 +5930,62 @@ async def diag_cmd(message: Message):
     await message.answer("\n".join(lines)[:3900])
 
 @router.message(Command("doctors"))
-async def doctors_cmd(message: Message):
-    if message.from_user.id != ADMIN_ID:
+async def _doctor_periods():
+    rows = await db_all("SELECT DISTINCT period FROM visits WHERE period IS NOT NULL AND period != '' AND src IN ('shift','clean')")
+    return sorted([r["period"] for r in rows if r["period"]], reverse=True)
+
+
+def _doctor_year_kb(periods):
+    b = InlineKeyboardBuilder()
+    years = sorted({p[:4] for p in periods}, reverse=True)
+    for y in years:
+        b.row(InlineKeyboardButton(text=f"📅 {y} год", callback_data=f"dyear_{y}"))
+    return b.as_markup()
+
+
+def _doctor_month_kb(periods, year):
+    b = InlineKeyboardBuilder()
+    months = [p for p in periods if p.startswith(year)]
+    for p in months:
+        b.row(InlineKeyboardButton(text=_period_label(p), callback_data=f"dmon_{p}"))
+    b.row(InlineKeyboardButton(text="◀️ К годам", callback_data="dyears"))
+    return b.as_markup()
+
+
+@router.callback_query(F.data == "dyears")
+async def cb_dyears(cq: CallbackQuery):
+    if cq.from_user.id != ADMIN_ID:
         return
-    parts = (message.text or "").split()
-    on_date = None
-    days = 30
-    if len(parts) > 1:
-        if parts[1].isdigit():
-            days = int(parts[1])
-        else:
-            on_date = _norm_date(parts[1])
-    synced, sync_err = await _sync_visits()
-    await _ensure_visits_table()
-    if on_date:
-        rows = await db_all("SELECT doctor,service,kind,ref_from,revenue,percent,pay,src,patient FROM visits WHERE day = ?", (on_date,))
-        period_label = on_date
-    else:
-        rows = await db_all("SELECT doctor,service,kind,ref_from,revenue,percent,pay,src,patient FROM visits WHERE day >= date('now', ?)",
-                            (f"-{days - 1} day",))
-        period_label = f"{days} дн."
+    ps = await _doctor_periods()
+    if ps:
+        await cq.message.answer("📅 Выбери год:", reply_markup=_doctor_year_kb(ps))
+    await cq.answer()
+
+
+@router.callback_query(F.data.startswith("dyear_"))
+async def cb_dyear(cq: CallbackQuery):
+    if cq.from_user.id != ADMIN_ID:
+        return
+    year = cq.data.split("_", 1)[1]
+    ps = await _doctor_periods()
+    await cq.message.answer(f"📅 {year} — выбери месяц:", reply_markup=_doctor_month_kb(ps, year))
+    await cq.answer()
+
+
+@router.callback_query(F.data.startswith("dmon_"))
+async def cb_dmon(cq: CallbackQuery):
+    if cq.from_user.id != ADMIN_ID:
+        return
+    period = cq.data.split("_", 1)[1]
+    await cq.answer("Готовлю отчёт...")
+    rows = await db_all("SELECT doctor,service,kind,ref_from,revenue,percent,pay,src,patient FROM visits WHERE period = ?", (period,))
     if not rows:
-        # за период пусто — возможно, данные за прошлые месяцы. Покажем всё, что есть.
-        allrows = await db_all("SELECT doctor,service,kind,ref_from,revenue,percent,pay,src,patient FROM visits")
-        if not allrows:
-            msg = "📊 По врачам пока нет данных.\n\n"
-            if sync_err:
-                msg += f"⚠️ Таблица: {sync_err}\n\n"
-            msg += ("Проверь:\n"
-                    "• таблица открыта «по ссылке: Читатель»\n"
-                    "• ссылка ведёт на нужную вкладку (день/ночь)\n"
-                    "• /visits — что подключено, /diag — диагностика")
-            await message.answer(msg); return
-        rng = await db_get("SELECT MIN(day) a, MAX(day) b FROM visits")
-        rows = allrows
-        period_label = f"все данные ({rng['a']} — {rng['b']})"
+        await cq.message.answer(f"За {_period_label(period)} данных нет.")
+        return
+    await _render_doctor_detail(cq.message, rows, _period_label(period))
+
+
+async def _render_doctor_detail(message, rows, period_label):
     aliases = await _get_aliases()
     pct_map = await _get_doctor_percents()
     docs = {}
@@ -5898,6 +6063,98 @@ async def doctors_cmd(message: Message):
         head += "\n(Если вашей дневной вкладки тут нет — пришлите её отдельной ссылкой.)\n\n"
         body = head + body
     await _send_block(message, f"📊 *Отчёт по врачам · {period_label}*", body)
+
+
+async def doctors_cmd(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    parts = (message.text or "").split()
+    arg = " ".join(parts[1:]).strip()
+    synced, sync_err = await _sync_visits()
+    await _ensure_visits_table()
+
+    on_date = None
+    days = None
+    period = None
+    if arg:
+        if arg.isdigit():
+            days = int(arg)
+        elif _label_to_period(arg):
+            period = _label_to_period(arg)
+        else:
+            on_date = _norm_date(arg)
+
+    # ── По умолчанию (кнопка «Доктора») — сводка ПО МЕСЯЦАМ ──
+    if not arg:
+        allv = await db_all("SELECT period, day, doctor, revenue FROM visits WHERE src IN ('shift','clean')")
+        if not allv:
+            msg = "📊 По врачам пока нет данных.\n\n"
+            if sync_err:
+                msg += f"⚠️ Таблица: {sync_err}\n\n"
+            msg += ("Проверь:\n• таблица открыта «по ссылке: Читатель»\n"
+                    "• /visits — что подключено, /diag — диагностика")
+            await message.answer(msg)
+            return
+        aliases = await _get_aliases()
+        pct_map = await _get_doctor_percents()
+        per_map = {}
+        for r in allv:
+            p = r["period"] or ((r["day"] or "")[:7]) or "—"
+            d = _canon_with(r["doctor"] or "—", aliases)
+            x = per_map.setdefault(p, {}).setdefault(d, {"n": 0, "rev": 0.0})
+            x["n"] += 1
+            x["rev"] += r["revenue"] or 0
+        ordered = sorted(per_map.keys(), reverse=True)
+        recent = ordered[:6]
+        out = []
+        for p in recent:
+            docs = per_map[p]
+            totn = sum(v["n"] for v in docs.values())
+            totr = sum(v["rev"] for v in docs.values())
+            lines = [f"📅 *{_period_label(p)}* · {totn} приёмов · {_money(totr)}"]
+            for d, v in sorted(docs.items(), key=lambda kv: -kv[1]["rev"]):
+                pct = pct_map.get(d)
+                zp = f" · ЗП {pct}%: {_money(v['rev'] * pct / 100)}" if pct else ""
+                lines.append(f"• {d} — {v['n']} приёмов, {_money(v['rev'])}{zp}")
+            out.append("\n".join(lines))
+        tail = ""
+        more = [p for p in ordered if p not in recent]
+        if more:
+            tail += "\n\n📂 Ещё есть месяцы: " + ", ".join(_period_label(p) for p in more[:12])
+        tail += "\n\nПодробно за месяц: напиши «/doctors Июнь 2026» — врачи, направления, оплаты."
+        await _send_block(message, "📊 *Врачи по месяцам*", "\n\n".join(out) + tail)
+        ps = await _doctor_periods()
+        if ps:
+            await message.answer("📅 Открыть конкретный месяц — выбери год:", reply_markup=_doctor_year_kb(ps))
+        return
+
+    # ── Подробный отчёт: за конкретный месяц / дату / N дней ──
+    if period:
+        rows = await db_all("SELECT doctor,service,kind,ref_from,revenue,percent,pay,src,patient FROM visits WHERE period = ?", (period,))
+        period_label = _period_label(period)
+    elif on_date:
+        rows = await db_all("SELECT doctor,service,kind,ref_from,revenue,percent,pay,src,patient FROM visits WHERE day = ?", (on_date,))
+        period_label = on_date
+    else:
+        rows = await db_all("SELECT doctor,service,kind,ref_from,revenue,percent,pay,src,patient FROM visits WHERE day >= date('now', ?)",
+                            (f"-{days - 1} day",))
+        period_label = f"{days} дн."
+    if not rows:
+        allrows = await db_all("SELECT doctor,service,kind,ref_from,revenue,percent,pay,src,patient FROM visits")
+        if not allrows:
+            msg = "📊 По врачам пока нет данных.\n\n"
+            if sync_err:
+                msg += f"⚠️ Таблица: {sync_err}\n\n"
+            msg += ("Проверь:\n"
+                    "• таблица открыта «по ссылке: Читатель»\n"
+                    "• ссылка ведёт на нужную вкладку (день/ночь)\n"
+                    "• /visits — что подключено, /diag — диагностика")
+            await message.answer(msg)
+            return
+        rng = await db_get("SELECT MIN(day) a, MAX(day) b FROM visits")
+        rows = allrows
+        period_label = f"все данные ({rng['a']} — {rng['b']})"
+    await _render_doctor_detail(message, rows, period_label)
 
 
 @router.message(Command("fix"))

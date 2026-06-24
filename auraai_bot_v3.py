@@ -4609,7 +4609,7 @@ async def biz_start(message: Message, state: FSMContext):
         "📊 Кнопки периодов — отчёт за день / 7 / 30 дней.",
         parse_mode="Markdown", reply_markup=biz_kb())
 
-@router.message(State_.biz_menu)
+@router.message(State_.biz_menu, ~F.text.startswith("/"))
 async def biz_menu(message: Message, state: FSMContext):
     if message.from_user.id != ADMIN_ID:
         return
@@ -4660,7 +4660,7 @@ async def biz_menu(message: Message, state: FSMContext):
         await _send_biz_report(message, period); return
     await message.answer("Выбери действие кнопкой ниже 👇", reply_markup=biz_kb())
 
-@router.message(State_.biz_input)
+@router.message(State_.biz_input, ~F.text.startswith("/"))
 async def biz_input(message: Message, state: FSMContext):
     if message.from_user.id != ADMIN_ID:
         return
@@ -4695,7 +4695,7 @@ async def biz_input(message: Message, state: FSMContext):
                          f"📤 Расходы: {_money(exp)}\n━━━━━━━━\n📈 Чистая прибыль: *{_money(rev - exp)}*",
                          parse_mode="Markdown", reply_markup=biz_kb())
 
-@router.message(State_.biz_date)
+@router.message(State_.biz_date, ~F.text.startswith("/"))
 async def biz_date_input(message: Message, state: FSMContext):
     if message.from_user.id != ADMIN_ID:
         return
@@ -5254,10 +5254,19 @@ async def _get_shift_sheets():
     except Exception:
         return []
 
+# ── Исправленный разбор смен (v3.44): сумма из колонки «Оплата», приём не теряется ──
+_SHIFT_DATE_RE = re.compile(r"(\d{1,2})\s*[.\-/]\s*(\d{1,2})\s*[.\-/]\s*(\d{4})")
+_SHIFT_PNUM_RE = re.compile(r"\d{1,3}[.)]?$")     # 1, 2, 15, "1.", "3)"
+_SHIFT_SKIP_RE = re.compile(r"итог|аренд")          # итоги и аренда — не пациенты
+
+
 def _parse_shift_rows(rows, name_keys):
-    """Разбор строк одной вкладки (день/ночь, блоками) -> [(date,doctor,service,amount,pay,patient)]."""
+    """Разбор строк одной вкладки (день/ночь, блоками) ->
+    [(date, doctor, service, amount, pay, patient)].
+    Сумма берётся из колонки «Оплата (сумма)»; приём не теряется без врача."""
     import datetime as _dt
     cur_doc, cur_date = "", ""
+    amount_col, pay_col = 2, 4          # по умолчанию: C — сумма, E — вид оплаты
     out = []
     for row in rows:
         cells = [(c or "").strip() for c in row]
@@ -5265,52 +5274,68 @@ def _parse_shift_rows(rows, name_keys):
             continue
         joined = " ".join(c for c in cells if c)
         low = joined.lower()
-        m = re.search(r"(\d{1,2})\s*[.\-/]\s*(\d{1,2})\s*[.\-/]\s*(\d{4})", joined)
+        a0 = cells[0] if cells else ""
+
+        m = _SHIFT_DATE_RE.search(joined)
         if m:
             try:
                 cur_date = _dt.date(int(m.group(3)), int(m.group(2)), int(m.group(1))).isoformat()
             except Exception:
                 pass
-        is_patient = bool(cells) and bool(re.fullmatch(r"\d{1,3}", cells[0]))
-        # 1) явный заголовок врача (но не строка аренды)
+
+        is_patient = bool(_SHIFT_PNUM_RE.fullmatch(a0))
+
+        # шапка таблицы: «№ | ФИО… | Оплата (сумма) | Анестезия | Вид оплаты»
+        if (not is_patient) and ("оплат" in low) and (("фио" in low) or ("№" in joined) or ("вид оказ" in low)):
+            for i, c in enumerate(cells):
+                cl = c.lower()
+                if "оплата" in cl or "сумма" in cl:
+                    amount_col = i
+                if "вид оплат" in cl:
+                    pay_col = i
+            continue
+
+        # заголовок врача со словом «Врач»/«Доктор»
         if (("врач" in low) or ("доктор" in low)) and not is_patient and "аренд" not in low:
             dm = re.search(r"(?:врач|доктор)\s*[-\u2013\u2014:.]*\s*([^,\n]+)", joined, re.IGNORECASE)
             if dm and dm.group(1).strip():
-                cand = dm.group(1).strip()
-                # отрезаем приклеившуюся шапку таблицы
-                cand = re.split(r"\s*(?:№|фио|вид оказ|оплат|анестез|сумма)", cand, maxsplit=1, flags=re.IGNORECASE)[0].strip()
+                cand = re.split(r"\s*(?:№|фио|вид оказ|оплат|анестез|сумма)", dm.group(1).strip(),
+                                maxsplit=1, flags=re.IGNORECASE)[0].strip()
                 if cand and re.search(r"[А-Яа-яЁё]", cand):
                     cur_doc = cand[:40]
             continue
-        # 2) заголовок врача без слова "врач": короткая строка с именем из справочника
-        if not is_patient and not re.search(r"итог|услуг|оплат|анестез|вид опл|фио|дата|смена|ночь|день|аренд|наличн|перевод|терминал", low):
+
+        # заголовок врача без слова «Врач»: короткая строка с именем из справочника
+        if not is_patient and not _SHIFT_SKIP_RE.search(low) and not re.search(
+                r"услуг|оплат|анестез|вид опл|фио|смена|ночь|наличн|перевод|терминал", low):
             non_empty = [c for c in cells if c]
             if 1 <= len(non_empty) <= 3:
-                hit = ""
-                for c in non_empty:
-                    if any(k in c.lower() for k in name_keys):
-                        hit = c.strip()
-                        break
+                hit = next((c.strip() for c in non_empty if any(k in c.lower() for k in name_keys)), "")
                 if hit:
                     cur_doc = hit[:40]
                     continue
-        # 3) строка пациента
+
+        # строки итогов / аренды — не пациенты
+        if not is_patient and _SHIFT_SKIP_RE.search(low):
+            continue
+
+        # строка пациента
         if is_patient:
             service = cells[1] if len(cells) > 1 else ""
             amount = 0.0
-            for c in cells[2:]:
-                v = _num(c)
-                if v > 0:
-                    amount = v
-                    break
+            if amount_col < len(cells):
+                amount = _num(cells[amount_col])
+            if amount == 0.0 and len(cells) > 2:
+                amount = _num(cells[2])
             pay = ""
-            for c in reversed(cells[2:]):
-                cc = c.replace(".", "").replace(",", "").replace(" ", "")
-                if c and not cc.isdigit():
-                    pay = c.lower()
-                    break
-            if cur_doc and (amount > 0 or service):
-                out.append((cur_date or _dt.date.today().isoformat(), cur_doc, service, amount, pay, _patient_name(service)))
+            if pay_col < len(cells):
+                pc = cells[pay_col]
+                if pc and not pc.replace(".", "").replace(",", "").replace(" ", "").isdigit():
+                    pay = pc.lower()
+            if not service and amount == 0.0:
+                continue
+            out.append((cur_date or _dt.date.today().isoformat(),
+                        cur_doc or "Врач не указан", service, amount, pay, _patient_name(service)))
     return out
 
 
@@ -5902,6 +5927,25 @@ async def alias_cmd(message: Message):
     await set_setting("doctor_aliases", json.dumps(al, ensure_ascii=False))
     await message.answer(f"✅ {canon} ← {', '.join(keys)}")
 
+@router.message(Command("dumprows"))
+async def dumprows_cmd(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    shift = await _get_shift_sheets()
+    if not shift:
+        await message.answer("Нет таблиц смен. Подключи через /setshift."); return
+    expanded = await _iter_shift_sheets(shift)
+    out = []
+    for ti, (lbl, rows) in enumerate(expanded, 1):
+        out.append(f"\n===== ВКЛАДКА {ti}: {lbl} ({len(rows)} строк) =====")
+        for ri, row in enumerate(rows[:35], 1):
+            cells = " | ".join((c or "").strip() for c in row)
+            out.append(f"[{ri}] {cells}")
+    text = "\n".join(out) or "пусто"
+    for i in range(0, len(text), 3500):
+        await message.answer("```\n" + text[i:i + 3500] + "\n```", parse_mode="Markdown")
+
+
 @router.message(Command("diag"))
 async def diag_cmd(message: Message):
     if message.from_user.id != ADMIN_ID:
@@ -6263,7 +6307,7 @@ async def main():
     start_autoposter(bot)
     start_biz_sync(bot)
 
-    logging.info(f"🚀 AuraAI Bot v3.1 ФОРМАТЫ запущен | @{BOT_USERNAME}")
+    logging.info(f"🚀 AuraAI Bot v3.44 FIX-отчётность запущен | @{BOT_USERNAME}")
     logging.info("✅ ВЕРСИЯ С ВЫБОРОМ ФОРМАТА 9:16 16:9 — если видишь это, новый код работает")
     await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
 

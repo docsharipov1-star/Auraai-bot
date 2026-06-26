@@ -50,6 +50,12 @@ AIML_KEY      = os.getenv("AIML_KEY", "")
 ADMIN_ID      = int(os.getenv("ADMIN_ID", "0"))
 BOT_USERNAME  = os.getenv("BOT_USERNAME", "GetAuraAI_bot")
 YOOKASSA_TOKEN = os.getenv("YOOKASSA_TOKEN", "")  # provider token из BotFather (ЮKassa)
+VOXIM_ACCOUNT_ID  = os.getenv("VOXIM_ACCOUNT_ID", "")
+VOXIM_API_KEY     = os.getenv("VOXIM_API_KEY", "")
+VOXIM_APP_NAME    = os.getenv("VOXIM_APP_NAME", "clinic")
+VOXIM_RULE_NAME   = os.getenv("VOXIM_RULE_NAME", "confirm")
+VOXIM_CALLER_ID   = os.getenv("VOXIM_CALLER_ID", "")   # номер с которого звонить
+VOXIM_WEBHOOK_URL = os.getenv("VOXIM_WEBHOOK_URL", "")  # URL для результатов звонков
 DB_PATH       = "/app/data/auraai.db"
 FREE_CREDITS  = 150
 REFERRAL_BONUS = 50
@@ -1029,7 +1035,9 @@ def main_kb(is_admin: bool = False) -> ReplyKeyboardMarkup:
         KeyboardButton(text="❓ Помощь"),
         KeyboardButton(text="📕 База знаний"),
     )
+    b.row(KeyboardButton(text="🤝 Мои агенты"))
     if is_admin:
+        b.row(KeyboardButton(text="📞 Звонки пациентам"))
         b.row(KeyboardButton(text="📊 Доктора"), KeyboardButton(text="💰 Финансы бизнеса"))
         b.row(KeyboardButton(text="🗓 Таблицы клиники"))
     return b.as_markup(resize_keyboard=True)
@@ -1186,6 +1194,9 @@ class State_(StatesGroup):
     biz_menu  = State()  # финансы бизнеса: меню
     biz_input = State()  # финансы бизнеса: ввод отчёта
     biz_date  = State()  # финансы бизнеса: отчёт за конкретную дату
+    agent_chat  = State()  # мои агенты: чат
+    calls_menu  = State()  # звонки: меню
+    calls_input = State()  # звонки: ввод номеров
 
 user_tool:  dict[int, str] = {}
 user_model: dict[int, str] = {}
@@ -4549,16 +4560,16 @@ async def _biz_agg(days):
     prev, vp = [], []
     if days <= 1:
         rows = await db_all("SELECT patients, revenue, expenses, exp_json FROM biz_finance WHERE day = date('now') AND COALESCE(src,'') != 'salary'")
-        v = await db_all("SELECT doctor, revenue FROM visits WHERE src='shift' AND day = date('now')")
+        v = await db_all("SELECT doctor, revenue, patient, day FROM visits WHERE src='shift' AND day = date('now')")
         label = "сегодня"
     else:
         rows = await db_all("SELECT patients, revenue, expenses, exp_json FROM biz_finance WHERE day >= date('now', ?) AND COALESCE(src,'') != 'salary'",
                             (f"-{days - 1} day",))
         prev = await db_all("SELECT revenue, expenses FROM biz_finance WHERE day >= date('now', ?) AND day < date('now', ?) AND COALESCE(src,'') != 'salary'",
                             (f"-{2 * days - 1} day", f"-{days - 1} day"))
-        v = await db_all("SELECT doctor, revenue FROM visits WHERE src='shift' AND day >= date('now', ?)",
+        v = await db_all("SELECT doctor, revenue, patient, day FROM visits WHERE src='shift' AND day >= date('now', ?) AND day <= date('now')",
                          (f"-{days - 1} day",))
-        vp = await db_all("SELECT doctor, revenue FROM visits WHERE src='shift' AND day >= date('now', ?) AND day < date('now', ?)",
+        vp = await db_all("SELECT doctor, revenue, patient, day FROM visits WHERE src='shift' AND day >= date('now', ?) AND day < date('now', ?)",
                           (f"-{2 * days - 1} day", f"-{days - 1} day"))
         label = f"{days} дней"
     pat = sum(r["patients"] for r in rows)
@@ -4572,7 +4583,9 @@ async def _biz_agg(days):
         except Exception:
             pass
     vrev = sum(r["revenue"] for r in v)
-    vpat = len(v)
+    # Считаем уникальных пациентов по (день, имя) — один пациент у нескольких врачей не дублируется
+    unique_pats = set((r["day"], (r["patient"] or "").strip()) for r in v if (r["patient"] or "").strip())
+    vpat = len(unique_pats) if unique_pats else len(v)
     pat += vpat
     rev += vrev
     aliases = await _get_aliases()
@@ -5196,6 +5209,280 @@ def start_biz_sync(bot):
 
 
 # ====================================================================
+#  💰 ПАРСЕР МАТРИЦЫ ЗП (формат: строки=дни, колонки=врачи с %)
+#  Строка 1: (пусто), (пусто), Месяц Год
+#  Строка 2: дата | Врач1 35% | Врач2 30% | ...
+#  Строки 3+: день | сумма1 | сумма2 | ...
+# ====================================================================
+
+def _parse_salary_matrix(csv_text: str) -> tuple:
+    """
+    Парсит матрицу ЗП врачей.
+    Возвращает (period, list of {date, doctor, salary, revenue, pct, is_medical})
+    """
+    import csv as _csv, io as _io
+    rows = list(_csv.reader(_io.StringIO(csv_text)))
+    if len(rows) < 3:
+        return None, []
+
+    # Строка 1: найти месяц/год
+    period_str = " ".join(c.strip() for c in rows[0] if c.strip()).lower()
+    year, month = None, None
+    for i, mn in enumerate(_RU_MONTHS, 1):
+        if mn in period_str:
+            month = i
+            m = re.search(r"\d{4}", period_str)
+            if m:
+                year = int(m.group())
+            break
+    if not year or not month:
+        return None, []
+    period = f"{year}-{month:02d}"
+
+    # Строка 2: заголовки врачей
+    header = rows[1]
+    doctors = []
+    for col_idx, cell in enumerate(header[1:], 1):
+        cell = cell.strip()
+        if not cell:
+            doctors.append(None)
+            continue
+        pct = None
+        m = re.search(r"(\d+)\s*[-–]\s*(\d+)\s*%", cell)
+        if m:
+            pct = (int(m.group(1)) + int(m.group(2))) / 2
+            name = re.sub(r"\s*\d+\s*[-–]\s*\d+\s*%", "", cell).strip()
+        else:
+            m2 = re.search(r"(\d+)\s*%", cell)
+            if m2:
+                pct = int(m2.group(1))
+                name = re.sub(r"\s*\d+\s*%", "", cell).strip()
+            else:
+                name = cell
+                pct = None
+        doctors.append({"name": name, "pct": pct, "col": col_idx})
+
+    result = []
+    for row in rows[2:]:
+        if not row:
+            continue
+        day_cell = (row[0] if row else "").strip()
+        if not day_cell or not day_cell.isdigit():
+            continue
+        day_num = int(day_cell)
+        try:
+            import datetime as _dt
+            date_iso = _dt.date(year, month, day_num).isoformat()
+        except ValueError:
+            continue
+        for doc in doctors:
+            if doc is None:
+                continue
+            col = doc["col"]
+            raw = (row[col] if col < len(row) else "").strip().replace(" ", "").replace("\xa0", "").replace(",", ".")
+            if not raw:
+                continue
+            try:
+                salary = float(raw)
+            except ValueError:
+                continue
+            if salary <= 0:
+                continue
+            pct = doc["pct"]
+            revenue = salary / (pct / 100) if pct and pct > 0 else salary
+            result.append({
+                "date": date_iso,
+                "doctor": doc["name"].strip(),
+                "salary": salary,
+                "revenue": revenue,
+                "pct": pct or 0,
+                "is_medical": pct is not None and pct > 0,
+            })
+    return period, result
+
+
+async def _get_zp_sheets(key: str) -> list:
+    raw = await get_setting(key, "")
+    try:
+        return json.loads(raw) if raw else []
+    except Exception:
+        return []
+
+
+async def _sync_zp_matrix():
+    """Синхронизирует матрицы ЗП (день + ночь) — читает ВСЕ вкладки таблицы."""
+    day_sheets   = await _get_zp_sheets("zp_day_sheets")
+    night_sheets = await _get_zp_sheets("zp_night_sheets")
+    if not day_sheets and not night_sheets:
+        return 0, "Матрицы ЗП не подключены. Используй /setzpday и /setzpnight"
+
+    await _ensure_visits_table()
+    await db_run("DELETE FROM visits WHERE src='zp'")
+    await db_run("DELETE FROM biz_finance WHERE src='salary'")
+
+    total, errors = 0, []
+
+    async def process_sheets(sheet_urls, shift_type):
+        nonlocal total
+        seen_sid = set()
+        for base_url in sheet_urls:
+            sm = re.search(r"/spreadsheets/d/([a-zA-Z0-9_-]+)", base_url)
+            if not sm:
+                continue
+            sid = sm.group(1)
+            if sid in seen_sid:
+                continue
+            seen_sid.add(sid)
+
+            # Получаем все вкладки таблицы
+            tabs = await _list_sheet_tabs(sid)
+            if not tabs:
+                # Если не удалось получить список — читаем gid=0
+                tabs = [("0", "лист1")]
+
+            for gid, tab_name in tabs:
+                csv_url = f"https://docs.google.com/spreadsheets/d/{sid}/export?format=csv&gid={gid}"
+                text, err = await _fetch_csv(csv_url)
+                if err or not text:
+                    errors.append(f"{tab_name}: {err or 'пусто'}"); continue
+
+                period, records = _parse_salary_matrix(text)
+                if not period or not records:
+                    continue  # Пропускаем вкладки которые не являются матрицей ЗП
+
+                for r in records:
+                    await db_run(
+                        "INSERT INTO visits (day, doctor, service, kind, ref_from, revenue, percent, pay, src, patient, period) "
+                        "VALUES (?, ?, ?, '', '', ?, ?, '', 'zp', '', ?)",
+                        (r["date"], r["doctor"], shift_type, r["revenue"], r["pct"], period)
+                    )
+                    if r["is_medical"] and r["salary"] > 0:
+                        await db_run(
+                            "INSERT INTO biz_finance (day, patients, revenue, expenses, exp_json, note, src) "
+                            "VALUES (?, 0, 0, ?, ?, ?, 'salary')",
+                            (r["date"], r["salary"],
+                             json.dumps({"ФОТ врачей": r["salary"]}, ensure_ascii=False),
+                             f"ЗП {r['doctor']}")
+                        )
+                    total += 1
+
+    await process_sheets(day_sheets, "день")
+    await process_sheets(night_sheets, "ночь")
+    return total, ("; ".join(errors) if errors else None)
+
+
+@router.message(Command("zpdiag"))
+async def zpdiag_cmd(message: Message):
+    """Диагностика: показывает что читается из матриц ЗП."""
+    if message.from_user.id != ADMIN_ID:
+        return
+    day_sheets = await _get_zp_sheets("zp_day_sheets")
+    night_sheets = await _get_zp_sheets("zp_night_sheets")
+    lines = [f"🔧 Диагностика ЗП\n\nДневных таблиц: {len(day_sheets)}\nНочных таблиц: {len(night_sheets)}"]
+
+    for sheet_type, sheets in [("ДЕНЬ", day_sheets), ("НОЧЬ", night_sheets)]:
+        for url in sheets[:2]:
+            sm = re.search(r"/spreadsheets/d/([a-zA-Z0-9_-]+)", url)
+            if not sm:
+                continue
+            sid = sm.group(1)
+            lines.append(f"\n--- {sheet_type} (sid={sid[:12]}...) ---")
+
+            tabs = await _list_sheet_tabs(sid)
+            lines.append(f"Найдено вкладок: {len(tabs)}")
+            for gid, name in tabs[:5]:
+                lines.append(f"  • {name} (gid={gid})")
+
+            # Пробуем прочитать первую вкладку
+            test_url = f"https://docs.google.com/spreadsheets/d/{sid}/export?format=csv&gid=0"
+            text, err = await _fetch_csv(test_url)
+            if err:
+                lines.append(f"❌ Ошибка чтения gid=0: {err}")
+            else:
+                preview = (text or "")[:200].replace("\n", " | ")
+                lines.append(f"✅ gid=0 читается. Первые 200 символов:\n{preview}")
+                period, records = _parse_salary_matrix(text)
+                lines.append(f"Парсер: период={period}, записей={len(records)}")
+                if records:
+                    r = records[0]
+                    lines.append(f"Пример: {r['date']} | {r['doctor']} | ЗП={r['salary']} | выр={r['revenue']:.0f} | %={r['pct']}")
+
+    # Что сейчас в БД
+    cnt = await db_get("SELECT COUNT(*) c FROM visits WHERE src='zp'")
+    lines.append(f"\nВ БД visits(zp): {cnt['c'] if cnt else 0} записей")
+    cnt2 = await db_get("SELECT COUNT(*) c FROM visits")
+    lines.append(f"Всего в visits: {cnt2['c'] if cnt2 else 0} записей")
+
+    await message.answer("\n".join(lines)[:3900])
+
+
+@router.message(Command("setzpday"))
+async def setzpday_cmd(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    parts = (message.text or "").split(maxsplit=1)
+    if len(parts) < 2:
+        sheets = await _get_zp_sheets("zp_day_sheets")
+        await message.answer(
+            f"📅 Таблиц «ЗП день» подключено: {len(sheets)}\n\n"
+            "Добавить:\n/setzpday <ссылка на Google-таблицу>\n\n"
+            "Формат: строки = дни, колонки = врачи с процентом в заголовке.\n"
+            "Доступ: «по ссылке: Читатель»."
+        ); return
+    url = _sheet_csv_url(parts[1].strip())
+    if not url:
+        await message.answer("Не похоже на ссылку Google-таблицы."); return
+    sheets = await _get_zp_sheets("zp_day_sheets")
+    if url not in sheets:
+        sheets.append(url)
+        await set_setting("zp_day_sheets", json.dumps(sheets, ensure_ascii=False))
+    cnt, err = await _sync_zp_matrix()
+    msg = f"✅ Таблица дневной смены подключена. Прочитано записей: {cnt}"
+    if err:
+        msg += f"\n⚠️ {err}"
+    await message.answer(msg)
+
+
+@router.message(Command("setzpnight"))
+async def setzpnight_cmd(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    parts = (message.text or "").split(maxsplit=1)
+    if len(parts) < 2:
+        sheets = await _get_zp_sheets("zp_night_sheets")
+        await message.answer(
+            f"🌙 Таблиц «ЗП ночь» подключено: {len(sheets)}\n\n"
+            "Добавить:\n/setzpnight <ссылка на Google-таблицу>\n\n"
+            "Формат: строки = дни, колонки = врачи с процентом в заголовке.\n"
+            "Доступ: «по ссылке: Читатель»."
+        ); return
+    url = _sheet_csv_url(parts[1].strip())
+    if not url:
+        await message.answer("Не похоже на ссылку Google-таблицы."); return
+    sheets = await _get_zp_sheets("zp_night_sheets")
+    if url not in sheets:
+        sheets.append(url)
+        await set_setting("zp_night_sheets", json.dumps(sheets, ensure_ascii=False))
+    cnt, err = await _sync_zp_matrix()
+    msg = f"✅ Таблица ночной смены подключена. Прочитано записей: {cnt}"
+    if err:
+        msg += f"\n⚠️ {err}"
+    await message.answer(msg)
+
+
+@router.message(Command("zpsynс", "zpsync"))
+async def zpsync_cmd(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    await message.answer("🔄 Синхронизирую матрицы ЗП...")
+    cnt, err = await _sync_zp_matrix()
+    msg = f"✅ Готово. Записей: {cnt}"
+    if err:
+        msg += f"\n⚠️ {err}"
+    await message.answer(msg)
+
+
+# ====================================================================
 #  👨‍⚕️ ОТЧЁТ ПО ВРАЧАМ (визиты: услуги, первичные/повторные, направления, ЗП)
 #  Таблица визитов, колонки по порядку:
 #    Дата | Врач | Услуга | Тип | Откуда | Выручка | Процент
@@ -5682,19 +5969,26 @@ async def _sync_visits():
     shift_rows.sort(key=lambda r: r[0])  # по дате: кто раньше — тот первичный
     first_doctor = {}
     seen_visit = set()
+    # seen_patient: (day, patient_key) → первый врач которому пациент пришёл в этот день
+    seen_patient_day: dict = {}
     for (day, doctor, service, revenue, pay, key, patient, per) in shift_rows:
         kind, ref = "", ""
         if key:
+            pat_day = (day, key)
             if key not in first_doctor:
                 first_doctor[key] = doctor
+            if pat_day not in seen_patient_day:
+                # Первый визит этого пациента в этот день — первичный к этому врачу
+                seen_patient_day[pat_day] = doctor
                 if (key, day) not in seen_visit:
                     kind = "первичный"
                     seen_visit.add((key, day))
-            elif (key, day) not in seen_visit:
+            else:
+                # Пациент уже был сегодня — повторный, возможно к другому врачу
                 kind = "повторный"
-                seen_visit.add((key, day))
-                if doctor != first_doctor[key]:
-                    ref = first_doctor[key]  # пациент перешёл от первого врача к этому
+                first_doc_today = seen_patient_day[pat_day]
+                if doctor != first_doc_today:
+                    ref = first_doc_today
         per2 = per or (day[:7] if (day and len(day) >= 7) else None)
         all_rows.append((day, doctor, service, kind, ref, revenue, 0, pay, "shift", patient, per2))
     await _ensure_visits_table()
@@ -5973,9 +6267,8 @@ async def diag_cmd(message: Message):
     lines.append("\n\nℹ️ Бот сам читает все вкладки по уже добавленным ссылкам. Если какой-то вкладки нет в списке выше или врач не распознан — пришли мне пару строк из неё.")
     await message.answer("\n".join(lines)[:3900])
 
-@router.message(Command("doctors"))
 async def _doctor_periods():
-    rows = await db_all("SELECT DISTINCT period FROM visits WHERE period IS NOT NULL AND period != '' AND src IN ('shift','clean')")
+    rows = await db_all("SELECT DISTINCT period FROM visits WHERE period IS NOT NULL AND period != '' AND src IN ('shift','clean','zp')")
     return sorted([r["period"] for r in rows if r["period"]], reverse=True)
 
 
@@ -6022,7 +6315,7 @@ async def cb_dmon(cq: CallbackQuery):
         return
     period = cq.data.split("_", 1)[1]
     await cq.answer("Готовлю отчёт...")
-    rows = await db_all("SELECT doctor,service,kind,ref_from,revenue,percent,pay,src,patient FROM visits WHERE period = ?", (period,))
+    rows = await db_all("SELECT doctor,service,kind,ref_from,revenue,percent,pay,src,patient FROM visits WHERE period = ? AND src IN ('shift','clean','zp')", (period,))
     if not rows:
         await cq.message.answer(f"За {_period_label(period)} данных нет.")
         return
@@ -6109,11 +6402,15 @@ async def _render_doctor_detail(message, rows, period_label):
     await _send_block(message, f"📊 *Отчёт по врачам · {period_label}*", body)
 
 
+@router.message(Command("doctors"))
 async def doctors_cmd(message: Message):
     if message.from_user.id != ADMIN_ID:
         return
     parts = (message.text or "").split()
-    arg = " ".join(parts[1:]).strip()
+    # Если вызвано через кнопку (текст «📊 Доктора») — аргументов нет
+    raw_arg = " ".join(parts[1:]).strip()
+    # Игнорируем нетекстовые «аргументы» из названия кнопки
+    arg = raw_arg if raw_arg and raw_arg not in ("Доктора", "доктора") else ""
     synced, sync_err = await _sync_visits()
     await _ensure_visits_table()
 
@@ -6128,9 +6425,9 @@ async def doctors_cmd(message: Message):
         else:
             on_date = _norm_date(arg)
 
-    # ── По умолчанию (кнопка «Доктора») — сводка ПО МЕСЯЦАМ ──
-    if not arg:
-        allv = await db_all("SELECT period, day, doctor, revenue FROM visits WHERE src IN ('shift','clean')")
+    # ── По умолчанию (кнопка «Доктора» или /doctors без аргумента) — сводка ПО МЕСЯЦАМ ──
+    if not arg or (not days and not period and not on_date):
+        allv = await db_all("SELECT period, day, doctor, revenue FROM visits WHERE src IN ('shift','clean','zp')")
         if not allv:
             msg = "📊 По врачам пока нет данных.\n\n"
             if sync_err:
@@ -6174,7 +6471,7 @@ async def doctors_cmd(message: Message):
 
     # ── Подробный отчёт: за конкретный месяц / дату / N дней ──
     if period:
-        rows = await db_all("SELECT doctor,service,kind,ref_from,revenue,percent,pay,src,patient FROM visits WHERE period = ?", (period,))
+        rows = await db_all("SELECT doctor,service,kind,ref_from,revenue,percent,pay,src,patient FROM visits WHERE period = ? AND src IN ('shift','clean','zp')", (period,))
         period_label = _period_label(period)
     elif on_date:
         rows = await db_all("SELECT doctor,service,kind,ref_from,revenue,percent,pay,src,patient FROM visits WHERE day = ?", (on_date,))
@@ -6275,6 +6572,334 @@ async def delsheet_cmd(message: Message):
     await set_setting("biz_sheet_csv", "")
     n, err = await _biz_sync_from_sheet()
     await message.answer(f"🗑 Таблица №{idx} удалена. Осталось: {len(sheets)}. Строк в базе: {n}.")
+
+
+# ══════════════════════════════════════════════════════
+#  📞 ЗВОНКИ ПАЦИЕНТАМ (голосовой робот через Voximplant)
+# ══════════════════════════════════════════════════════
+
+CALL_RESULTS_RU = {
+    "confirmed": "✅ Подтвердил запись",
+    "cancelled":  "❌ Отменил запись",
+    "no_answer":  "📵 Не нажал кнопку",
+    "hung_up":    "📵 Сбросил трубку",
+    "failed":     "🔴 Недоступен / не дозвонились",
+    "great":      "⭐⭐⭐ Отлично",
+    "good":       "⭐⭐ Хорошо",
+    "bad":        "⭐ Плохо",
+}
+
+async def voximplant_call(phone: str, call_type: str, date: str = "", time_: str = "") -> dict:
+    """Запускает звонок через Voximplant API."""
+    if not VOXIM_ACCOUNT_ID or not VOXIM_API_KEY:
+        return {"error": "Voximplant не настроен. Добавь VOXIM_ACCOUNT_ID и VOXIM_API_KEY в переменные окружения."}
+    import json as _json
+    custom_data = _json.dumps({
+        "phone": phone,
+        "call_type": call_type,
+        "date": date,
+        "time": time_,
+        "admin_uid": str(ADMIN_ID),
+        "webhook_url": VOXIM_WEBHOOK_URL,
+    }, ensure_ascii=False)
+    data = {
+        "account_id":   VOXIM_ACCOUNT_ID,
+        "api_key":      VOXIM_API_KEY,
+        "rule_name":    VOXIM_RULE_NAME,
+        "script_custom_data": custom_data,
+        "reference_to_call":  phone,
+    }
+    if VOXIM_CALLER_ID:
+        data["caller_id"] = VOXIM_CALLER_ID
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            r = await client.post("https://api.voximplant.com/platform_api/StartScenarios/", data=data)
+            return r.json()
+    except Exception as e:
+        return {"error": str(e)}
+
+def calls_kb() -> ReplyKeyboardMarkup:
+    b = ReplyKeyboardBuilder()
+    b.row(KeyboardButton(text="📅 Подтверждение записи"))
+    b.row(KeyboardButton(text="⭐ Сбор отзывов"))
+    b.row(KeyboardButton(text="🏠 В главное меню"))
+    return b.as_markup(resize_keyboard=True)
+
+def calls_cancel_kb() -> ReplyKeyboardMarkup:
+    b = ReplyKeyboardBuilder()
+    b.row(KeyboardButton(text="❌ Отмена"))
+    return b.as_markup(resize_keyboard=True)
+
+@router.message(F.text == "📞 Звонки пациентам")
+async def calls_menu_handler(message: Message, state: FSMContext):
+    if message.from_user.id != ADMIN_ID:
+        return
+    await state.clear()
+    await state.set_state(State_.calls_menu)
+    await message.answer(
+        "📞 *Звонки пациентам*\n\n"
+        "Выбери тип звонка:",
+        parse_mode="Markdown",
+        reply_markup=calls_kb()
+    )
+
+@router.message(StateFilter(State_.calls_menu), F.text.in_(["📅 Подтверждение записи", "⭐ Сбор отзывов"]))
+async def calls_type_selected(message: Message, state: FSMContext):
+    call_type = "confirm" if "Подтверждение" in message.text else "review"
+    await state.update_data(call_type=call_type)
+    await state.set_state(State_.calls_input)
+
+    if call_type == "confirm":
+        await message.answer(
+            "📋 *Подтверждение записи*\n\n"
+            "Отправь номера телефонов — каждый с новой строки.\n"
+            "Можно добавить дату и время через запятую:\n\n"
+            "```\n"
+            "+79001234567, завтра, 14:00\n"
+            "+79009876543, 15 июля, 10:30\n"
+            "+79001112233\n"
+            "```",
+            parse_mode="Markdown",
+            reply_markup=calls_cancel_kb()
+        )
+    else:
+        await message.answer(
+            "⭐ *Сбор отзывов*\n\n"
+            "Отправь номера телефонов пациентов которые уже побывали на приёме — каждый с новой строки:\n\n"
+            "```\n"
+            "+79001234567\n"
+            "+79009876543\n"
+            "```",
+            parse_mode="Markdown",
+            reply_markup=calls_cancel_kb()
+        )
+
+@router.message(StateFilter(State_.calls_input), F.text == "❌ Отмена")
+async def calls_cancel(message: Message, state: FSMContext):
+    await state.clear()
+    await message.answer("Отменено.", reply_markup=main_kb(True))
+
+@router.message(StateFilter(State_.calls_input))
+async def calls_start(message: Message, state: FSMContext):
+    data = await state.get_data()
+    call_type = data.get("call_type", "confirm")
+    await state.clear()
+
+    lines = [l.strip() for l in (message.text or "").splitlines() if l.strip()]
+    if not lines:
+        await message.answer("Нет номеров. Попробуй ещё раз.", reply_markup=main_kb(True))
+        return
+
+    phones = []
+    for line in lines:
+        parts = [p.strip() for p in line.split(",")]
+        phone = parts[0]
+        date  = parts[1] if len(parts) > 1 else "завтра"
+        time_ = parts[2] if len(parts) > 2 else ""
+        phones.append((phone, date, time_))
+
+    await message.answer(
+        f"📞 Начинаю обзвон: *{len(phones)} номер(ов)*...",
+        parse_mode="Markdown",
+        reply_markup=main_kb(True)
+    )
+
+    for phone, date, time_ in phones:
+        result = await voximplant_call(phone, call_type, date, time_)
+        if "error" in result:
+            await message.answer(f"❌ {phone}: {result['error']}")
+        elif result.get("result") == 1:
+            await message.answer(f"📲 {phone} — звонок запущен")
+        else:
+            err = result.get("error", str(result))
+            await message.answer(f"⚠️ {phone}: {err}")
+        await asyncio.sleep(5)  # пауза между звонками
+
+    await message.answer(f"✅ Обзвон завершён. Результаты придут сюда автоматически.")
+
+# Webhook для результатов звонков (Voximplant шлёт GET-запрос)
+# Для работы нужен публичный URL (Railway даёт его автоматически)
+# Добавь в Railway env: VOXIM_WEBHOOK_URL=https://ВАШ_APP.railway.app/vox_webhook
+async def vox_webhook_handler(request):
+    """Принимает результаты звонков от Voximplant."""
+    from aiohttp.web import Response
+    phone     = request.rel_url.query.get("phone", "")
+    result    = request.rel_url.query.get("result", "")
+    call_type = request.rel_url.query.get("call_type", "")
+    admin_uid = request.rel_url.query.get("admin_uid", str(ADMIN_ID))
+
+    result_ru = CALL_RESULTS_RU.get(result, result)
+    emoji = "📅" if call_type == "confirm" else "⭐"
+
+    try:
+        bot = Bot(token=BOT_TOKEN)
+        await bot.send_message(
+            int(admin_uid),
+            f"{emoji} *Результат звонка*\n\n"
+            f"📱 Номер: `{phone}`\n"
+            f"📊 Результат: {result_ru}",
+            parse_mode="Markdown"
+        )
+        await bot.session.close()
+    except Exception:
+        pass
+
+    return Response(text="ok")
+
+
+# ══════════════════════════════════════════════════════
+#  🤝 МОИ АГЕНТЫ (маркетолог, финансист, СММ, ассистент)
+# ══════════════════════════════════════════════════════
+
+MY_AGENTS = {
+    "📣 Маркетолог": {
+        "emoji": "📣",
+        "system": (
+            "Ты — опытный маркетолог медицинской клиники. Помогаешь привлекать пациентов и развивать бизнес.\n"
+            "Ты умеешь: разрабатывать акции и спецпредложения, писать рекламные тексты, придумывать названия услуг, "
+            "анализировать конкурентов, строить воронки продаж, делать скрипты для администраторов.\n"
+            "Отвечай конкретно, с готовыми примерами. Пиши на русском языке."
+        )
+    },
+    "💹 Финансист": {
+        "emoji": "💹",
+        "system": (
+            "Ты — финансовый директор и аналитик медицинской клиники.\n"
+            "Ты умеешь: анализировать выручку и расходы, считать рентабельность услуг и врачей, "
+            "строить финансовые прогнозы, находить точки роста прибыли, оптимизировать ФОТ, "
+            "советовать по ценообразованию, анализировать unit-экономику.\n"
+            "Давай конкретные цифры и рекомендации. Пиши на русском языке."
+        )
+    },
+    "📱 СММ": {
+        "emoji": "📱",
+        "system": (
+            "Ты — профессиональный SMM-менеджер для медицинской клиники.\n"
+            "Работаешь со всеми платформами: Instagram, Telegram-канал, ВКонтакте, TikTok, YouTube.\n"
+            "Ты умеешь: писать продающие посты и сторис, делать контент-планы, придумывать рубрики, "
+            "писать подписи к фото, создавать вирусный контент, делать экспертные статьи для блога, "
+            "писать тексты для Reels и TikTok, придумывать конкурсы и активации.\n"
+            "Пиши живо, по-человечески, с эмодзи где уместно. Русский язык."
+        )
+    },
+    "🧠 Ассистент": {
+        "emoji": "🧠",
+        "system": (
+            "Ты — личный ИИ-ассистент руководителя медицинской клиники.\n"
+            "Помогаешь с любыми задачами: составляешь письма и договоры, пишешь инструкции для персонала, "
+            "готовишь презентации и отчёты, отвечаешь на любые вопросы, помогаешь принимать решения, "
+            "структурируешь задачи и планы, переводишь тексты, объясняешь сложные вещи простым языком.\n"
+            "Будь полезным, конкретным и быстрым. Пиши на русском языке."
+        )
+    },
+}
+
+# хранилище истории агентов: {(user_id, agent_name): [{"role":..,"content":..}]}
+_agent_histories: dict[tuple, list] = {}
+
+def agents_kb() -> ReplyKeyboardMarkup:
+    b = ReplyKeyboardBuilder()
+    b.row(KeyboardButton(text="📣 Маркетолог"), KeyboardButton(text="💹 Финансист"))
+    b.row(KeyboardButton(text="📱 СММ"),        KeyboardButton(text="🧠 Ассистент"))
+    b.row(KeyboardButton(text="🏠 В главное меню"))
+    return b.as_markup(resize_keyboard=True)
+
+def agent_chat_kb() -> ReplyKeyboardMarkup:
+    b = ReplyKeyboardBuilder()
+    b.row(KeyboardButton(text="🗑 Очистить диалог"))
+    b.row(KeyboardButton(text="◀️ К агентам"), KeyboardButton(text="🏠 В главное меню"))
+    return b.as_markup(resize_keyboard=True)
+
+@router.message(F.text == "🤝 Мои агенты")
+async def my_agents_menu(message: Message, state: FSMContext):
+    await state.clear()
+    await message.answer(
+        "🤝 *Мои агенты*\n\nВыбери с кем хочешь поговорить:",
+        parse_mode="Markdown",
+        reply_markup=agents_kb()
+    )
+
+@router.message(F.text.in_(MY_AGENTS.keys()))
+async def agent_selected(message: Message, state: FSMContext):
+    agent_name = message.text
+    agent = MY_AGENTS[agent_name]
+    await state.set_state(State_.agent_chat)
+    await state.update_data(agent_name=agent_name)
+    await message.answer(
+        f"{agent['emoji']} *{agent_name}* готов к работе!\n\n"
+        f"Задай любой вопрос. Я помню наш диалог.\n"
+        f"Для сброса истории нажми «🗑 Очистить диалог».",
+        parse_mode="Markdown",
+        reply_markup=agent_chat_kb()
+    )
+
+@router.message(StateFilter(State_.agent_chat), F.text == "🗑 Очистить диалог")
+async def agent_clear_history(message: Message, state: FSMContext):
+    data = await state.get_data()
+    key = (message.from_user.id, data.get("agent_name", ""))
+    _agent_histories.pop(key, None)
+    await message.answer("🗑 Диалог очищен. Начнём заново!", reply_markup=agent_chat_kb())
+
+@router.message(StateFilter(State_.agent_chat), F.text == "◀️ К агентам")
+async def agent_back(message: Message, state: FSMContext):
+    await state.clear()
+    await message.answer("Выбери агента:", reply_markup=agents_kb())
+
+@router.message(StateFilter(State_.agent_chat), F.text == "🏠 В главное меню")
+async def agent_to_main(message: Message, state: FSMContext):
+    await state.clear()
+    is_admin = message.from_user.id == ADMIN_ID
+    await message.answer("Главное меню:", reply_markup=main_kb(is_admin))
+
+@router.message(StateFilter(State_.agent_chat))
+async def agent_chat_handler(message: Message, state: FSMContext):
+    if not message.text:
+        await message.answer("Пришли текстовое сообщение.")
+        return
+
+    data = await state.get_data()
+    agent_name = data.get("agent_name", "🧠 Ассистент")
+    agent = MY_AGENTS.get(agent_name, MY_AGENTS["🧠 Ассистент"])
+    key = (message.from_user.id, agent_name)
+
+    if key not in _agent_histories:
+        _agent_histories[key] = []
+
+    _agent_histories[key].append({"role": "user", "content": message.text})
+    # Держим последние 20 сообщений
+    if len(_agent_histories[key]) > 20:
+        _agent_histories[key] = _agent_histories[key][-20:]
+
+    thinking_msg = await message.answer("⏳ Думаю...")
+    try:
+        result = await call_text_ai(
+            prompt=message.text,
+            system=agent["system"],
+            model_id="claude",
+            uid=message.from_user.id,
+            use_history=False,
+            history_msgs=_agent_histories[key][:-1],
+            timeout_s=30
+        )
+        _agent_histories[key].append({"role": "assistant", "content": result})
+
+        chunks = [result[i:i+3500] for i in range(0, len(result), 3500)]
+        for i, chunk in enumerate(chunks):
+            if i == 0:
+                try:
+                    await thinking_msg.edit_text(
+                        f"{agent['emoji']} *{agent_name}*\n\n{chunk}",
+                        parse_mode="Markdown"
+                    )
+                except Exception:
+                    await message.answer(f"{agent['emoji']} *{agent_name}*\n\n{chunk}", parse_mode="Markdown")
+            else:
+                await message.answer(chunk)
+
+    except asyncio.TimeoutError:
+        await thinking_msg.edit_text("⏱ Время вышло. Попробуй ещё раз.")
+    except Exception as e:
+        await thinking_msg.edit_text(f"❌ Ошибка: {str(e)[:200]}")
 
 
 async def main():

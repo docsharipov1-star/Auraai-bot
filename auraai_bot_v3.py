@@ -5193,7 +5193,8 @@ async def bizsync_cmd(message: Message):
     imported, err = await _biz_sync_from_sheet()
     await message.answer(f"⚠️ {err}" if err else f"✅ Обновлено строк: {imported}. Отчёт: /biz")
 
-FALLBACK_ZP_URL = "https://docs.google.com/spreadsheets/d/1ZgnQMZ4CY0fHsnF7fy-teFvcq-kH-XEC0LxR1qdDcaM/edit"
+FALLBACK_ZP_URL  = "https://docs.google.com/spreadsheets/d/1ZgnQMZ4CY0fHsnF7fy-teFvcq-kH-XEC0LxR1qdDcaM/edit"
+FALLBACK_ZP_GIDS = ["0", "1150786377", "63998999", "667260044", "321025656", "1616134916"]  # все вкладки таблицы
 
 def start_zp_sync(bot):
     """Автосинхронизация матриц ЗП при старте и каждые 6 часов."""
@@ -5395,8 +5396,10 @@ async def _sync_zp_matrix():
             # Получаем все вкладки таблицы
             tabs = await _list_sheet_tabs(sid)
             if not tabs:
-                # Если не удалось получить список — читаем gid=0
-                tabs = [("0", "лист1")]
+                # Если htmlview не сработал — используем известные GID
+                known = FALLBACK_ZP_GIDS if sid in FALLBACK_ZP_URL else ["0"]
+                tabs = [(g, f"лист_{g}") for g in known]
+                logging.info(f"ZP: _list_sheet_tabs failed for {sid}, using {len(tabs)} hardcoded GIDs")
 
             for gid, tab_name in tabs:
                 csv_url = f"https://docs.google.com/spreadsheets/d/{sid}/export?format=csv&gid={gid}"

@@ -5193,6 +5193,28 @@ async def bizsync_cmd(message: Message):
     imported, err = await _biz_sync_from_sheet()
     await message.answer(f"⚠️ {err}" if err else f"✅ Обновлено строк: {imported}. Отчёт: /biz")
 
+def start_zp_sync(bot):
+    """Автосинхронизация матриц ЗП при старте и каждые 6 часов."""
+    async def loop():
+        # Сразу при старте
+        await asyncio.sleep(10)
+        try:
+            cnt, err = await _sync_zp_matrix()
+            logging.info(f"✅ ZP auto-sync: {cnt} записей{' | ' + err if err else ''}")
+            if cnt > 0:
+                await bot.send_message(ADMIN_ID,
+                    f"✅ Матрицы ЗП загружены автоматически: {cnt} записей")
+        except Exception as e:
+            logging.error(f"ZP sync error: {e}")
+        # Потом каждые 6 часов
+        while True:
+            await asyncio.sleep(6 * 3600)
+            try:
+                await _sync_zp_matrix()
+            except Exception as e:
+                logging.error(f"ZP sync loop error: {e}")
+    asyncio.create_task(loop())
+
 def start_biz_sync(bot):
     async def loop():
         await asyncio.sleep(120)
@@ -6931,6 +6953,7 @@ async def main():
     dp.include_router(router)
     start_autoposter(bot)
     start_biz_sync(bot)
+    start_zp_sync(bot)
 
     logging.info(f"🚀 AuraAI Bot v3.44 FIX-отчётность запущен | @{BOT_USERNAME}")
     logging.info("✅ ВЕРСИЯ С ВЫБОРОМ ФОРМАТА 9:16 16:9 — если видишь это, новый код работает")

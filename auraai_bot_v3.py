@@ -557,7 +557,7 @@ async def call_text_ai(prompt: str, system: str, model_id: str, uid: int = 0, us
         if provider == "anthropic" and anthropic_client:
             resp = await asyncio.wait_for(
                 anthropic_client.messages.create(
-                    model="claude-sonnet-4-20250514", max_tokens=1024,
+                    model="claude-sonnet-4-6", max_tokens=1024,
                     system=system, messages=messages),
                 timeout=timeout_s
             )

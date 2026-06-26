@@ -5237,32 +5237,50 @@ def start_biz_sync(bot):
 #  Строки 3+: день | сумма1 | сумма2 | ...
 # ====================================================================
 
-def _parse_salary_matrix(csv_text: str) -> tuple:
+def _parse_salary_matrix(csv_text: str, tab_name: str = "") -> tuple:
     """
     Парсит матрицу ЗП врачей.
     Возвращает (period, list of {date, doctor, salary, revenue, pct, is_medical})
+    Поддерживает формат без строки-заголовка (как июнь) и с опечатками в названии месяца.
     """
     import csv as _csv, io as _io
     rows = list(_csv.reader(_io.StringIO(csv_text)))
-    if len(rows) < 3:
+    if len(rows) < 2:
         return None, []
 
-    # Строка 1: найти месяц/год
-    period_str = " ".join(c.strip() for c in rows[0] if c.strip()).lower()
-    year, month = None, None
-    for i, mn in enumerate(_RU_MONTHS, 1):
-        if mn in period_str:
-            month = i
-            m = re.search(r"\d{4}", period_str)
-            if m:
-                year = int(m.group())
+    # Ищем строку с месяцем/годом среди первых 5 строк
+    year, month, header_row_idx = None, None, 1
+    for row_idx in range(min(5, len(rows))):
+        period_str = " ".join(c.strip() for c in rows[row_idx] if c.strip()).lower()
+        for i, mn in enumerate(_RU_MONTHS, 1):
+            if mn[:5] in period_str:  # первые 5 букв — обходит опечатки
+                m = re.search(r"\d{4}", period_str)
+                if m:
+                    month, year = i, int(m.group())
+                    header_row_idx = row_idx + 1
+                    break
+        if year and month:
             break
+
+    # Fallback: ищем период в названии вкладки
+    if not year or not month:
+        period_str = tab_name.lower()
+        for i, mn in enumerate(_RU_MONTHS, 1):
+            if mn[:5] in period_str:
+                m = re.search(r"\d{4}", period_str)
+                if m:
+                    month, year = i, int(m.group())
+                    # Если строка 0 уже содержит "дата" — заголовки там
+                    if rows and any("дата" in c.lower() for c in rows[0]):
+                        header_row_idx = 0
+                    break
+
     if not year or not month:
         return None, []
     period = f"{year}-{month:02d}"
 
-    # Строка 2: заголовки врачей
-    header = rows[1]
+    # Заголовки врачей
+    header = rows[header_row_idx] if header_row_idx < len(rows) else []
     doctors = []
     for col_idx, cell in enumerate(header[1:], 1):
         cell = cell.strip()
@@ -5285,7 +5303,7 @@ def _parse_salary_matrix(csv_text: str) -> tuple:
         doctors.append({"name": name, "pct": pct, "col": col_idx})
 
     result = []
-    for row in rows[2:]:
+    for row in rows[header_row_idx + 1:]:
         if not row:
             continue
         day_cell = (row[0] if row else "").strip()
@@ -5368,7 +5386,7 @@ async def _sync_zp_matrix():
                 if err or not text:
                     errors.append(f"{tab_name}: {err or 'пусто'}"); continue
 
-                period, records = _parse_salary_matrix(text)
+                period, records = _parse_salary_matrix(text, tab_name=tab_name)
                 if not period or not records:
                     continue  # Пропускаем вкладки которые не являются матрицей ЗП
 

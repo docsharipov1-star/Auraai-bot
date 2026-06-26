@@ -6383,7 +6383,7 @@ async def cb_dmon(cq: CallbackQuery):
         return
     period = cq.data.split("_", 1)[1]
     await cq.answer("Готовлю отчёт...")
-    rows = await db_all("SELECT doctor,service,kind,ref_from,revenue,percent,pay,src,patient FROM visits WHERE period = ? AND src IN ('shift','clean','zp')", (period,))
+    rows = await db_all("SELECT doctor,service,kind,ref_from,revenue,percent,pay,src,patient FROM visits WHERE period = ? AND src IN ('shift','clean','zp') AND doctor IS NOT NULL AND doctor != '' AND doctor != '—' AND LOWER(doctor) NOT LIKE '%не указан%'", (period,))
     if not rows:
         await cq.message.answer(f"За {_period_label(period)} данных нет.")
         return
@@ -6527,7 +6527,7 @@ async def doctors_cmd(message: Message):
 
     # ── Подробный отчёт: за конкретный месяц / дату / N дней ──
     if period:
-        rows = await db_all("SELECT doctor,service,kind,ref_from,revenue,percent,pay,src,patient FROM visits WHERE period = ? AND src IN ('shift','clean','zp')", (period,))
+        rows = await db_all("SELECT doctor,service,kind,ref_from,revenue,percent,pay,src,patient FROM visits WHERE period = ? AND src IN ('shift','clean','zp') AND doctor IS NOT NULL AND doctor != '' AND doctor != '—' AND LOWER(doctor) NOT LIKE '%не указан%'", (period,))
         period_label = _period_label(period)
     elif on_date:
         rows = await db_all("SELECT doctor,service,kind,ref_from,revenue,percent,pay,src,patient FROM visits WHERE day = ?", (on_date,))

@@ -6473,6 +6473,7 @@ async def doctors_cmd(message: Message):
     # Игнорируем нетекстовые «аргументы» из названия кнопки
     arg = raw_arg if raw_arg and raw_arg not in ("Доктора", "доктора") else ""
     synced, sync_err = await _sync_visits()
+    await _sync_zp_matrix()  # всегда синхронизируем ЗП при открытии отчёта
     await _ensure_visits_table()
 
     on_date = None

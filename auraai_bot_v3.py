@@ -6397,6 +6397,8 @@ async def _render_doctor_detail(message, rows, period_label):
     sent_to = {}
     for r in rows:
         d = _canon_with(r["doctor"] or "—", aliases)
+        if d in ("—", "", "врач не указан", "не указан"):
+            continue  # пропускаем записи без врача
         x = docs.setdefault(d, {"total": 0, "first": 0, "repeat": 0, "rev": 0.0,
                                 "services": {}, "ref_in": 0, "ref_in_by": {}, "salary": 0.0, "pay": {}})
         x["total"] += 1
@@ -6505,7 +6507,7 @@ async def doctors_cmd(message: Message):
             await message.answer(msg)
             return
         # Показываем краткую сводку по последним месяцам
-        allv = await db_all("SELECT period, doctor, revenue FROM visits WHERE src IN ('shift','clean','zp') AND period IS NOT NULL")
+        allv = await db_all("SELECT period, doctor, revenue FROM visits WHERE src IN ('shift','clean','zp') AND period IS NOT NULL AND period >= '2026-01'")
         pct_map = await _get_doctor_percents()
         aliases = await _get_aliases()
         per_map = {}

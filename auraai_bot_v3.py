@@ -56,7 +56,8 @@ VOXIM_APP_NAME    = os.getenv("VOXIM_APP_NAME", "clinic")
 VOXIM_RULE_NAME   = os.getenv("VOXIM_RULE_NAME", "confirm")
 VOXIM_CALLER_ID   = os.getenv("VOXIM_CALLER_ID", "")   # номер с которого звонить
 VOXIM_WEBHOOK_URL = os.getenv("VOXIM_WEBHOOK_URL", "")  # URL для результатов звонков
-DB_PATH       = "/app/data/auraai.db"
+_DB_DIR = os.getenv("DB_DIR", "/app/data")
+DB_PATH = os.path.join(_DB_DIR, "auraai.db")
 FREE_CREDITS  = 150
 REFERRAL_BONUS = 50
 
@@ -144,7 +145,13 @@ SYSTEM_PROMPTS = {
 # ══════════════════════════════════════════════════════
 
 import pathlib
-pathlib.Path("/app/data").mkdir(parents=True, exist_ok=True)
+try:
+    pathlib.Path(_DB_DIR).mkdir(parents=True, exist_ok=True)
+except OSError as _e:
+    import tempfile as _tempfile
+    _DB_DIR = _tempfile.gettempdir()
+    DB_PATH = os.path.join(_DB_DIR, "auraai.db")
+    print(f"⚠️ Cannot create {_DB_DIR}: {_e}. Using temp DB: {DB_PATH}")
 
 async def init_db():
     async with aiosqlite.connect(DB_PATH) as db:

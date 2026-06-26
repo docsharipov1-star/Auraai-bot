@@ -6397,7 +6397,7 @@ async def _render_doctor_detail(message, rows, period_label):
     sent_to = {}
     for r in rows:
         d = _canon_with(r["doctor"] or "—", aliases)
-        if d in ("—", "", "врач не указан", "не указан"):
+        if not d or d == "—" or d.lower() in ("врач не указан", "не указан", "doctor", "unknown"):
             continue  # пропускаем записи без врача
         x = docs.setdefault(d, {"total": 0, "first": 0, "repeat": 0, "rev": 0.0,
                                 "services": {}, "ref_in": 0, "ref_in_by": {}, "salary": 0.0, "pay": {}})

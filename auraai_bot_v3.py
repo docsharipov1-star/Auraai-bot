@@ -7000,4 +7000,19 @@ async def main():
     await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except Exception as e:
+        import traceback, httpx as _httpx
+        err = traceback.format_exc()
+        print(f"FATAL: {err}")
+        # Отправляем ошибку админу через Telegram API напрямую
+        try:
+            import urllib.request, urllib.parse
+            token = os.getenv("BOT_TOKEN","")
+            admin = os.getenv("ADMIN_ID","0")
+            msg = f"❌ БОТ УПАЛ ПРИ СТАРТЕ:\n\n{err[:3000]}"
+            data = urllib.parse.urlencode({"chat_id": admin, "text": msg}).encode()
+            urllib.request.urlopen(f"https://api.telegram.org/bot{token}/sendMessage", data, timeout=10)
+        except Exception:
+            pass

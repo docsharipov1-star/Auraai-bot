@@ -6494,48 +6494,33 @@ async def doctors_cmd(message: Message):
         else:
             on_date = _norm_date(arg)
 
-    # ── По умолчанию (кнопка «Доктора» или /doctors без аргумента) — сводка ПО МЕСЯЦАМ ──
+    # ── По умолчанию (кнопка «Доктора» или /doctors без аргумента) — выбор месяца ──
     if not arg or (not days and not period and not on_date):
-        allv = await db_all("SELECT period, day, doctor, revenue FROM visits WHERE src IN ('shift','clean','zp')")
-        if not allv:
+        ps = await _doctor_periods()
+        if not ps:
             msg = "📊 По врачам пока нет данных.\n\n"
             if sync_err:
-                msg += f"⚠️ Таблица: {sync_err}\n\n"
-            msg += ("Проверь:\n• таблица открыта «по ссылке: Читатель»\n"
-                    "• /visits — что подключено, /diag — диагностика")
+                msg += f"⚠️ {sync_err}\n\n"
+            msg += "Проверь подключение таблиц через /setzpday"
             await message.answer(msg)
             return
-        aliases = await _get_aliases()
+        # Показываем краткую сводку по последним месяцам
+        allv = await db_all("SELECT period, doctor, revenue FROM visits WHERE src IN ('shift','clean','zp') AND period IS NOT NULL")
         pct_map = await _get_doctor_percents()
+        aliases = await _get_aliases()
         per_map = {}
         for r in allv:
-            p = r["period"] or ((r["day"] or "")[:7]) or "—"
+            p = r["period"]
             d = _canon_with(r["doctor"] or "—", aliases)
-            x = per_map.setdefault(p, {}).setdefault(d, {"n": 0, "rev": 0.0})
-            x["n"] += 1
+            x = per_map.setdefault(p, {"rev": 0.0, "doctors": set()})
             x["rev"] += r["revenue"] or 0
-        ordered = sorted(per_map.keys(), reverse=True)
-        recent = ordered[:6]
-        out = []
-        for p in recent:
-            docs = per_map[p]
-            totn = sum(v["n"] for v in docs.values())
-            totr = sum(v["rev"] for v in docs.values())
-            lines = [f"📅 *{_period_label(p)}* · {totn} приёмов · {_money(totr)}"]
-            for d, v in sorted(docs.items(), key=lambda kv: -kv[1]["rev"]):
-                pct = pct_map.get(d)
-                zp = f" · ЗП {pct}%: {_money(v['rev'] * pct / 100)}" if pct else ""
-                lines.append(f"• {d} — {v['n']} приёмов, {_money(v['rev'])}{zp}")
-            out.append("\n".join(lines))
-        tail = ""
-        more = [p for p in ordered if p not in recent]
-        if more:
-            tail += "\n\n📂 Ещё есть месяцы: " + ", ".join(_period_label(p) for p in more[:12])
-        tail += "\n\nПодробно за месяц: напиши «/doctors Июнь 2026» — врачи, направления, оплаты."
-        await _send_block(message, "📊 *Врачи по месяцам*", "\n\n".join(out) + tail)
-        ps = await _doctor_periods()
-        if ps:
-            await message.answer("📅 Открыть конкретный месяц — выбери год:", reply_markup=_doctor_year_kb(ps))
+            x["doctors"].add(d)
+        lines = ["📊 *Отчёты по врачам*\n\nВыбери месяц:\n"]
+        for p in sorted(per_map.keys(), reverse=True)[:8]:
+            v = per_map[p]
+            lines.append(f"• {_period_label(p)}: {_money(v['rev'])} руб · {len(v['doctors'])} врачей")
+        await message.answer("\n".join(lines), parse_mode="Markdown")
+        await message.answer("📅 Выбери год:", reply_markup=_doctor_year_kb(ps))
         return
 
     # ── Подробный отчёт: за конкретный месяц / дату / N дней ──

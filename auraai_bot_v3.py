@@ -5253,10 +5253,10 @@ def _parse_salary_matrix(csv_text: str) -> tuple:
             pct = (int(m.group(1)) + int(m.group(2))) / 2
             name = re.sub(r"\s*\d+\s*[-–]\s*\d+\s*%", "", cell).strip()
         else:
-            m2 = re.search(r"(\d+)\s*%", cell)
-            if m2:
+            m2 = re.search(r"(\d+)\s*%?", cell)
+            if m2 and int(m2.group(1)) <= 100:
                 pct = int(m2.group(1))
-                name = re.sub(r"\s*\d+\s*%", "", cell).strip()
+                name = re.sub(r"\s*\d+\s*%?$", "", cell).strip()
             else:
                 name = cell
                 pct = None
@@ -5992,7 +5992,7 @@ async def _sync_visits():
         per2 = per or (day[:7] if (day and len(day) >= 7) else None)
         all_rows.append((day, doctor, service, kind, ref, revenue, 0, pay, "shift", patient, per2))
     await _ensure_visits_table()
-    await db_run("DELETE FROM visits")
+    await db_run("DELETE FROM visits WHERE src IN ('shift', 'clean')")
     for r in all_rows:
         await db_run("INSERT INTO visits (day,doctor,service,kind,ref_from,revenue,percent,pay,src,patient,period) VALUES (?,?,?,?,?,?,?,?,?,?,?)", r)
     return len(all_rows), ("; ".join(errors) if errors else None)
@@ -6141,7 +6141,7 @@ async def visitsclear_cmd(message: Message):
     await set_setting("visit_sheets", "[]")
     await set_setting("shift_sheets", "[]")
     await _ensure_visits_table()
-    await db_run("DELETE FROM visits")
+    await db_run("DELETE FROM visits WHERE src IN ('shift', 'clean')")
     await message.answer("🗑 Все таблицы по врачам отключены.")
 
 DEFAULT_ALIASES = [

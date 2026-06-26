@@ -5193,17 +5193,32 @@ async def bizsync_cmd(message: Message):
     imported, err = await _biz_sync_from_sheet()
     await message.answer(f"⚠️ {err}" if err else f"✅ Обновлено строк: {imported}. Отчёт: /biz")
 
+FALLBACK_ZP_URL = "https://docs.google.com/spreadsheets/d/1ZgnQMZ4CY0fHsnF7fy-teFvcq-kH-XEC0LxR1qdDcaM/edit"
+
 def start_zp_sync(bot):
     """Автосинхронизация матриц ЗП при старте и каждые 6 часов."""
     async def loop():
         # Сразу при старте
         await asyncio.sleep(10)
         try:
+            day_before = await _get_zp_sheets("zp_day_sheets")
+            night_before = await _get_zp_sheets("zp_night_sheets")
+            used_fallback = not day_before and not night_before
             cnt, err = await _sync_zp_matrix()
             logging.info(f"✅ ZP auto-sync: {cnt} записей{' | ' + err if err else ''}")
             if cnt > 0:
+                fallback_note = (
+                    f"\n⚠️ Таблица ЗП не была настроена — использован резервный URL:\n{FALLBACK_ZP_URL}\n"
+                    "Он автоматически сохранён. Для смены: /setzpday <url>"
+                ) if used_fallback else ""
                 await bot.send_message(ADMIN_ID,
-                    f"✅ Матрицы ЗП загружены автоматически: {cnt} записей")
+                    f"✅ Матрицы ЗП загружены автоматически: {cnt} записей{fallback_note}")
+            elif used_fallback:
+                await bot.send_message(ADMIN_ID,
+                    f"⚠️ Резервная таблица ЗП не содержит данных или недоступна.\n"
+                    f"URL: {FALLBACK_ZP_URL}\n"
+                    f"Убедись что таблица открыта «по ссылке: Читатель».\n"
+                    f"Для настройки другой: /setzpday <url>")
         except Exception as e:
             logging.error(f"ZP sync error: {e}")
         # Потом каждые 6 часов
@@ -5354,7 +5369,10 @@ async def _sync_zp_matrix():
     day_sheets   = await _get_zp_sheets("zp_day_sheets")
     night_sheets = await _get_zp_sheets("zp_night_sheets")
     if not day_sheets and not night_sheets:
-        return 0, "Матрицы ЗП не подключены. Используй /setzpday и /setzpnight"
+        # Fallback: использовать жёстко заданный URL, если в БД нет ни одного листа
+        logging.warning("ZP sheets not configured — using hardcoded fallback URL")
+        day_sheets = [FALLBACK_ZP_URL]
+        await set_setting("zp_day_sheets", json.dumps(day_sheets, ensure_ascii=False))
 
     await _ensure_visits_table()
     await db_run("DELETE FROM visits WHERE src='zp'")

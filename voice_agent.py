@@ -30,6 +30,7 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 OPENAI_API_KEY    = os.getenv("OPENAI_API_KEY", "")   # для Whisper STT
 ADMIN_TG_ID       = os.getenv("ADMIN_ID", "6766016614")
 BOT_TOKEN         = os.getenv("BOT_TOKEN", "")
+BASE_URL          = os.getenv("BASE_URL", "https://auraai-bot-production.up.railway.app")
 
 openai_client = AsyncOpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
@@ -328,7 +329,7 @@ async def call_outbound(request: Request, background_tasks: BackgroundTasks):
     time_       = body.get("time", "")
     tel_url     = body.get("telephony_api_url", "")
     tel_key     = body.get("telephony_api_key", "")
-    webhook_url = body.get("webhook_url", "")  # куда телефония отправит аудио
+    webhook_url = body.get("webhook_url", f"{BASE_URL}/call/audio")
 
     if not phone:
         raise HTTPException(400, "phone required")

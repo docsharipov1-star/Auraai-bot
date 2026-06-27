@@ -16,7 +16,7 @@ from typing import Optional
 from datetime import datetime
 
 import httpx
-from fastapi import FastAPI, Request, HTTPException, BackgroundTasks
+from fastapi import FastAPI, Request, HTTPException, BackgroundTasks, Form
 from fastapi.responses import JSONResponse, Response
 from anthropic import AsyncAnthropic
 from openai import AsyncOpenAI
@@ -366,3 +366,120 @@ async def call_outbound(request: Request, background_tasks: BackgroundTasks):
     except Exception as e:
         log.error(f"Telephony error: {e}")
         raise HTTPException(502, f"Telephony error: {e}")
+
+
+# ─── Callibri webhook ────────────────────────────────────────────────────────
+
+@app.post("/callibri/webhook")
+async def callibri_webhook(
+    request: Request,
+    background_tasks: BackgroundTasks,
+):
+    """
+    Callibri присылает данные о звонке после его завершения.
+    Формат: application/x-www-form-urlencoded
+    Все параметры принимаем и анализируем через AI.
+    """
+    # Принимаем form-encoded данные
+    form = await request.form()
+    data = dict(form)
+
+    phone        = data.get("phone", "")
+    name         = data.get("name", "Пациент")
+    duration     = data.get("billsec", data.get("duration", "0"))
+    call_status  = data.get("call_status", "")
+    event_type   = data.get("event_type", "")
+    recording    = data.get("link_download", "")
+    source       = data.get("source", "")
+    lid_id       = data.get("lid_id", "")
+    is_lid       = data.get("is_lid", "")
+    region       = data.get("region", "")
+    comment      = data.get("comment", "")
+    date         = data.get("date_project", data.get("date", ""))
+
+    log.info(f"Callibri webhook: {phone} | {call_status} | {duration}s | lid={is_lid}")
+
+    # Анализируем звонок через AI если есть запись
+    analysis = ""
+    transcript = ""
+    if recording:
+        background_tasks.add_task(
+            _analyze_callibri_call,
+            phone, name, recording, duration, call_status, is_lid, source
+        )
+
+    # Немедленное уведомление в Telegram
+    status_emoji = "✅" if call_status in ("Отвечен", "answered") else "❌"
+    lid_emoji    = "🎯 ЛИД" if str(is_lid) in ("1", "true", "True") else ""
+
+    msg = (
+        f"📞 Звонок из Callibri {lid_emoji}\n"
+        f"Пациент: {name} ({phone})\n"
+        f"Статус: {status_emoji} {call_status}\n"
+        f"Длительность: {duration} сек\n"
+        f"Источник: {source}\n"
+        f"Регион: {region}"
+    )
+    if comment:
+        msg += f"\nКомментарий: {comment}"
+    if recording:
+        msg += f"\n🎙 Запись: анализирую..."
+
+    background_tasks.add_task(notify_admin, msg)
+
+    return {"status": "ok"}
+
+
+async def _analyze_callibri_call(
+    phone: str, name: str, recording_url: str,
+    duration: str, call_status: str, is_lid: str, source: str
+):
+    """Скачивает запись звонка, транскрибирует и анализирует через AI."""
+    try:
+        # Скачиваем аудио запись
+        async with httpx.AsyncClient(timeout=60) as client:
+            r = await client.get(recording_url)
+            if r.status_code != 200:
+                log.error(f"Не удалось скачать запись: {recording_url}")
+                return
+            audio_bytes = r.content
+
+        # Транскрибируем через Whisper
+        transcript = await speech_to_text(audio_bytes, "mp3")
+        if not transcript:
+            return
+
+        log.info(f"Транскрипция ({phone}): {transcript[:200]}")
+
+        # Анализируем через Claude
+        analysis_prompt = f"""Проанализируй звонок в стоматологию:
+
+Пациент: {name} ({phone})
+Статус: {call_status}, Длительность: {duration} сек
+Источник: {source}
+Это лид: {is_lid}
+
+Транскрипция:
+{transcript}
+
+Ответь кратко:
+1. О чём был звонок?
+2. Что хотел пациент?
+3. Итог / нужен ли перезвон?"""
+
+        response = await anthropic.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=300,
+            messages=[{"role": "user", "content": analysis_prompt}]
+        )
+        analysis = response.content[0].text
+
+        # Отправляем полный анализ в Telegram
+        await notify_admin(
+            f"🧠 Анализ звонка {name} ({phone})\n\n"
+            f"📝 Транскрипция:\n{transcript[:500]}\n\n"
+            f"💡 Итог:\n{analysis}"
+        )
+
+    except Exception as e:
+        log.error(f"Ошибка анализа звонка: {e}")

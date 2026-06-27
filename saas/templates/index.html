@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AuraAI — AI-агент для вашей клиники</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family: 'Segoe UI', system-ui, sans-serif; background:#0a0a0f; color:#e8e8f0; }
+
+  /* NAV */
+  nav { display:flex; justify-content:space-between; align-items:center;
+        padding:20px 48px; border-bottom:1px solid #1e1e2e; }
+  .logo { font-size:22px; font-weight:700; color:#a78bfa; letter-spacing:-0.5px; }
+  .nav-links a { color:#9ca3af; text-decoration:none; margin-left:32px; font-size:14px; }
+  .nav-links a:hover { color:#e8e8f0; }
+  .btn-nav { background:#7c3aed; color:#fff !important; padding:8px 20px;
+             border-radius:8px; font-size:14px; }
+
+  /* HERO */
+  .hero { text-align:center; padding:100px 24px 80px; max-width:800px; margin:0 auto; }
+  .badge { display:inline-block; background:#1e1e2e; border:1px solid #2d2d42;
+           color:#a78bfa; padding:6px 16px; border-radius:20px; font-size:13px; margin-bottom:24px; }
+  h1 { font-size:52px; font-weight:800; line-height:1.1; margin-bottom:20px;
+       background:linear-gradient(135deg,#e8e8f0,#a78bfa); -webkit-background-clip:text;
+       -webkit-text-fill-color:transparent; }
+  .hero p { color:#9ca3af; font-size:18px; line-height:1.6; margin-bottom:40px; }
+  .hero-btns { display:flex; gap:16px; justify-content:center; flex-wrap:wrap; }
+  .btn-primary { background:#7c3aed; color:#fff; padding:14px 32px; border-radius:10px;
+                 font-size:16px; text-decoration:none; font-weight:600; }
+  .btn-secondary { background:transparent; color:#e8e8f0; padding:14px 32px;
+                   border-radius:10px; font-size:16px; text-decoration:none;
+                   border:1px solid #2d2d42; }
+
+  /* FEATURES */
+  .features { padding:80px 48px; max-width:1100px; margin:0 auto; }
+  .section-title { text-align:center; font-size:36px; font-weight:700; margin-bottom:12px; }
+  .section-sub { text-align:center; color:#9ca3af; margin-bottom:56px; font-size:16px; }
+  .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:24px; }
+  .card { background:#12121a; border:1px solid #1e1e2e; border-radius:16px; padding:28px; }
+  .card-icon { font-size:32px; margin-bottom:16px; }
+  .card h3 { font-size:18px; font-weight:600; margin-bottom:10px; }
+  .card p { color:#9ca3af; font-size:14px; line-height:1.6; }
+
+  /* PRICING */
+  .pricing { padding:80px 48px; max-width:900px; margin:0 auto; }
+  .plans { display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:24px; margin-top:40px; }
+  .plan { background:#12121a; border:1px solid #1e1e2e; border-radius:16px; padding:32px; text-align:center; }
+  .plan.popular { border-color:#7c3aed; position:relative; }
+  .plan.popular::before { content:'Популярный'; position:absolute; top:-12px; left:50%;
+    transform:translateX(-50%); background:#7c3aed; padding:4px 16px;
+    border-radius:20px; font-size:12px; }
+  .plan-name { font-size:14px; color:#9ca3af; margin-bottom:8px; text-transform:uppercase; letter-spacing:1px; }
+  .plan-price { font-size:40px; font-weight:800; margin-bottom:4px; }
+  .plan-price span { font-size:16px; color:#9ca3af; font-weight:400; }
+  .plan-features { list-style:none; margin:24px 0; text-align:left; }
+  .plan-features li { padding:8px 0; border-bottom:1px solid #1e1e2e; font-size:14px; color:#d1d5db; }
+  .plan-features li::before { content:'✓  '; color:#a78bfa; }
+  .btn-plan { display:block; background:#7c3aed; color:#fff; padding:12px; border-radius:8px;
+              text-decoration:none; font-weight:600; margin-top:8px; }
+  .btn-plan.outline { background:transparent; border:1px solid #2d2d42; }
+
+  /* HOW */
+  .how { padding:80px 48px; max-width:900px; margin:0 auto; }
+  .steps { display:flex; flex-direction:column; gap:0; margin-top:40px; }
+  .step { display:flex; gap:24px; align-items:flex-start; padding:24px 0;
+          border-bottom:1px solid #1e1e2e; }
+  .step-num { background:#7c3aed; color:#fff; width:40px; height:40px; border-radius:50%;
+              display:flex; align-items:center; justify-content:center;
+              font-weight:700; flex-shrink:0; }
+  .step-content h3 { font-size:18px; margin-bottom:6px; }
+  .step-content p { color:#9ca3af; font-size:14px; line-height:1.5; }
+
+  /* FOOTER */
+  footer { text-align:center; padding:40px; color:#4b5563; font-size:13px;
+           border-top:1px solid #1e1e2e; margin-top:40px; }
+
+  /* MODAL */
+  .modal-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.8);
+                   z-index:100; align-items:center; justify-content:center; }
+  .modal-overlay.open { display:flex; }
+  .modal { background:#12121a; border:1px solid #2d2d42; border-radius:16px;
+           padding:40px; width:100%; max-width:440px; }
+  .modal h2 { margin-bottom:24px; font-size:22px; }
+  .form-group { margin-bottom:16px; }
+  .form-group label { display:block; font-size:13px; color:#9ca3af; margin-bottom:6px; }
+  .form-group input { width:100%; background:#0a0a0f; border:1px solid #2d2d42;
+                      border-radius:8px; padding:10px 14px; color:#e8e8f0; font-size:14px; }
+  .form-group input:focus { outline:none; border-color:#7c3aed; }
+  .btn-submit { width:100%; background:#7c3aed; color:#fff; padding:12px;
+                border:none; border-radius:8px; font-size:16px; font-weight:600;
+                cursor:pointer; margin-top:8px; }
+  .modal-close { float:right; cursor:pointer; color:#9ca3af; font-size:20px; }
+  .modal-tabs { display:flex; gap:8px; margin-bottom:24px; }
+  .tab { flex:1; padding:10px; border:1px solid #2d2d42; border-radius:8px;
+         text-align:center; cursor:pointer; font-size:14px; color:#9ca3af; }
+  .tab.active { border-color:#7c3aed; color:#e8e8f0; background:#1e1e2e; }
+  #api-result { margin-top:16px; background:#0a0a0f; border:1px solid #1e1e2e;
+                border-radius:8px; padding:12px; font-size:12px; font-family:monospace;
+                color:#a78bfa; display:none; word-break:break-all; }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="logo">AuraAI</div>
+  <div class="nav-links">
+    <a href="#features">Возможности</a>
+    <a href="#how">Как работает</a>
+    <a href="#pricing">Тарифы</a>
+    <a href="#" onclick="openModal()" class="btn-nav">Попробовать</a>
+  </div>
+</nav>
+
+<section class="hero">
+  <div class="badge">🤖 AI-агент нового поколения</div>
+  <h1>Голосовой AI-агент для вашей клиники</h1>
+  <p>Пишет пациентам, звонит и напоминает о записях — без участия администратора.<br>
+     Работает 24/7, говорит как живой человек.</p>
+  <div class="hero-btns">
+    <a href="#" onclick="openModal()" class="btn-primary">Начать бесплатно</a>
+    <a href="#how" class="btn-secondary">Как это работает →</a>
+  </div>
+</section>
+
+<section class="features" id="features">
+  <div class="section-title">Всё что нужно клинике</div>
+  <div class="section-sub">От напоминания о записи до сбора отзывов — всё автоматически</div>
+  <div class="cards">
+    <div class="card">
+      <div class="card-icon">📞</div>
+      <h3>Голосовые звонки с AI</h3>
+      <p>Агент звонит пациентам и ведёт живой разговор. Подтверждает записи, отвечает на вопросы. Без скриптов DTMF.</p>
+    </div>
+    <div class="card">
+      <div class="card-icon">💬</div>
+      <h3>Telegram + WhatsApp</h3>
+      <p>Пишет пациентам в мессенджеры. Если не ответили 30 минут — автоматически звонит.</p>
+    </div>
+    <div class="card">
+      <div class="card-icon">⭐</div>
+      <h3>Сбор отзывов</h3>
+      <p>После приёма звонит или пишет пациенту, собирает оценку. Хорошие отзывы → просит оставить на картах.</p>
+    </div>
+    <div class="card">
+      <div class="card-icon">📊</div>
+      <h3>Отчёты по врачам</h3>
+      <p>Автоматически считает выручку, ЗП и количество приёмов каждого врача. Интеграция с таблицами.</p>
+    </div>
+    <div class="card">
+      <div class="card-icon">🔗</div>
+      <h3>Любая телефония</h3>
+      <p>Работает с Калибри, Mango, UIS и другими. Подключение через webhook за 10 минут.</p>
+    </div>
+    <div class="card">
+      <div class="card-icon">🔒</div>
+      <h3>Безопасность данных</h3>
+      <p>Данные пациентов хранятся только на ваших серверах. Полное соответствие 152-ФЗ.</p>
+    </div>
+  </div>
+</section>
+
+<section class="how" id="how">
+  <div class="section-title">Как это работает</div>
+  <div class="section-sub">Настройка за 3 минуты, результат сразу</div>
+  <div class="steps">
+    <div class="step">
+      <div class="step-num">1</div>
+      <div class="step-content">
+        <h3>Регистрируете клинику</h3>
+        <p>Указываете название, рабочие часы, список услуг. Получаете API-ключ.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">2</div>
+      <div class="step-content">
+        <h3>Подключаете телефонию</h3>
+        <p>Вставляете webhook-URL вашей телефонии. Агент начинает принимать и совершать звонки.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">3</div>
+      <div class="step-content">
+        <h3>Агент работает сам</h3>
+        <p>Подтверждает записи, отвечает на вопросы, собирает отзывы. Уведомляет вас в Telegram.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">4</div>
+      <div class="step-content">
+        <h3>Смотрите статистику</h3>
+        <p>В дашборде видите все звонки, конверсию подтверждений и средний рейтинг клиники.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="pricing" id="pricing">
+  <div class="section-title">Тарифы</div>
+  <div class="section-sub">Начните бесплатно, растите без ограничений</div>
+  <div class="plans">
+    <div class="plan">
+      <div class="plan-name">Старт</div>
+      <div class="plan-price">0 <span>₽/мес</span></div>
+      <ul class="plan-features">
+        <li>50 звонков в месяц</li>
+        <li>1 агент</li>
+        <li>Telegram-бот</li>
+        <li>Базовая статистика</li>
+      </ul>
+      <a href="#" onclick="openModal()" class="btn-plan outline">Начать</a>
+    </div>
+    <div class="plan popular">
+      <div class="plan-name">Клиника</div>
+      <div class="plan-price">4 900 <span>₽/мес</span></div>
+      <ul class="plan-features">
+        <li>500 звонков в месяц</li>
+        <li>3 агента</li>
+        <li>Telegram + WhatsApp</li>
+        <li>Отчёты по врачам</li>
+        <li>Интеграция с МИС</li>
+        <li>Приоритетная поддержка</li>
+      </ul>
+      <a href="#" onclick="openModal()" class="btn-plan">Выбрать</a>
+    </div>
+    <div class="plan">
+      <div class="plan-name">Сеть</div>
+      <div class="plan-price">от 14 900 <span>₽/мес</span></div>
+      <ul class="plan-features">
+        <li>Безлимит звонков</li>
+        <li>Все филиалы</li>
+        <li>White-label</li>
+        <li>Кастомные агенты</li>
+        <li>API доступ</li>
+        <li>Персональный менеджер</li>
+      </ul>
+      <a href="https://t.me/GetAuraAI_bot" class="btn-plan outline">Написать</a>
+    </div>
+  </div>
+</section>
+
+<footer>
+  © 2026 AuraAI · Голосовые AI-агенты для клиник · Разработано для стоматологии Аура
+</footer>
+
+<!-- Modal -->
+<div class="modal-overlay" id="modal" onclick="if(event.target===this)closeModal()">
+  <div class="modal">
+    <span class="modal-close" onclick="closeModal()">×</span>
+    <h2>Начать работу</h2>
+    <div class="modal-tabs">
+      <div class="tab active" onclick="switchTab('register')">Регистрация</div>
+      <div class="tab" onclick="switchTab('login')">Войти</div>
+    </div>
+
+    <div id="tab-register">
+      <div class="form-group">
+        <label>Название клиники</label>
+        <input type="text" id="reg-name" placeholder="Стоматология Аура">
+      </div>
+      <div class="form-group">
+        <label>Email</label>
+        <input type="email" id="reg-email" placeholder="doctor@clinic.ru">
+      </div>
+      <div class="form-group">
+        <label>Телефон</label>
+        <input type="tel" id="reg-phone" placeholder="+7 999 000 00 00">
+      </div>
+      <div class="form-group">
+        <label>Пароль</label>
+        <input type="password" id="reg-pwd" placeholder="Минимум 8 символов">
+      </div>
+      <button class="btn-submit" onclick="doRegister()">Зарегистрироваться →</button>
+    </div>
+
+    <div id="tab-login" style="display:none">
+      <div class="form-group">
+        <label>Email</label>
+        <input type="email" id="login-email" placeholder="doctor@clinic.ru">
+      </div>
+      <div class="form-group">
+        <label>Пароль</label>
+        <input type="password" id="login-pwd" placeholder="Ваш пароль">
+      </div>
+      <button class="btn-submit" onclick="doLogin()">Войти →</button>
+    </div>
+
+    <div id="api-result"></div>
+  </div>
+</div>
+
+<script>
+const API = '';  // Same origin
+
+function openModal()  { document.getElementById('modal').classList.add('open'); }
+function closeModal() { document.getElementById('modal').classList.remove('open'); }
+
+function switchTab(tab) {
+  document.querySelectorAll('.tab').forEach((t,i) => {
+    t.classList.toggle('active', (i===0&&tab==='register')||(i===1&&tab==='login'));
+  });
+  document.getElementById('tab-register').style.display = tab==='register' ? '' : 'none';
+  document.getElementById('tab-login').style.display    = tab==='login'    ? '' : 'none';
+}
+
+async function doRegister() {
+  const body = {
+    name:     document.getElementById('reg-name').value,
+    email:    document.getElementById('reg-email').value,
+    phone:    document.getElementById('reg-phone').value,
+    password: document.getElementById('reg-pwd').value,
+  };
+  const r = await fetch('/register', {
+    method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)
+  });
+  const data = await r.json();
+  const el = document.getElementById('api-result');
+  el.style.display = 'block';
+  if (r.ok) {
+    el.textContent = `✅ Успешно!\n\nВаш API-ключ:\n${data.api_key}\n\nСохраните его — он нужен для подключения.`;
+    localStorage.setItem('api_key', data.api_key);
+  } else {
+    el.textContent = `❌ Ошибка: ${data.detail}`;
+  }
+}
+
+async function doLogin() {
+  const body = {
+    email:    document.getElementById('login-email').value,
+    password: document.getElementById('login-pwd').value,
+  };
+  const r = await fetch('/login', {
+    method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)
+  });
+  const data = await r.json();
+  const el = document.getElementById('api-result');
+  el.style.display = 'block';
+  if (r.ok) {
+    localStorage.setItem('api_key', data.api_key);
+    el.textContent = `✅ Добро пожаловать, ${data.name}!\nAPI-ключ сохранён.`;
+  } else {
+    el.textContent = `❌ ${data.detail}`;
+  }
+}
+</script>
+</body>
+</html>

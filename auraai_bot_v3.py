@@ -5203,6 +5203,84 @@ async def bizsync_cmd(message: Message):
 FALLBACK_ZP_URL  = "https://docs.google.com/spreadsheets/d/1ZgnQMZ4CY0fHsnF7fy-teFvcq-kH-XEC0LxR1qdDcaM/edit"
 FALLBACK_ZP_GIDS = ["0", "1150786377", "63998999", "667260044", "321025656", "1616134916"]  # все вкладки таблицы
 
+def start_daily_messenger(bot):
+    """Каждый день в 15:00 пишет пациентам с записью на завтра."""
+    async def loop():
+        while True:
+            now = datetime.now()
+            # Следующий запуск в 15:00
+            target = now.replace(hour=15, minute=0, second=0, microsecond=0)
+            if now >= target:
+                target = target.replace(day=target.day + 1)
+            wait_sec = (target - now).total_seconds()
+            logging.info(f"📨 Следующий обзвон пациентов через {int(wait_sec//3600)}ч")
+            await asyncio.sleep(wait_sec)
+            try:
+                from patient_messenger import run_daily_confirmations
+                await run_daily_confirmations(_DB_PATH)
+            except Exception as e:
+                logging.error(f"Ошибка обзвона пациентов: {e}")
+
+    asyncio.create_task(loop())
+
+
+@router.message(Command("addpatient"))
+async def addpatient_cmd(msg: Message):
+    """Добавить пациента: /addpatient Иванов Иван +79991234567"""
+    if msg.from_user.id != ADMIN_ID:
+        return
+    parts = msg.text.split(maxsplit=1)[1:] if len(msg.text.split()) > 1 else []
+    if not parts:
+        await msg.answer("Использование: /addpatient Имя Пациента +79991234567")
+        return
+    text = parts[0].strip()
+    # Последний токен — телефон
+    tokens = text.rsplit(maxsplit=1)
+    if len(tokens) < 2:
+        await msg.answer("Укажи имя и телефон: /addpatient Иванов Иван +79991234567")
+        return
+    name, phone = tokens[0].strip(), tokens[1].strip()
+    from patient_messenger import add_patient_phone
+    await add_patient_phone(_DB_PATH, name, phone)
+    await msg.answer(f"✅ Сохранено: {name} → {phone}")
+
+
+@router.message(Command("sendpatient"))
+async def sendpatient_cmd(msg: Message):
+    """Ручная отправка пациенту: /sendpatient +79991234567 confirm"""
+    if msg.from_user.id != ADMIN_ID:
+        return
+    parts = msg.text.split()
+    if len(parts) < 2:
+        await msg.answer("Использование: /sendpatient +79991234567 [confirm|review]")
+        return
+    phone     = parts[1]
+    call_type = parts[2] if len(parts) > 2 else "confirm"
+
+    await msg.answer(f"📨 Ищу {phone} в Telegram...")
+    try:
+        from patient_messenger import send_to_patient, TelegramClient, SESSION, API_ID, API_HASH
+        # Находим имя по телефону
+        async with aiosqlite.connect(_DB_PATH) as db:
+            db.row_factory = aiosqlite.Row
+            row = await db.execute_fetchone(
+                "SELECT name FROM patients WHERE phone = ? LIMIT 1", (phone,)
+            )
+        name = row["name"] if row else "Пациент"
+
+        async with TelegramClient(SESSION, API_ID, API_HASH) as client:
+            ctx = {"patient_name": name, "call_type": call_type,
+                   "date": "завтра", "doctor": ""}
+            found = await send_to_patient(client, phone, ctx)
+
+        if found:
+            await msg.answer(f"✅ Сообщение отправлено {name} ({phone})")
+        else:
+            await msg.answer(f"❌ {phone} не найден в Telegram")
+    except Exception as e:
+        await msg.answer(f"❌ Ошибка: {e}")
+
+
 def start_zp_sync(bot):
     """Автосинхронизация матриц ЗП при старте и каждые 6 часов."""
     async def loop():
@@ -6988,6 +7066,7 @@ async def main():
     start_autoposter(bot)
     start_biz_sync(bot)
     start_zp_sync(bot)
+    start_daily_messenger(bot)
 
     logging.info(f"🚀 AuraAI Bot v3.44 FIX-отчётность запущен | @{BOT_USERNAME}")
     logging.info("✅ ВЕРСИЯ С ВЫБОРОМ ФОРМАТА 9:16 16:9 — если видишь это, новый код работает")

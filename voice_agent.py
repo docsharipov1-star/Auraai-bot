@@ -19,6 +19,7 @@ import httpx
 from fastapi import FastAPI, Request, HTTPException, BackgroundTasks
 from fastapi.responses import JSONResponse, Response
 from anthropic import AsyncAnthropic
+from openai import AsyncOpenAI
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("voice_agent")
@@ -26,10 +27,11 @@ log = logging.getLogger("voice_agent")
 app = FastAPI(title="AuraAI Voice Agent")
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-YANDEX_API_KEY    = os.getenv("YANDEX_API_KEY", "")       # для SpeechKit
-YANDEX_FOLDER_ID  = os.getenv("YANDEX_FOLDER_ID", "")
+OPENAI_API_KEY    = os.getenv("OPENAI_API_KEY", "")   # для Whisper STT
 ADMIN_TG_ID       = os.getenv("ADMIN_ID", "6766016614")
 BOT_TOKEN         = os.getenv("BOT_TOKEN", "")
+
+openai_client = AsyncOpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
 anthropic = AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
 
@@ -56,30 +58,27 @@ CLINIC_SYSTEM = """Ты — голосовой помощник стоматол
 Клиника работает: Пн-Сб 9:00-20:00, Вс 10:00-18:00"""
 
 
-# ─── STT: речь → текст (Yandex SpeechKit) ───────────────────────────────────
+# ─── STT: речь → текст (OpenAI Whisper) ─────────────────────────────────────
 
-async def speech_to_text(audio_bytes: bytes, format: str = "oggopus") -> str:
-    """Конвертирует аудио в текст через Yandex SpeechKit."""
-    if not YANDEX_API_KEY:
-        # Заглушка для тестов
-        return "[тест: нет Yandex ключа]"
+async def speech_to_text(audio_bytes: bytes, format: str = "ogg") -> str:
+    """Конвертирует аудио в текст через OpenAI Whisper. $0.006/мин."""
+    if not openai_client:
+        return "[тест: нет OPENAI_API_KEY]"
 
-    url = "https://stt.api.cloud.yandex.net/speech/v1/stt:recognize"
-    params = {
-        "folderId": YANDEX_FOLDER_ID,
-        "lang": "ru-RU",
-        "format": format,
-        "sampleRateHertz": 8000,
-    }
-    headers = {"Authorization": f"Api-Key {YANDEX_API_KEY}"}
+    # Whisper принимает файл-объект
+    audio_file = io.BytesIO(audio_bytes)
+    audio_file.name = f"audio.{format}"
 
-    async with httpx.AsyncClient(timeout=30) as client:
-        r = await client.post(url, params=params, content=audio_bytes, headers=headers)
-        if r.status_code != 200:
-            log.error(f"STT error {r.status_code}: {r.text}")
-            return ""
-        data = r.json()
-        return data.get("result", "")
+    try:
+        result = await openai_client.audio.transcriptions.create(
+            model="whisper-1",
+            file=audio_file,
+            language="ru",
+        )
+        return result.text.strip()
+    except Exception as e:
+        log.error(f"Whisper STT error: {e}")
+        return ""
 
 
 # ─── AI: генерация ответа ────────────────────────────────────────────────────
@@ -120,32 +119,30 @@ async def generate_reply(call_id: str, user_text: str, context: dict = None) -> 
     return reply
 
 
-# ─── TTS: текст → речь (Yandex SpeechKit) ───────────────────────────────────
+# ─── TTS: текст → речь (Google TTS — бесплатно) ─────────────────────────────
 
 async def text_to_speech(text: str) -> bytes:
-    """Конвертирует текст в аудио через Yandex SpeechKit."""
-    if not YANDEX_API_KEY:
-        return b""  # заглушка
+    """Конвертирует текст в аудио через Google TTS (gTTS). Бесплатно."""
+    try:
+        # gTTS работает синхронно — запускаем в executor
+        loop = asyncio.get_event_loop()
+        audio_bytes = await loop.run_in_executor(None, _gtts_sync, text)
+        return audio_bytes
+    except Exception as e:
+        log.error(f"TTS error: {e}")
+        return b""
 
-    url = "https://tts.api.cloud.yandex.net/speech/v1/tts:synthesize"
-    headers = {"Authorization": f"Api-Key {YANDEX_API_KEY}"}
-    data = {
-        "folderId": YANDEX_FOLDER_ID,
-        "text": text,
-        "lang": "ru-RU",
-        "voice": "alena",        # женский голос
-        "emotion": "good",
-        "speed": "1.0",
-        "format": "oggopus",
-        "sampleRateHertz": 8000,
-    }
-
-    async with httpx.AsyncClient(timeout=30) as client:
-        r = await client.post(url, headers=headers, data=data)
-        if r.status_code != 200:
-            log.error(f"TTS error {r.status_code}: {r.text}")
-            return b""
-        return r.content
+def _gtts_sync(text: str) -> bytes:
+    """Синхронная обёртка для gTTS."""
+    try:
+        from gtts import gTTS
+        buf = io.BytesIO()
+        tts = gTTS(text=text, lang="ru", slow=False)
+        tts.write_to_fp(buf)
+        return buf.getvalue()
+    except ImportError:
+        log.error("gTTS не установлен: pip install gtts")
+        return b""
 
 
 # ─── Уведомление в Telegram ──────────────────────────────────────────────────

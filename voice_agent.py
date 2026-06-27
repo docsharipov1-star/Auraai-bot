@@ -217,12 +217,17 @@ async def call_start(request: Request, background_tasks: BackgroundTasks):
 
 
 @app.post("/call/audio")
-async def call_audio(request: Request):
+async def call_audio(request: Request, background_tasks: BackgroundTasks):
     """
     Вызывается телефонией когда пациент сказал что-то.
-    Тело: { call_id, audio_base64, format } или { call_id, text }
-    Ответ: { reply_text, reply_audio_base64, end_call }
+    Поддерживает JSON (наш формат) и form-urlencoded (Callibri).
     """
+    content_type = request.headers.get("content-type", "")
+
+    # Callibri присылает form-urlencoded — перенаправляем в callibri_webhook
+    if "application/x-www-form-urlencoded" in content_type or "multipart/form-data" in content_type:
+        return await callibri_webhook(request, background_tasks)
+
     body = await request.json()
     call_id = body.get("call_id", "")
 

@@ -5469,6 +5469,7 @@ async def _sync_zp_matrix():
     async def process_sheets(sheet_urls, shift_type):
         nonlocal total
         seen_sid = set()
+        seen_records = set()  # дедупликация: (period, day, doctor, shift_type)
         for base_url in sheet_urls:
             sm = re.search(r"/spreadsheets/d/([a-zA-Z0-9_-]+)", base_url)
             if not sm:
@@ -5497,6 +5498,12 @@ async def _sync_zp_matrix():
                     continue  # Пропускаем вкладки которые не являются матрицей ЗП
 
                 for r in records:
+                    # Дедупликация — один врач/день/смена только один раз
+                    key = (period, r["date"], r["doctor"].lower().strip(), shift_type)
+                    if key in seen_records:
+                        continue
+                    seen_records.add(key)
+
                     await db_run(
                         "INSERT INTO visits (day, doctor, service, kind, ref_from, revenue, percent, pay, src, patient, period) "
                         "VALUES (?, ?, ?, '', '', ?, ?, '', 'zp', '', ?)",

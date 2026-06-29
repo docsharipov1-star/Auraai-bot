@@ -4824,7 +4824,7 @@ async def _biz_agg(days):
                           (f"-{2 * days - 1} day", f"-{days - 1} day"))
         label = f"{days} дней"
     # Расходы всегда из biz_finance
-    exp = sum(r["expenses"] for r in rows)
+    exp = sum(r["expenses"] or 0 for r in rows)
     cats = {}
     for r in rows:
         try:
@@ -4833,7 +4833,7 @@ async def _biz_agg(days):
         except Exception:
             pass
 
-    vrev = sum(r["revenue"] for r in v)
+    vrev = sum(r["revenue"] or 0 for r in v)
     vpat = len(v)
     aliases = await _get_aliases()
     pct_map = await _get_doctor_percents()
@@ -4844,8 +4844,8 @@ async def _biz_agg(days):
         pat = vpat
     else:
         # Нет данных смен — берём из biz_finance
-        rev = sum(r["revenue"] for r in rows)
-        pat = sum(r["patients"] for r in rows)
+        rev = sum(r["revenue"] or 0 for r in rows)
+        pat = sum(r["patients"] or 0 for r in rows)
 
     vsalary = sum((r["revenue"] or 0) * pct_map.get(_canon_with(r["doctor"], aliases), 0) / 100 for r in v)
     if vsalary > 0:
@@ -4853,13 +4853,13 @@ async def _biz_agg(days):
         cats["ФОТ врачей"] = cats.get("ФОТ врачей", 0) + vsalary
 
     # Предыдущий период
-    vprev_rev = sum(r["revenue"] for r in vp)
+    vprev_rev = sum(r["revenue"] or 0 for r in vp)
     if vp:
         prev_rev = vprev_rev
         prev_exp = sum((r["revenue"] or 0) * pct_map.get(_canon_with(r["doctor"], aliases), 0) / 100 for r in vp)
     else:
-        prev_rev = sum(r["revenue"] for r in prev)
-        prev_exp = sum(r["expenses"] for r in prev)
+        prev_rev = sum(r["revenue"] or 0 for r in prev)
+        prev_exp = sum(r["expenses"] or 0 for r in prev)
 
     return {"label": label, "n": vpat or len(rows), "patients": pat, "revenue": rev, "expenses": exp,
             "profit": rev - exp, "check": (rev / pat) if pat else 0, "categories": cats,
@@ -4993,9 +4993,9 @@ async def _send_biz_report_date(message, date_iso):
     v = await db_all("SELECT doctor, revenue FROM visits WHERE src='shift' AND day = ?", (date_iso,))
     if not rows and not v:
         await message.answer(f"За {date_iso} данных нет.", reply_markup=biz_kb()); return
-    pat = sum(r["patients"] for r in rows) + len(v)
-    rev = sum(r["revenue"] for r in rows) + sum((r["revenue"] or 0) for r in v)
-    exp = sum(r["expenses"] for r in rows)
+    pat = sum(r["patients"] or 0 for r in rows) + len(v)
+    rev = sum(r["revenue"] or 0 for r in rows) + sum((r["revenue"] or 0) for r in v)
+    exp = sum(r["expenses"] or 0 for r in rows)
     cats = {}
     for r in rows:
         try:
@@ -5065,8 +5065,13 @@ async def _biz_period_map():
     pct = await _get_doctor_percents()
     per = {}
 
-    # Основной источник выручки — таблицы смен (день/ночь)
-    v = await db_all("SELECT period, day, doctor, revenue FROM visits WHERE src IN ('shift','clean')")
+    # Основной источник выручки — shift; clean только для периодов без shift
+    v = await db_all("""
+        SELECT period, day, doctor, revenue FROM visits WHERE src='shift'
+        UNION ALL
+        SELECT period, day, doctor, revenue FROM visits WHERE src='clean'
+          AND period NOT IN (SELECT DISTINCT period FROM visits WHERE src='shift' AND period IS NOT NULL)
+    """)
     days_with_shift = set()
     for r in v:
         p = r["period"] or ((r["day"] or "")[:7]) or "—"

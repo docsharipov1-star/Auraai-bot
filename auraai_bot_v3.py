@@ -150,7 +150,8 @@ SYSTEM_PROMPTS = {
         "— Не ставь диагнозов, не называй препаратов, не назначай лечение. "
         "При признаках серьёзного состояния мягко предложи обратиться к живому специалисту.\n"
         "— Если человек пишет о мыслях о смерти, самоповреждении или насилии — не давай техник, "
-        "а тепло поддержи и предложи немедленно связаться с помощью: 112 и телефон доверия 8-800-2000-122.\n"
+        "а тепло поддержи и предложи связаться с теми, кто поможет: телефон доверия 8-800-2000-122 "
+        "(круглосуточно, бесплатно, анонимно), или близкий человек, которому он доверяет.\n"
         "— Ничего сексуального или романтического при малейшем признаке, что собеседник несовершеннолетний.\n\n"
         "ИНТЕРНЕТ: при необходимости ты можешь искать свежую и фактическую информацию в сети — "
         "например, как устроена та или иная техника, где найти очную психологическую помощь, актуальные телефоны служб. "
@@ -172,12 +173,10 @@ CRISIS_WORDS = [
 CRISIS_REPLY = (
     "Мне очень жаль, что тебе сейчас так тяжело. То, что ты чувствуешь, важно, "
     "и ты не обязан справляться с этим в одиночку. 💛\n\n"
-    "Я — бот и не могу заменить живого человека рядом. Пожалуйста, прямо сейчас "
-    "свяжись с теми, кто может поддержать по-настоящему:\n\n"
-    "• Единый номер экстренных служб — *112*\n"
+    "Я — бот и не могу заменить живого человека рядом. Если есть возможность, "
+    "поговори с тем, кому доверяешь, или с тем, кто умеет поддержать:\n\n"
     "• Телефон доверия — *8-800-2000-122* (круглосуточно, бесплатно, анонимно)\n\n"
-    "Если есть кто-то близкий, кому ты доверяешь — стоит написать или позвонить ему тоже. "
-    "Ты важен, и помощь рядом."
+    "Ты важен, и рядом есть те, кто может помочь."
 )
 
 def is_crisis(text: str) -> bool:
@@ -600,19 +599,29 @@ async def call_text_ai(prompt: str, system: str, model_id: str, uid: int = 0, us
 
     try:
         if provider == "anthropic" and anthropic_client:
-            create_kwargs = dict(
+            base_kwargs = dict(
                 model="claude-sonnet-4-20250514", max_tokens=1024,
                 system=system, messages=messages,
             )
-            eff_timeout = timeout_s
+            resp = None
             if web:
-                # Серверный веб-поиск Claude — модель сама ищет и использует источники
-                create_kwargs["tools"] = [{"type": "web_search_20250305", "name": "web_search", "max_uses": 3}]
-                eff_timeout = max(timeout_s, 45)
-            resp = await asyncio.wait_for(
-                anthropic_client.messages.create(**create_kwargs),
-                timeout=eff_timeout
-            )
+                # Пытаемся с веб-поиском; при любой ошибке — откатываемся на обычный ответ
+                try:
+                    resp = await asyncio.wait_for(
+                        anthropic_client.messages.create(
+                            **base_kwargs,
+                            tools=[{"type": "web_search_20250305", "name": "web_search", "max_uses": 3}],
+                        ),
+                        timeout=max(timeout_s, 45)
+                    )
+                except Exception as e:
+                    logging.warning(f"Web search failed, fallback to plain Claude: {e}")
+                    resp = None
+            if resp is None:
+                resp = await asyncio.wait_for(
+                    anthropic_client.messages.create(**base_kwargs),
+                    timeout=timeout_s
+                )
             # При веб-поиске в ответе несколько блоков — берём только текстовые
             result = "".join(
                 getattr(b, "text", "") for b in resp.content if getattr(b, "type", "") == "text"
@@ -1081,6 +1090,7 @@ async def generate_avatar(image_url: str, audio_url: str, model_id: str = "kling
 def main_kb(is_admin: bool = False) -> ReplyKeyboardMarkup:
     b = ReplyKeyboardBuilder()
     b.row(KeyboardButton(text="💡 GPTs/Claude/Gemini"))
+    b.row(KeyboardButton(text="🧠 Психолог"))
     b.row(
         KeyboardButton(text="🎨 Дизайн с ИИ"),
         KeyboardButton(text="🎙 Аудио с ИИ"),
@@ -1374,6 +1384,17 @@ def mood_checkin_kb():
         InlineKeyboardButton(text="😄", callback_data="mood:5"),
     )
     return b.as_markup()
+
+async def send_psy_intro(message: Message):
+    await message.answer(
+        "Привет, я Аура 💛 Я рядом, чтобы выслушать и помочь тебе разобраться в том, что на душе.\n\n"
+        "Как ты себя чувствуешь прямо сейчас?",
+        reply_markup=mood_checkin_kb()
+    )
+    await message.answer(
+        "Можешь просто написать, что происходит — или нажми кнопку с упражнением ниже 🌿",
+        reply_markup=psy_kb()
+    )
 
 # ══════════════════════════════════════════════════════
 #  /start
@@ -1711,6 +1732,20 @@ async def tool_selected(message: Message, state: FSMContext):
         return
 
     user_tool[message.from_user.id] = tool_id
+
+    # Психолог — всегда Claude, без выбора модели
+    if tool_id == "psy":
+        total_cost = base_cost + TEXT_MODELS["claude"]["cost"]
+        bal2 = await get_balance(message.from_user.id)
+        if bal2 < total_cost:
+            await message.answer(f"❌ Нужно *{total_cost} кр.* · У тебя *{bal2} кр.*", parse_mode="Markdown", reply_markup=profile_kb())
+            return
+        user_model[message.from_user.id] = "claude"
+        await state.update_data(tool="psy", model="claude", cost=total_cost)
+        await state.set_state(State_.waiting_text)
+        await send_psy_intro(message)
+        return
+
     await state.set_state(State_.choose_model)
     await message.answer(
         f"*{message.text}*\n\nВыбери AI модель:",
@@ -1771,16 +1806,7 @@ async def model_selected(message: Message, state: FSMContext):
         )
     else:
         if tool_id == "psy":
-            await message.answer(
-                "Привет, я Аура 💛 Я рядом, чтобы выслушать и помочь тебе разобраться в том, что на душе.\n\n"
-                "Как ты себя чувствуешь прямо сейчас?",
-                reply_markup=mood_checkin_kb()
-            )
-            await message.answer(
-                "Можешь просто написать, что происходит — или нажми кнопку с упражнением ниже.\n\n"
-                "_Я поддержка, а не замена врачу. В кризисной ситуации звони 112._",
-                parse_mode="Markdown", reply_markup=psy_kb()
-            )
+            await send_psy_intro(message)
         else:
             await message.answer(
                 f"{model_info['emoji']} *{model_info['name']}*  ·  💎 {total_cost} кредитов\n\n{hint}",
@@ -3490,6 +3516,35 @@ async def cmd_addcredits(message: Message):
     if len(parts) != 3: await message.answer("Формат: /addcredits USER_ID AMOUNT"); return
     new_bal = await add_credits(int(parts[1]), int(parts[2]), "admin", "Ручное начисление")
     await message.answer(f"✅ Начислено *{parts[2]} кр.* Баланс: *{new_bal}*", parse_mode="Markdown")
+
+@router.message(Command("gift"))
+async def cmd_gift(message: Message):
+    if message.from_user.id != ADMIN_ID: return
+    parts = message.text.split()
+    if len(parts) < 2:
+        await message.answer("Формат: /gift USER_ID [КОЛИЧЕСТВО]\nНапример: /gift 123456789 300")
+        return
+    try:
+        target = int(parts[1])
+        amount = int(parts[2]) if len(parts) > 2 else 300
+    except ValueError:
+        await message.answer("ID и количество должны быть числами."); return
+    user = await get_user(target)
+    if not user:
+        await message.answer("❌ Этот человек ещё не запускал бота.\nПопроси его открыть бота и нажать /start, затем повтори.")
+        return
+    new_bal = await add_credits(target, amount, "admin", "Подарок (пробный доступ)")
+    await message.answer(f"🎁 Подарено *{amount} кр.* пользователю `{target}`. Его баланс: *{new_bal}*", parse_mode="Markdown")
+    try:
+        await message.bot.send_message(
+            target,
+            f"🎁 Тебе подарили *{amount} кредитов*!\n\n"
+            "Попробуй ИИ-помощника по эмоциональному состоянию: нажми «🧠 Психолог» в меню "
+            "и просто напиши, что у тебя на душе. 💛",
+            parse_mode="Markdown"
+        )
+    except Exception:
+        await message.answer("⚠️ Кредиты начислены, но уведомление отправить не вышло (человек мог не открывать бота или закрыл личку).")
 
 @router.message(Command("users"))
 async def cmd_users(message: Message):

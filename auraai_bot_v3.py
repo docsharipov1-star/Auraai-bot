@@ -4823,8 +4823,7 @@ async def _biz_agg(days):
         vp = await db_all("SELECT doctor, revenue FROM visits WHERE src='shift' AND day >= date('now', ?) AND day < date('now', ?)",
                           (f"-{2 * days - 1} day", f"-{days - 1} day"))
         label = f"{days} дней"
-    pat = sum(r["patients"] for r in rows)
-    rev = sum(r["revenue"] for r in rows)
+    # Расходы всегда из biz_finance
     exp = sum(r["expenses"] for r in rows)
     cats = {}
     for r in rows:
@@ -4833,20 +4832,36 @@ async def _biz_agg(days):
                 cats[k] = cats.get(k, 0) + float(val)
         except Exception:
             pass
+
     vrev = sum(r["revenue"] for r in v)
     vpat = len(v)
-    pat += vpat
-    rev += vrev
     aliases = await _get_aliases()
     pct_map = await _get_doctor_percents()
+
+    if vpat > 0:
+        # Есть данные смен — используем ТОЛЬКО их для выручки и пациентов
+        rev = vrev
+        pat = vpat
+    else:
+        # Нет данных смен — берём из biz_finance
+        rev = sum(r["revenue"] for r in rows)
+        pat = sum(r["patients"] for r in rows)
+
     vsalary = sum((r["revenue"] or 0) * pct_map.get(_canon_with(r["doctor"], aliases), 0) / 100 for r in v)
     if vsalary > 0:
         exp += vsalary
         cats["ФОТ врачей"] = cats.get("ФОТ врачей", 0) + vsalary
-    prev_rev = sum(r["revenue"] for r in prev) + sum(r["revenue"] for r in vp)
-    prev_exp = (sum(r["expenses"] for r in prev)
-                + sum((r["revenue"] or 0) * pct_map.get(_canon_with(r["doctor"], aliases), 0) / 100 for r in vp))
-    return {"label": label, "n": len(rows) + vpat, "patients": pat, "revenue": rev, "expenses": exp,
+
+    # Предыдущий период
+    vprev_rev = sum(r["revenue"] for r in vp)
+    if vp:
+        prev_rev = vprev_rev
+        prev_exp = sum((r["revenue"] or 0) * pct_map.get(_canon_with(r["doctor"], aliases), 0) / 100 for r in vp)
+    else:
+        prev_rev = sum(r["revenue"] for r in prev)
+        prev_exp = sum(r["expenses"] for r in prev)
+
+    return {"label": label, "n": vpat or len(rows), "patients": pat, "revenue": rev, "expenses": exp,
             "profit": rev - exp, "check": (rev / pat) if pat else 0, "categories": cats,
             "prev_revenue": prev_rev, "prev_profit": prev_rev - prev_exp, "from_shift": vpat > 0}
 
@@ -5049,7 +5064,10 @@ async def _biz_period_map():
     aliases = await _get_aliases()
     pct = await _get_doctor_percents()
     per = {}
+
+    # Основной источник выручки — таблицы смен (день/ночь)
     v = await db_all("SELECT period, day, doctor, revenue FROM visits WHERE src IN ('shift','clean')")
+    days_with_shift = set()
     for r in v:
         p = r["period"] or ((r["day"] or "")[:7]) or "—"
         s = per.setdefault(p, {"rev": 0.0, "fot": 0.0, "exp": 0.0, "n": 0})
@@ -5057,13 +5075,23 @@ async def _biz_period_map():
         s["rev"] += rev
         s["n"] += 1
         s["fot"] += rev * pct.get(_canon_with(r["doctor"] or "", aliases), 0) / 100
+        if r["day"]:
+            days_with_shift.add(r["day"])
+
+    # Из biz_finance берём только РАСХОДЫ (не выручку — она уже в visits)
+    # Выручку из sheet берём только за дни без данных смен
     bf = await db_all("SELECT day, revenue, expenses, src FROM biz_finance")
     for r in bf:
-        if (r["src"] or "") == "salary":
+        src = r["src"] or ""
+        if src == "salary":
             continue
-        p = (r["day"] or "")[:7] or "—"
+        day = r["day"] or ""
+        p = day[:7] or "—"
         s = per.setdefault(p, {"rev": 0.0, "fot": 0.0, "exp": 0.0, "n": 0})
-        s["rev"] += r["revenue"] or 0
+        # Выручку добавляем из sheet ТОЛЬКО если нет данных смен за этот день
+        if src == "sheet" and day not in days_with_shift:
+            s["rev"] += r["revenue"] or 0
+        # Расходы берём всегда
         s["exp"] += r["expenses"] or 0
     return per
 

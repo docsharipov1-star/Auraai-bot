@@ -6410,7 +6410,8 @@ async def _render_doctor_detail(message, rows, period_label):
 async def doctors_cmd(message: Message):
     if message.from_user.id != ADMIN_ID:
         return
-    parts = (message.text or "").split()
+    raw = message.text or ""
+    parts = raw.split() if raw.startswith("/") else []
     arg = " ".join(parts[1:]).strip()
     try:
         synced, sync_err = await _sync_visits()

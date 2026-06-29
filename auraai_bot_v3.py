@@ -50,14 +50,7 @@ AIML_KEY      = os.getenv("AIML_KEY", "")
 ADMIN_ID      = int(os.getenv("ADMIN_ID", "0"))
 BOT_USERNAME  = os.getenv("BOT_USERNAME", "GetAuraAI_bot")
 YOOKASSA_TOKEN = os.getenv("YOOKASSA_TOKEN", "")  # provider token из BotFather (ЮKassa)
-VOXIM_ACCOUNT_ID  = os.getenv("VOXIM_ACCOUNT_ID", "")
-VOXIM_API_KEY     = os.getenv("VOXIM_API_KEY", "")
-VOXIM_APP_NAME    = os.getenv("VOXIM_APP_NAME", "clinic")
-VOXIM_RULE_NAME   = os.getenv("VOXIM_RULE_NAME", "confirm")
-VOXIM_CALLER_ID   = os.getenv("VOXIM_CALLER_ID", "")   # номер с которого звонить
-VOXIM_WEBHOOK_URL = os.getenv("VOXIM_WEBHOOK_URL", "")  # URL для результатов звонков
-_DB_DIR = os.getenv("DB_DIR", "/app/data")
-DB_PATH = os.path.join(_DB_DIR, "auraai.db")
+DB_PATH       = "/app/data/auraai.db"
 FREE_CREDITS  = 150
 REFERRAL_BONUS = 50
 
@@ -138,20 +131,65 @@ SYSTEM_PROMPTS = {
     "essay":      "Ты профессиональный писатель. Пиши эссе, статьи и длинные тексты структурированно.",
     "rewrite":    "Ты редактор. Переписывай тексты улучшая стиль, грамматику и читаемость.",
     "idea":       "Ты креативный директор. Генерируй свежие идеи, концепции и решения.",
+    "psy": (
+        "Ты — Аура, тёплый и заботливый ИИ-помощник по эмоциональному благополучию. "
+        "Ты НЕ психотерапевт и не врач — ты дружелюбный спутник, который помогает человеку разобраться в чувствах "
+        "и освоить простые техники самопомощи.\n\n"
+        "СТИЛЬ ОБЩЕНИЯ (это важно):\n"
+        "— Пиши коротко и по-человечески, как в мессенджере. Не вываливай простыни текста: 2–5 коротких фраз за раз.\n"
+        "— Обращайся на «ты», будь мягким, тёплым и совершенно безоценочным. Иногда уместен лёгкий эмодзи.\n"
+        "— Сначала отрази и назови чувство человека («Звучит так, будто ты сильно вымотался»), дай ему почувствовать, что его услышали.\n"
+        "— Потом задай ОДИН открытый вопрос ИЛИ предложи одну маленькую технику. Не делай и то и другое сразу.\n\n"
+        "МЕТОД: опирайся на проверенные подходы — КПТ (разбор автоматических мыслей, переформулирование), "
+        "осознанность (дыхание, заземление 5-4-3-2-1), дробление задач, ведение дневника, маленькие выполнимые шаги. "
+        "Подавай их не как лекцию, а как мягкое предложение: «Хочешь, попробуем одно короткое упражнение?»\n\n"
+        "ТЕМЫ: тревога и переживания, стресс и выгорание; деньги и финансовая тревога "
+        "(только психология отношения к деньгам, без инвест-советов); отношения и конфликты; "
+        "интимность у взрослых (тактично); концентрация, прокрастинация и фокус внимания.\n\n"
+        "ГРАНИЦЫ БЕЗОПАСНОСТИ (строго):\n"
+        "— Не ставь диагнозов, не называй препаратов, не назначай лечение. "
+        "При признаках серьёзного состояния мягко предложи обратиться к живому специалисту.\n"
+        "— Если человек пишет о мыслях о смерти, самоповреждении или насилии — не давай техник, "
+        "а тепло поддержи и предложи немедленно связаться с помощью: 112 и телефон доверия 8-800-2000-122.\n"
+        "— Ничего сексуального или романтического при малейшем признаке, что собеседник несовершеннолетний.\n\n"
+        "ИНТЕРНЕТ: при необходимости ты можешь искать свежую и фактическую информацию в сети — "
+        "например, как устроена та или иная техника, где найти очную психологическую помощь, актуальные телефоны служб. "
+        "Опирайся только на надёжные источники и коротко указывай, откуда информация. "
+        "Никогда не ищи и не приводи материалы, которые могут навредить (способы причинения себе вреда и подобное).\n\n"
+        "Напоминай по-доброму, что ты поддержка, а не замена терапии, — но не в каждом сообщении, чтобы не звучать сухо."
+    ),
 }
+
+# Слова-маркеры возможного кризиса — для психолог-агента (грубый фильтр, не диагноз)
+CRISIS_WORDS = [
+    "суицид", "покончить", "не хочу жить", "не хочется жить", "убить себя",
+    "убью себя", "свести счёты", "свести счеты", "смысла жить", "нет смысла жить",
+    "самоубийств", "порезать себя", "режу себя", "причинить себе", "наложить на себя руки",
+    "хочу умереть", "лучше умереть", "уйти из жизни",
+]
+
+# Текст поддержки при кризисном сигнале
+CRISIS_REPLY = (
+    "Мне очень жаль, что тебе сейчас так тяжело. То, что ты чувствуешь, важно, "
+    "и ты не обязан справляться с этим в одиночку. 💛\n\n"
+    "Я — бот и не могу заменить живого человека рядом. Пожалуйста, прямо сейчас "
+    "свяжись с теми, кто может поддержать по-настоящему:\n\n"
+    "• Единый номер экстренных служб — *112*\n"
+    "• Телефон доверия — *8-800-2000-122* (круглосуточно, бесплатно, анонимно)\n\n"
+    "Если есть кто-то близкий, кому ты доверяешь — стоит написать или позвонить ему тоже. "
+    "Ты важен, и помощь рядом."
+)
+
+def is_crisis(text: str) -> bool:
+    t = (text or "").lower()
+    return any(w in t for w in CRISIS_WORDS)
 
 # ══════════════════════════════════════════════════════
 #  БАЗА ДАННЫХ
 # ══════════════════════════════════════════════════════
 
 import pathlib
-try:
-    pathlib.Path(_DB_DIR).mkdir(parents=True, exist_ok=True)
-except OSError as _e:
-    import tempfile as _tempfile
-    _DB_DIR = _tempfile.gettempdir()
-    DB_PATH = os.path.join(_DB_DIR, "auraai.db")
-    print(f"⚠️ Cannot create {_DB_DIR}: {_e}. Using temp DB: {DB_PATH}")
+pathlib.Path("/app/data").mkdir(parents=True, exist_ok=True)
 
 async def init_db():
     async with aiosqlite.connect(DB_PATH) as db:
@@ -214,6 +252,13 @@ async def init_db():
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             );
             CREATE INDEX IF NOT EXISTS idx_chat_history_user ON chat_history(user_id);
+            CREATE TABLE IF NOT EXISTS mood_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                score INTEGER NOT NULL,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_mood_user ON mood_log(user_id);
             CREATE TABLE IF NOT EXISTS app_settings (
                 key TEXT PRIMARY KEY,
                 value TEXT
@@ -521,7 +566,7 @@ async def admin_stats():
 #  AI ФУНКЦИИ
 # ══════════════════════════════════════════════════════
 
-async def call_text_ai(prompt: str, system: str, model_id: str, uid: int = 0, use_history: bool = False, image_url: str = None, history_msgs: list = None, timeout_s: int = 15) -> str:
+async def call_text_ai(prompt: str, system: str, model_id: str, uid: int = 0, use_history: bool = False, image_url: str = None, history_msgs: list = None, timeout_s: int = 15, web: bool = False) -> str:
     model_info = TEXT_MODELS.get(model_id, TEXT_MODELS["claude"])
     provider = model_info["provider"]
 
@@ -555,13 +600,25 @@ async def call_text_ai(prompt: str, system: str, model_id: str, uid: int = 0, us
 
     try:
         if provider == "anthropic" and anthropic_client:
-            resp = await asyncio.wait_for(
-                anthropic_client.messages.create(
-                    model="claude-sonnet-4-6", max_tokens=1024,
-                    system=system, messages=messages),
-                timeout=timeout_s
+            create_kwargs = dict(
+                model="claude-sonnet-4-20250514", max_tokens=1024,
+                system=system, messages=messages,
             )
-            result = resp.content[0].text
+            eff_timeout = timeout_s
+            if web:
+                # Серверный веб-поиск Claude — модель сама ищет и использует источники
+                create_kwargs["tools"] = [{"type": "web_search_20250305", "name": "web_search", "max_uses": 3}]
+                eff_timeout = max(timeout_s, 45)
+            resp = await asyncio.wait_for(
+                anthropic_client.messages.create(**create_kwargs),
+                timeout=eff_timeout
+            )
+            # При веб-поиске в ответе несколько блоков — берём только текстовые
+            result = "".join(
+                getattr(b, "text", "") for b in resp.content if getattr(b, "type", "") == "text"
+            ).strip()
+            if not result:
+                result = "Не удалось сформировать ответ. Попробуй переформулировать 🙂"
         elif provider == "deepseek" and deepseek_client:
             resp = await asyncio.wait_for(
                 deepseek_client.chat.completions.create(
@@ -1042,9 +1099,7 @@ def main_kb(is_admin: bool = False) -> ReplyKeyboardMarkup:
         KeyboardButton(text="❓ Помощь"),
         KeyboardButton(text="📕 База знаний"),
     )
-    b.row(KeyboardButton(text="🤝 Мои агенты"))
     if is_admin:
-        b.row(KeyboardButton(text="📞 Звонки пациентам"))
         b.row(KeyboardButton(text="📊 Доктора"), KeyboardButton(text="💰 Финансы бизнеса"))
         b.row(KeyboardButton(text="🗓 Таблицы клиники"))
     return b.as_markup(resize_keyboard=True)
@@ -1069,6 +1124,7 @@ def text_tools_kb() -> ReplyKeyboardMarkup:
         KeyboardButton(text="✏️ Рерайт"),
     )
     b.row(KeyboardButton(text="💡 Идеи"))
+    b.row(KeyboardButton(text="🧠 Психолог"))
     b.row(KeyboardButton(text="🗑 Очистить историю чата"))
     b.row(KeyboardButton(text="🏠 В главное меню"))
     return b.as_markup(resize_keyboard=True)
@@ -1201,9 +1257,6 @@ class State_(StatesGroup):
     biz_menu  = State()  # финансы бизнеса: меню
     biz_input = State()  # финансы бизнеса: ввод отчёта
     biz_date  = State()  # финансы бизнеса: отчёт за конкретную дату
-    agent_chat  = State()  # мои агенты: чат
-    calls_menu  = State()  # звонки: меню
-    calls_input = State()  # звонки: ввод номеров
 
 user_tool:  dict[int, str] = {}
 user_model: dict[int, str] = {}
@@ -1230,6 +1283,26 @@ async def add_to_history(uid: int, role: str, content: str):
 async def clear_history(uid: int):
     await db_run("DELETE FROM chat_history WHERE user_id=?", (uid,))
 
+# ── Настроение (для агента «Аура») ────────────────────
+MOOD_LABELS = {1: "😟 Очень плохо", 2: "😕 Так себе", 3: "😐 Нормально", 4: "🙂 Хорошо", 5: "😄 Отлично"}
+
+async def log_mood(uid: int, score: int):
+    await db_run("INSERT INTO mood_log (user_id, score) VALUES (?, ?)", (uid, score))
+
+async def get_mood_summary(uid: int) -> str:
+    rows = await db_all(
+        "SELECT score, created_at FROM mood_log WHERE user_id=? ORDER BY created_at DESC LIMIT 7", (uid,)
+    )
+    if not rows:
+        return "Пока нет записей о настроении. Загляни сюда после нескольких чек-инов 🙂"
+    lines = ["📊 *Твоё настроение за последние отметки:*\n"]
+    for r in rows:
+        label = MOOD_LABELS.get(r["score"], "—")
+        lines.append(f"`{r['created_at'][:10]}` — {label}")
+    avg = sum(r["score"] for r in rows) / len(rows)
+    lines.append(f"\nСредняя оценка: *{avg:.1f}* из 5")
+    return "\n".join(lines)
+
 TOOL_MAP = {
     "💬 AI Чат":     ("chat",      10),
     "✍️ Копирайтер": ("copywriter",20),
@@ -1241,6 +1314,7 @@ TOOL_MAP = {
     "📄 Эссе":       ("essay",      25),
     "✏️ Рерайт":     ("rewrite",    20),
     "💡 Идеи":       ("idea",       15),
+    "🧠 Психолог":   ("psy",        15),
 }
 
 MODEL_MAP = {
@@ -1260,7 +1334,46 @@ TOOL_HINTS = {
     "essay":      "Введи тему для эссе или статьи:",
     "rewrite":    "Вставь текст для рерайта:",
     "idea":       "Опиши задачу — получи идеи:",
+    "psy":        "Расскажи, что тебя беспокоит. Я помогу разобраться и подскажу конкретные шаги. Это не замена врачу 💛",
 }
+
+# ── Агент «Аура»: инструменты, клавиатуры, чек-ин настроения ──
+PSY_TOOLS = {
+    "🫁 Подышать": (
+        "Проведи меня прямо сейчас через короткое дыхательное упражнение для успокоения, "
+        "по шагам, в спокойном тёплом тоне."
+    ),
+    "🔁 Разобрать мысль": (
+        "Помоги мне разобрать тревожную или негативную мысль по методу КПТ: "
+        "задай вопросы, чтобы я её записал, нашёл искажения и переформулировал."
+    ),
+    "🌍 Заземлиться": (
+        "Проведи меня через технику заземления 5-4-3-2-1, чтобы вернуться в момент здесь и сейчас."
+    ),
+    "📓 Дневник": (
+        "Предложи мне 2–3 мягких вопроса для дневника, чтобы я выгрузил мысли и чувства за сегодня."
+    ),
+}
+
+def psy_kb() -> ReplyKeyboardMarkup:
+    b = ReplyKeyboardBuilder()
+    b.row(KeyboardButton(text="🫁 Подышать"), KeyboardButton(text="🌍 Заземлиться"))
+    b.row(KeyboardButton(text="🔁 Разобрать мысль"), KeyboardButton(text="📓 Дневник"))
+    b.row(KeyboardButton(text="📊 Моё настроение"))
+    b.row(KeyboardButton(text="🗑 Очистить историю чата"))
+    b.row(KeyboardButton(text="🏠 В главное меню"))
+    return b.as_markup(resize_keyboard=True)
+
+def mood_checkin_kb():
+    b = InlineKeyboardBuilder()
+    b.row(
+        InlineKeyboardButton(text="😟", callback_data="mood:1"),
+        InlineKeyboardButton(text="😕", callback_data="mood:2"),
+        InlineKeyboardButton(text="😐", callback_data="mood:3"),
+        InlineKeyboardButton(text="🙂", callback_data="mood:4"),
+        InlineKeyboardButton(text="😄", callback_data="mood:5"),
+    )
+    return b.as_markup()
 
 # ══════════════════════════════════════════════════════
 #  /start
@@ -1657,15 +1770,41 @@ async def model_selected(message: Message, state: FSMContext):
             parse_mode="Markdown", reply_markup=cancel_kb()
         )
     else:
-        await message.answer(
-            f"{model_info['emoji']} *{model_info['name']}*  ·  💎 {total_cost} кредитов\n\n{hint}",
-            parse_mode="Markdown", reply_markup=cancel_kb()
-        )
+        if tool_id == "psy":
+            await message.answer(
+                "Привет, я Аура 💛 Я рядом, чтобы выслушать и помочь тебе разобраться в том, что на душе.\n\n"
+                "Как ты себя чувствуешь прямо сейчас?",
+                reply_markup=mood_checkin_kb()
+            )
+            await message.answer(
+                "Можешь просто написать, что происходит — или нажми кнопку с упражнением ниже.\n\n"
+                "_Я поддержка, а не замена врачу. В кризисной ситуации звони 112._",
+                parse_mode="Markdown", reply_markup=psy_kb()
+            )
+        else:
+            await message.answer(
+                f"{model_info['emoji']} *{model_info['name']}*  ·  💎 {total_cost} кредитов\n\n{hint}",
+                parse_mode="Markdown", reply_markup=cancel_kb()
+            )
 
 @router.message(State_.choose_model, F.text == "🏠 В главное меню")
 async def model_cancel(message: Message, state: FSMContext):
     await state.clear()
     await message.answer("🏠 Главное меню", reply_markup=main_kb())
+
+@router.callback_query(F.data.startswith("mood:"))
+async def mood_checkin(callback: CallbackQuery):
+    try:
+        score = int(callback.data.split(":")[1])
+    except (ValueError, IndexError):
+        await callback.answer(); return
+    await log_mood(callback.from_user.id, score)
+    label = MOOD_LABELS.get(score, "")
+    try:
+        await callback.message.edit_text(f"Спасибо, что поделился. Отметил: {label}")
+    except Exception:
+        pass
+    await callback.answer("Записал 💛")
 
 @router.message(State_.waiting_text)
 async def process_text(message: Message, state: FSMContext):
@@ -1692,6 +1831,27 @@ async def process_text(message: Message, state: FSMContext):
         await message.answer("Введи текст или отправь фото:")
         return
 
+    # Агент «Аура»: показать историю настроения / превратить кнопку-инструмент в запрос
+    if tool_id == "psy":
+        if user_text == "📊 Моё настроение":
+            await message.answer(
+                await get_mood_summary(message.from_user.id),
+                parse_mode="Markdown", reply_markup=psy_kb()
+            )
+            await state.set_state(State_.waiting_text)
+            await state.update_data(tool=tool_id, model=model_id, cost=cost)
+            return
+        if user_text in PSY_TOOLS:
+            user_text = PSY_TOOLS[user_text]
+
+    # Психолог-агент: проверка кризисного сигнала ДО списания кредитов и обращения к ИИ
+    if tool_id == "psy" and is_crisis(user_text):
+        await message.answer(CRISIS_REPLY, parse_mode="Markdown")
+        await state.set_state(State_.waiting_text)
+        await state.update_data(tool=tool_id, model=model_id, cost=cost)
+        await message.answer("Я рядом. Можешь продолжать писать.", reply_markup=psy_kb())
+        return
+
     ok = await use_credits(message.from_user.id, tool_id, cost)
     if not ok:
         await message.answer("❌ Недостаточно кредитов.", reply_markup=profile_kb())
@@ -1702,8 +1862,11 @@ async def process_text(message: Message, state: FSMContext):
 
     try:
         system = SYSTEM_PROMPTS.get(tool_id, SYSTEM_PROMPTS["chat"])
-        use_history = (tool_id == "chat")
-        result = await call_text_ai(user_text, system, model_id, uid=message.from_user.id, use_history=use_history, image_url=image_url)
+        use_history = tool_id in ("chat", "psy")
+        # Агент «Аура» ходит в интернет через веб-поиск Claude (если есть ключ Anthropic)
+        psy_web = (tool_id == "psy" and anthropic_client is not None)
+        gen_model = "claude" if psy_web else model_id
+        result = await call_text_ai(user_text, system, gen_model, uid=message.from_user.id, use_history=use_history, image_url=image_url, web=psy_web)
         bal    = await get_balance(message.from_user.id)
         model_info = TEXT_MODELS.get(model_id, TEXT_MODELS["claude"])
 
@@ -1727,13 +1890,13 @@ async def process_text(message: Message, state: FSMContext):
             else:
                 await message.answer(chunk)
 
-        # Если это чат — остаться в состоянии для продолжения разговора
-        if tool_id == "chat":
+        # Если это чат или психолог — остаться в состоянии для продолжения разговора
+        if tool_id in ("chat", "psy"):
             await state.set_state(State_.waiting_text)
             await state.update_data(tool=tool_id, model=model_id, cost=cost)
             await message.answer(
                 "💬 Продолжай писать или нажми кнопку ниже:",
-                reply_markup=cancel_kb()
+                reply_markup=(psy_kb() if tool_id == "psy" else cancel_kb())
             )
         else:
             await message.answer("Что дальше?", reply_markup=text_tools_kb())
@@ -4567,16 +4730,16 @@ async def _biz_agg(days):
     prev, vp = [], []
     if days <= 1:
         rows = await db_all("SELECT patients, revenue, expenses, exp_json FROM biz_finance WHERE day = date('now') AND COALESCE(src,'') != 'salary'")
-        v = await db_all("SELECT doctor, revenue, patient, day FROM visits WHERE src='shift' AND day = date('now')")
+        v = await db_all("SELECT doctor, revenue FROM visits WHERE src='shift' AND day = date('now')")
         label = "сегодня"
     else:
         rows = await db_all("SELECT patients, revenue, expenses, exp_json FROM biz_finance WHERE day >= date('now', ?) AND COALESCE(src,'') != 'salary'",
                             (f"-{days - 1} day",))
         prev = await db_all("SELECT revenue, expenses FROM biz_finance WHERE day >= date('now', ?) AND day < date('now', ?) AND COALESCE(src,'') != 'salary'",
                             (f"-{2 * days - 1} day", f"-{days - 1} day"))
-        v = await db_all("SELECT doctor, revenue, patient, day FROM visits WHERE src='shift' AND day >= date('now', ?) AND day <= date('now')",
+        v = await db_all("SELECT doctor, revenue FROM visits WHERE src='shift' AND day >= date('now', ?)",
                          (f"-{days - 1} day",))
-        vp = await db_all("SELECT doctor, revenue, patient, day FROM visits WHERE src='shift' AND day >= date('now', ?) AND day < date('now', ?)",
+        vp = await db_all("SELECT doctor, revenue FROM visits WHERE src='shift' AND day >= date('now', ?) AND day < date('now', ?)",
                           (f"-{2 * days - 1} day", f"-{days - 1} day"))
         label = f"{days} дней"
     pat = sum(r["patients"] for r in rows)
@@ -4590,9 +4753,7 @@ async def _biz_agg(days):
         except Exception:
             pass
     vrev = sum(r["revenue"] for r in v)
-    # Считаем уникальных пациентов по (день, имя) — один пациент у нескольких врачей не дублируется
-    unique_pats = set((r["day"], (r["patient"] or "").strip()) for r in v if (r["patient"] or "").strip())
-    vpat = len(unique_pats) if unique_pats else len(v)
+    vpat = len(v)
     pat += vpat
     rev += vrev
     aliases = await _get_aliases()
@@ -5200,122 +5361,6 @@ async def bizsync_cmd(message: Message):
     imported, err = await _biz_sync_from_sheet()
     await message.answer(f"⚠️ {err}" if err else f"✅ Обновлено строк: {imported}. Отчёт: /biz")
 
-FALLBACK_ZP_URL  = "https://docs.google.com/spreadsheets/d/1ZgnQMZ4CY0fHsnF7fy-teFvcq-kH-XEC0LxR1qdDcaM/edit"
-FALLBACK_ZP_GIDS = ["0", "1150786377", "63998999", "667260044", "321025656", "1616134916"]  # все вкладки таблицы
-
-def start_daily_messenger(bot):
-    """Каждый день в 15:00 пишет пациентам с записью на завтра."""
-    async def loop():
-        while True:
-            now = datetime.now()
-            # Следующий запуск в 15:00
-            target = now.replace(hour=15, minute=0, second=0, microsecond=0)
-            if now >= target:
-                target = target.replace(day=target.day + 1)
-            wait_sec = (target - now).total_seconds()
-            logging.info(f"📨 Следующий обзвон пациентов через {int(wait_sec//3600)}ч")
-            await asyncio.sleep(wait_sec)
-            try:
-                from patient_messenger import run_daily_confirmations
-                await run_daily_confirmations(_DB_PATH)
-            except Exception as e:
-                logging.error(f"Ошибка обзвона пациентов: {e}")
-
-    asyncio.create_task(loop())
-
-
-@router.message(Command("addpatient"))
-async def addpatient_cmd(msg: Message):
-    """Добавить пациента: /addpatient Иванов Иван +79991234567"""
-    if msg.from_user.id != ADMIN_ID:
-        return
-    parts = msg.text.split(maxsplit=1)[1:] if len(msg.text.split()) > 1 else []
-    if not parts:
-        await msg.answer("Использование: /addpatient Имя Пациента +79991234567")
-        return
-    text = parts[0].strip()
-    # Последний токен — телефон
-    tokens = text.rsplit(maxsplit=1)
-    if len(tokens) < 2:
-        await msg.answer("Укажи имя и телефон: /addpatient Иванов Иван +79991234567")
-        return
-    name, phone = tokens[0].strip(), tokens[1].strip()
-    from patient_messenger import add_patient_phone
-    await add_patient_phone(_DB_PATH, name, phone)
-    await msg.answer(f"✅ Сохранено: {name} → {phone}")
-
-
-@router.message(Command("sendpatient"))
-async def sendpatient_cmd(msg: Message):
-    """Ручная отправка пациенту: /sendpatient +79991234567 confirm"""
-    if msg.from_user.id != ADMIN_ID:
-        return
-    parts = msg.text.split()
-    if len(parts) < 2:
-        await msg.answer("Использование: /sendpatient +79991234567 [confirm|review]")
-        return
-    phone     = parts[1]
-    call_type = parts[2] if len(parts) > 2 else "confirm"
-
-    await msg.answer(f"📨 Ищу {phone} в Telegram...")
-    try:
-        from patient_messenger import send_to_patient, TelegramClient, SESSION, API_ID, API_HASH
-        # Находим имя по телефону
-        async with aiosqlite.connect(_DB_PATH) as db:
-            db.row_factory = aiosqlite.Row
-            row = await db.execute_fetchone(
-                "SELECT name FROM patients WHERE phone = ? LIMIT 1", (phone,)
-            )
-        name = row["name"] if row else "Пациент"
-
-        async with TelegramClient(SESSION, API_ID, API_HASH) as client:
-            ctx = {"patient_name": name, "call_type": call_type,
-                   "date": "завтра", "doctor": ""}
-            found = await send_to_patient(client, phone, ctx)
-
-        if found:
-            await msg.answer(f"✅ Сообщение отправлено {name} ({phone})")
-        else:
-            await msg.answer(f"❌ {phone} не найден в Telegram")
-    except Exception as e:
-        await msg.answer(f"❌ Ошибка: {e}")
-
-
-def start_zp_sync(bot):
-    """Автосинхронизация матриц ЗП при старте и каждые 6 часов."""
-    async def loop():
-        # Сразу при старте
-        await asyncio.sleep(10)
-        try:
-            day_before = await _get_zp_sheets("zp_day_sheets")
-            night_before = await _get_zp_sheets("zp_night_sheets")
-            used_fallback = not day_before and not night_before
-            cnt, err = await _sync_zp_matrix()
-            logging.info(f"✅ ZP auto-sync: {cnt} записей{' | ' + err if err else ''}")
-            if cnt > 0:
-                fallback_note = (
-                    f"\n⚠️ Таблица ЗП не была настроена — использован резервный URL:\n{FALLBACK_ZP_URL}\n"
-                    "Он автоматически сохранён. Для смены: /setzpday <url>"
-                ) if used_fallback else ""
-                await bot.send_message(ADMIN_ID,
-                    f"✅ Матрицы ЗП загружены автоматически: {cnt} записей{fallback_note}")
-            elif used_fallback:
-                await bot.send_message(ADMIN_ID,
-                    f"⚠️ Резервная таблица ЗП не содержит данных или недоступна.\n"
-                    f"URL: {FALLBACK_ZP_URL}\n"
-                    f"Убедись что таблица открыта «по ссылке: Читатель».\n"
-                    f"Для настройки другой: /setzpday <url>")
-        except Exception as e:
-            logging.error(f"ZP sync error: {e}")
-        # Потом каждые 6 часов
-        while True:
-            await asyncio.sleep(6 * 3600)
-            try:
-                await _sync_zp_matrix()
-            except Exception as e:
-                logging.error(f"ZP sync loop error: {e}")
-    asyncio.create_task(loop())
-
 def start_biz_sync(bot):
     async def loop():
         await asyncio.sleep(120)
@@ -5329,310 +5374,6 @@ def start_biz_sync(bot):
                 logging.error(f"biz sync loop: {e}")
             await asyncio.sleep(6 * 3600)
     asyncio.create_task(loop())
-
-
-# ====================================================================
-#  💰 ПАРСЕР МАТРИЦЫ ЗП (формат: строки=дни, колонки=врачи с %)
-#  Строка 1: (пусто), (пусто), Месяц Год
-#  Строка 2: дата | Врач1 35% | Врач2 30% | ...
-#  Строки 3+: день | сумма1 | сумма2 | ...
-# ====================================================================
-
-def _parse_salary_matrix(csv_text: str, tab_name: str = "") -> tuple:
-    """
-    Парсит матрицу ЗП врачей.
-    Возвращает (period, list of {date, doctor, salary, revenue, pct, is_medical})
-    Поддерживает формат без строки-заголовка (как июнь) и с опечатками в названии месяца.
-    """
-    import csv as _csv, io as _io
-    rows = list(_csv.reader(_io.StringIO(csv_text)))
-    if len(rows) < 2:
-        return None, []
-
-    # Ищем строку с месяцем/годом среди первых 5 строк
-    year, month, header_row_idx = None, None, 1
-    for row_idx in range(min(5, len(rows))):
-        period_str = " ".join(c.strip() for c in rows[row_idx] if c.strip()).lower()
-        for i, mn in enumerate(_RU_MONTHS, 1):
-            if mn[:5] in period_str:  # первые 5 букв — обходит опечатки
-                m = re.search(r"\d{4}", period_str)
-                if m:
-                    month, year = i, int(m.group())
-                    header_row_idx = row_idx + 1
-                    break
-        if year and month:
-            break
-
-    # Fallback: ищем период в названии вкладки
-    if not year or not month:
-        period_str = tab_name.lower()
-        for i, mn in enumerate(_RU_MONTHS, 1):
-            if mn[:5] in period_str:
-                m = re.search(r"\d{4}", period_str)
-                if m:
-                    month, year = i, int(m.group())
-                    # Если строка 0 уже содержит "дата" — заголовки там
-                    if rows and any("дата" in c.lower() for c in rows[0]):
-                        header_row_idx = 0
-                    break
-
-    if not year or not month:
-        return None, []
-    period = f"{year}-{month:02d}"
-
-    # Заголовки врачей
-    header = rows[header_row_idx] if header_row_idx < len(rows) else []
-    doctors = []
-    for col_idx, cell in enumerate(header[1:], 1):
-        cell = cell.strip()
-        if not cell:
-            doctors.append(None)
-            continue
-        pct = None
-        m = re.search(r"(\d+)\s*[-–]\s*(\d+)\s*%", cell)
-        if m:
-            pct = (int(m.group(1)) + int(m.group(2))) / 2
-            name = re.sub(r"\s*\d+\s*[-–]\s*\d+\s*%", "", cell).strip()
-        else:
-            m2 = re.search(r"(\d+)\s*%?", cell)
-            if m2 and int(m2.group(1)) <= 100:
-                pct = int(m2.group(1))
-                name = re.sub(r"\s*\d+\s*%?$", "", cell).strip()
-            else:
-                name = cell
-                pct = None
-        doctors.append({"name": name, "pct": pct, "col": col_idx})
-
-    result = []
-    for row in rows[header_row_idx + 1:]:
-        if not row:
-            continue
-        day_cell = (row[0] if row else "").strip()
-        if not day_cell or not day_cell.isdigit():
-            continue
-        day_num = int(day_cell)
-        try:
-            import datetime as _dt
-            date_iso = _dt.date(year, month, day_num).isoformat()
-        except ValueError:
-            continue
-        for doc in doctors:
-            if doc is None:
-                continue
-            col = doc["col"]
-            raw = (row[col] if col < len(row) else "").strip().replace(" ", "").replace("\xa0", "").replace(",", ".")
-            if not raw:
-                continue
-            try:
-                salary = float(raw)
-            except ValueError:
-                continue
-            if salary <= 0:
-                continue
-            pct = doc["pct"]
-            revenue = salary / (pct / 100) if pct and pct > 0 else salary
-            result.append({
-                "date": date_iso,
-                "doctor": doc["name"].strip(),
-                "salary": salary,
-                "revenue": revenue,
-                "pct": pct or 0,
-                "is_medical": pct is not None and pct > 0,
-            })
-    return period, result
-
-
-async def _get_zp_sheets(key: str) -> list:
-    raw = await get_setting(key, "")
-    try:
-        return json.loads(raw) if raw else []
-    except Exception:
-        return []
-
-
-async def _sync_zp_matrix():
-    """Синхронизирует матрицы ЗП (день + ночь) — читает ВСЕ вкладки таблицы."""
-    day_sheets   = await _get_zp_sheets("zp_day_sheets")
-    night_sheets = await _get_zp_sheets("zp_night_sheets")
-    if not day_sheets and not night_sheets:
-        # Fallback: использовать жёстко заданный URL, если в БД нет ни одного листа
-        logging.warning("ZP sheets not configured — using hardcoded fallback URL")
-        day_sheets = [FALLBACK_ZP_URL]
-        await set_setting("zp_day_sheets", json.dumps(day_sheets, ensure_ascii=False))
-
-    await _ensure_visits_table()
-    await db_run("DELETE FROM visits WHERE src='zp'")
-    await db_run("DELETE FROM biz_finance WHERE src='salary'")
-
-    total, errors = 0, []
-
-    async def process_sheets(sheet_urls, shift_type):
-        nonlocal total
-        seen_sid = set()
-        seen_records = set()  # дедупликация: (period, day, doctor, shift_type)
-        for base_url in sheet_urls:
-            sm = re.search(r"/spreadsheets/d/([a-zA-Z0-9_-]+)", base_url)
-            if not sm:
-                continue
-            sid = sm.group(1)
-            if sid in seen_sid:
-                continue
-            seen_sid.add(sid)
-
-            # Получаем все вкладки таблицы
-            tabs = await _list_sheet_tabs(sid)
-            if not tabs:
-                # Если htmlview не сработал — используем известные GID
-                known = FALLBACK_ZP_GIDS if sid in FALLBACK_ZP_URL else ["0"]
-                tabs = [(g, f"лист_{g}") for g in known]
-                logging.info(f"ZP: _list_sheet_tabs failed for {sid}, using {len(tabs)} hardcoded GIDs")
-
-            for gid, tab_name in tabs:
-                csv_url = f"https://docs.google.com/spreadsheets/d/{sid}/export?format=csv&gid={gid}"
-                text, err = await _fetch_csv(csv_url)
-                if err or not text:
-                    errors.append(f"{tab_name}: {err or 'пусто'}"); continue
-
-                period, records = _parse_salary_matrix(text, tab_name=tab_name)
-                if not period or not records:
-                    continue  # Пропускаем вкладки которые не являются матрицей ЗП
-
-                for r in records:
-                    # Дедупликация — один врач/день/смена только один раз
-                    key = (period, r["date"], r["doctor"].lower().strip(), shift_type)
-                    if key in seen_records:
-                        continue
-                    seen_records.add(key)
-
-                    await db_run(
-                        "INSERT INTO visits (day, doctor, service, kind, ref_from, revenue, percent, pay, src, patient, period) "
-                        "VALUES (?, ?, ?, '', '', ?, ?, '', 'zp', '', ?)",
-                        (r["date"], r["doctor"], shift_type, r["revenue"], r["pct"], period)
-                    )
-                    if r["is_medical"] and r["salary"] > 0:
-                        await db_run(
-                            "INSERT INTO biz_finance (day, patients, revenue, expenses, exp_json, note, src) "
-                            "VALUES (?, 0, 0, ?, ?, ?, 'salary')",
-                            (r["date"], r["salary"],
-                             json.dumps({"ФОТ врачей": r["salary"]}, ensure_ascii=False),
-                             f"ЗП {r['doctor']}")
-                        )
-                    total += 1
-
-    await process_sheets(day_sheets, "день")
-    await process_sheets(night_sheets, "ночь")
-    return total, ("; ".join(errors) if errors else None)
-
-
-@router.message(Command("zpdiag"))
-async def zpdiag_cmd(message: Message):
-    """Диагностика: показывает что читается из матриц ЗП."""
-    if message.from_user.id != ADMIN_ID:
-        return
-    day_sheets = await _get_zp_sheets("zp_day_sheets")
-    night_sheets = await _get_zp_sheets("zp_night_sheets")
-    lines = [f"🔧 Диагностика ЗП\n\nДневных таблиц: {len(day_sheets)}\nНочных таблиц: {len(night_sheets)}"]
-
-    for sheet_type, sheets in [("ДЕНЬ", day_sheets), ("НОЧЬ", night_sheets)]:
-        for url in sheets[:2]:
-            sm = re.search(r"/spreadsheets/d/([a-zA-Z0-9_-]+)", url)
-            if not sm:
-                continue
-            sid = sm.group(1)
-            lines.append(f"\n--- {sheet_type} (sid={sid[:12]}...) ---")
-
-            tabs = await _list_sheet_tabs(sid)
-            lines.append(f"Найдено вкладок: {len(tabs)}")
-            for gid, name in tabs[:5]:
-                lines.append(f"  • {name} (gid={gid})")
-
-            # Пробуем прочитать первую вкладку
-            test_url = f"https://docs.google.com/spreadsheets/d/{sid}/export?format=csv&gid=0"
-            text, err = await _fetch_csv(test_url)
-            if err:
-                lines.append(f"❌ Ошибка чтения gid=0: {err}")
-            else:
-                preview = (text or "")[:200].replace("\n", " | ")
-                lines.append(f"✅ gid=0 читается. Первые 200 символов:\n{preview}")
-                period, records = _parse_salary_matrix(text)
-                lines.append(f"Парсер: период={period}, записей={len(records)}")
-                if records:
-                    r = records[0]
-                    lines.append(f"Пример: {r['date']} | {r['doctor']} | ЗП={r['salary']} | выр={r['revenue']:.0f} | %={r['pct']}")
-
-    # Что сейчас в БД
-    cnt = await db_get("SELECT COUNT(*) c FROM visits WHERE src='zp'")
-    lines.append(f"\nВ БД visits(zp): {cnt['c'] if cnt else 0} записей")
-    cnt2 = await db_get("SELECT COUNT(*) c FROM visits")
-    lines.append(f"Всего в visits: {cnt2['c'] if cnt2 else 0} записей")
-
-    await message.answer("\n".join(lines)[:3900])
-
-
-@router.message(Command("setzpday"))
-async def setzpday_cmd(message: Message):
-    if message.from_user.id != ADMIN_ID:
-        return
-    parts = (message.text or "").split(maxsplit=1)
-    if len(parts) < 2:
-        sheets = await _get_zp_sheets("zp_day_sheets")
-        await message.answer(
-            f"📅 Таблиц «ЗП день» подключено: {len(sheets)}\n\n"
-            "Добавить:\n/setzpday <ссылка на Google-таблицу>\n\n"
-            "Формат: строки = дни, колонки = врачи с процентом в заголовке.\n"
-            "Доступ: «по ссылке: Читатель»."
-        ); return
-    url = _sheet_csv_url(parts[1].strip())
-    if not url:
-        await message.answer("Не похоже на ссылку Google-таблицы."); return
-    sheets = await _get_zp_sheets("zp_day_sheets")
-    if url not in sheets:
-        sheets.append(url)
-        await set_setting("zp_day_sheets", json.dumps(sheets, ensure_ascii=False))
-    cnt, err = await _sync_zp_matrix()
-    msg = f"✅ Таблица дневной смены подключена. Прочитано записей: {cnt}"
-    if err:
-        msg += f"\n⚠️ {err}"
-    await message.answer(msg)
-
-
-@router.message(Command("setzpnight"))
-async def setzpnight_cmd(message: Message):
-    if message.from_user.id != ADMIN_ID:
-        return
-    parts = (message.text or "").split(maxsplit=1)
-    if len(parts) < 2:
-        sheets = await _get_zp_sheets("zp_night_sheets")
-        await message.answer(
-            f"🌙 Таблиц «ЗП ночь» подключено: {len(sheets)}\n\n"
-            "Добавить:\n/setzpnight <ссылка на Google-таблицу>\n\n"
-            "Формат: строки = дни, колонки = врачи с процентом в заголовке.\n"
-            "Доступ: «по ссылке: Читатель»."
-        ); return
-    url = _sheet_csv_url(parts[1].strip())
-    if not url:
-        await message.answer("Не похоже на ссылку Google-таблицы."); return
-    sheets = await _get_zp_sheets("zp_night_sheets")
-    if url not in sheets:
-        sheets.append(url)
-        await set_setting("zp_night_sheets", json.dumps(sheets, ensure_ascii=False))
-    cnt, err = await _sync_zp_matrix()
-    msg = f"✅ Таблица ночной смены подключена. Прочитано записей: {cnt}"
-    if err:
-        msg += f"\n⚠️ {err}"
-    await message.answer(msg)
-
-
-@router.message(Command("zpsynс", "zpsync"))
-async def zpsync_cmd(message: Message):
-    if message.from_user.id != ADMIN_ID:
-        return
-    await message.answer("🔄 Синхронизирую матрицы ЗП...")
-    cnt, err = await _sync_zp_matrix()
-    msg = f"✅ Готово. Записей: {cnt}"
-    if err:
-        msg += f"\n⚠️ {err}"
-    await message.answer(msg)
 
 
 # ====================================================================
@@ -6122,30 +5863,23 @@ async def _sync_visits():
     shift_rows.sort(key=lambda r: r[0])  # по дате: кто раньше — тот первичный
     first_doctor = {}
     seen_visit = set()
-    # seen_patient: (day, patient_key) → первый врач которому пациент пришёл в этот день
-    seen_patient_day: dict = {}
     for (day, doctor, service, revenue, pay, key, patient, per) in shift_rows:
         kind, ref = "", ""
         if key:
-            pat_day = (day, key)
             if key not in first_doctor:
                 first_doctor[key] = doctor
-            if pat_day not in seen_patient_day:
-                # Первый визит этого пациента в этот день — первичный к этому врачу
-                seen_patient_day[pat_day] = doctor
                 if (key, day) not in seen_visit:
                     kind = "первичный"
                     seen_visit.add((key, day))
-            else:
-                # Пациент уже был сегодня — повторный, возможно к другому врачу
+            elif (key, day) not in seen_visit:
                 kind = "повторный"
-                first_doc_today = seen_patient_day[pat_day]
-                if doctor != first_doc_today:
-                    ref = first_doc_today
+                seen_visit.add((key, day))
+                if doctor != first_doctor[key]:
+                    ref = first_doctor[key]  # пациент перешёл от первого врача к этому
         per2 = per or (day[:7] if (day and len(day) >= 7) else None)
         all_rows.append((day, doctor, service, kind, ref, revenue, 0, pay, "shift", patient, per2))
     await _ensure_visits_table()
-    await db_run("DELETE FROM visits WHERE src IN ('shift', 'clean')")
+    await db_run("DELETE FROM visits")
     for r in all_rows:
         await db_run("INSERT INTO visits (day,doctor,service,kind,ref_from,revenue,percent,pay,src,patient,period) VALUES (?,?,?,?,?,?,?,?,?,?,?)", r)
     return len(all_rows), ("; ".join(errors) if errors else None)
@@ -6294,7 +6028,7 @@ async def visitsclear_cmd(message: Message):
     await set_setting("visit_sheets", "[]")
     await set_setting("shift_sheets", "[]")
     await _ensure_visits_table()
-    await db_run("DELETE FROM visits WHERE src IN ('shift', 'clean')")
+    await db_run("DELETE FROM visits")
     await message.answer("🗑 Все таблицы по врачам отключены.")
 
 DEFAULT_ALIASES = [
@@ -6420,8 +6154,9 @@ async def diag_cmd(message: Message):
     lines.append("\n\nℹ️ Бот сам читает все вкладки по уже добавленным ссылкам. Если какой-то вкладки нет в списке выше или врач не распознан — пришли мне пару строк из неё.")
     await message.answer("\n".join(lines)[:3900])
 
+@router.message(Command("doctors"))
 async def _doctor_periods():
-    rows = await db_all("SELECT DISTINCT period FROM visits WHERE period IS NOT NULL AND period != '' AND src IN ('shift','clean','zp')")
+    rows = await db_all("SELECT DISTINCT period FROM visits WHERE period IS NOT NULL AND period != '' AND src IN ('shift','clean')")
     return sorted([r["period"] for r in rows if r["period"]], reverse=True)
 
 
@@ -6468,7 +6203,7 @@ async def cb_dmon(cq: CallbackQuery):
         return
     period = cq.data.split("_", 1)[1]
     await cq.answer("Готовлю отчёт...")
-    rows = await db_all("SELECT doctor,service,kind,ref_from,revenue,percent,pay,src,patient FROM visits WHERE period = ? AND src IN ('shift','clean','zp') AND doctor IS NOT NULL AND doctor != '' AND doctor != '—' AND LOWER(doctor) NOT LIKE '%не указан%'", (period,))
+    rows = await db_all("SELECT doctor,service,kind,ref_from,revenue,percent,pay,src,patient FROM visits WHERE period = ?", (period,))
     if not rows:
         await cq.message.answer(f"За {_period_label(period)} данных нет.")
         return
@@ -6482,8 +6217,6 @@ async def _render_doctor_detail(message, rows, period_label):
     sent_to = {}
     for r in rows:
         d = _canon_with(r["doctor"] or "—", aliases)
-        if not d or d == "—" or d.lower() in ("врач не указан", "не указан", "doctor", "unknown"):
-            continue  # пропускаем записи без врача
         x = docs.setdefault(d, {"total": 0, "first": 0, "repeat": 0, "rev": 0.0,
                                 "services": {}, "ref_in": 0, "ref_in_by": {}, "salary": 0.0, "pay": {}})
         x["total"] += 1
@@ -6557,17 +6290,12 @@ async def _render_doctor_detail(message, rows, period_label):
     await _send_block(message, f"📊 *Отчёт по врачам · {period_label}*", body)
 
 
-@router.message(Command("doctors"))
 async def doctors_cmd(message: Message):
     if message.from_user.id != ADMIN_ID:
         return
     parts = (message.text or "").split()
-    # Если вызвано через кнопку (текст «📊 Доктора») — аргументов нет
-    raw_arg = " ".join(parts[1:]).strip()
-    # Игнорируем нетекстовые «аргументы» из названия кнопки
-    arg = raw_arg if raw_arg and raw_arg not in ("Доктора", "доктора") else ""
+    arg = " ".join(parts[1:]).strip()
     synced, sync_err = await _sync_visits()
-    await _sync_zp_matrix()  # всегда синхронизируем ЗП при открытии отчёта
     await _ensure_visits_table()
 
     on_date = None
@@ -6581,38 +6309,53 @@ async def doctors_cmd(message: Message):
         else:
             on_date = _norm_date(arg)
 
-    # ── По умолчанию (кнопка «Доктора» или /doctors без аргумента) — выбор месяца ──
-    if not arg or (not days and not period and not on_date):
-        ps = await _doctor_periods()
-        if not ps:
+    # ── По умолчанию (кнопка «Доктора») — сводка ПО МЕСЯЦАМ ──
+    if not arg:
+        allv = await db_all("SELECT period, day, doctor, revenue FROM visits WHERE src IN ('shift','clean')")
+        if not allv:
             msg = "📊 По врачам пока нет данных.\n\n"
             if sync_err:
-                msg += f"⚠️ {sync_err}\n\n"
-            msg += "Проверь подключение таблиц через /setzpday"
+                msg += f"⚠️ Таблица: {sync_err}\n\n"
+            msg += ("Проверь:\n• таблица открыта «по ссылке: Читатель»\n"
+                    "• /visits — что подключено, /diag — диагностика")
             await message.answer(msg)
             return
-        # Показываем краткую сводку по последним месяцам
-        allv = await db_all("SELECT period, doctor, revenue FROM visits WHERE src IN ('shift','clean','zp') AND period IS NOT NULL AND period >= '2026-01'")
-        pct_map = await _get_doctor_percents()
         aliases = await _get_aliases()
+        pct_map = await _get_doctor_percents()
         per_map = {}
         for r in allv:
-            p = r["period"]
+            p = r["period"] or ((r["day"] or "")[:7]) or "—"
             d = _canon_with(r["doctor"] or "—", aliases)
-            x = per_map.setdefault(p, {"rev": 0.0, "doctors": set()})
+            x = per_map.setdefault(p, {}).setdefault(d, {"n": 0, "rev": 0.0})
+            x["n"] += 1
             x["rev"] += r["revenue"] or 0
-            x["doctors"].add(d)
-        lines = ["📊 *Отчёты по врачам*\n\nВыбери месяц:\n"]
-        for p in sorted(per_map.keys(), reverse=True)[:8]:
-            v = per_map[p]
-            lines.append(f"• {_period_label(p)}: {_money(v['rev'])} руб · {len(v['doctors'])} врачей")
-        await message.answer("\n".join(lines), parse_mode="Markdown")
-        await message.answer("📅 Выбери год:", reply_markup=_doctor_year_kb(ps))
+        ordered = sorted(per_map.keys(), reverse=True)
+        recent = ordered[:6]
+        out = []
+        for p in recent:
+            docs = per_map[p]
+            totn = sum(v["n"] for v in docs.values())
+            totr = sum(v["rev"] for v in docs.values())
+            lines = [f"📅 *{_period_label(p)}* · {totn} приёмов · {_money(totr)}"]
+            for d, v in sorted(docs.items(), key=lambda kv: -kv[1]["rev"]):
+                pct = pct_map.get(d)
+                zp = f" · ЗП {pct}%: {_money(v['rev'] * pct / 100)}" if pct else ""
+                lines.append(f"• {d} — {v['n']} приёмов, {_money(v['rev'])}{zp}")
+            out.append("\n".join(lines))
+        tail = ""
+        more = [p for p in ordered if p not in recent]
+        if more:
+            tail += "\n\n📂 Ещё есть месяцы: " + ", ".join(_period_label(p) for p in more[:12])
+        tail += "\n\nПодробно за месяц: напиши «/doctors Июнь 2026» — врачи, направления, оплаты."
+        await _send_block(message, "📊 *Врачи по месяцам*", "\n\n".join(out) + tail)
+        ps = await _doctor_periods()
+        if ps:
+            await message.answer("📅 Открыть конкретный месяц — выбери год:", reply_markup=_doctor_year_kb(ps))
         return
 
     # ── Подробный отчёт: за конкретный месяц / дату / N дней ──
     if period:
-        rows = await db_all("SELECT doctor,service,kind,ref_from,revenue,percent,pay,src,patient FROM visits WHERE period = ? AND src IN ('shift','clean','zp') AND doctor IS NOT NULL AND doctor != '' AND doctor != '—' AND LOWER(doctor) NOT LIKE '%не указан%'", (period,))
+        rows = await db_all("SELECT doctor,service,kind,ref_from,revenue,percent,pay,src,patient FROM visits WHERE period = ?", (period,))
         period_label = _period_label(period)
     elif on_date:
         rows = await db_all("SELECT doctor,service,kind,ref_from,revenue,percent,pay,src,patient FROM visits WHERE day = ?", (on_date,))
@@ -6715,334 +6458,6 @@ async def delsheet_cmd(message: Message):
     await message.answer(f"🗑 Таблица №{idx} удалена. Осталось: {len(sheets)}. Строк в базе: {n}.")
 
 
-# ══════════════════════════════════════════════════════
-#  📞 ЗВОНКИ ПАЦИЕНТАМ (голосовой робот через Voximplant)
-# ══════════════════════════════════════════════════════
-
-CALL_RESULTS_RU = {
-    "confirmed": "✅ Подтвердил запись",
-    "cancelled":  "❌ Отменил запись",
-    "no_answer":  "📵 Не нажал кнопку",
-    "hung_up":    "📵 Сбросил трубку",
-    "failed":     "🔴 Недоступен / не дозвонились",
-    "great":      "⭐⭐⭐ Отлично",
-    "good":       "⭐⭐ Хорошо",
-    "bad":        "⭐ Плохо",
-}
-
-async def voximplant_call(phone: str, call_type: str, date: str = "", time_: str = "") -> dict:
-    """Запускает звонок через Voximplant API."""
-    if not VOXIM_ACCOUNT_ID or not VOXIM_API_KEY:
-        return {"error": "Voximplant не настроен. Добавь VOXIM_ACCOUNT_ID и VOXIM_API_KEY в переменные окружения."}
-    import json as _json
-    custom_data = _json.dumps({
-        "phone": phone,
-        "call_type": call_type,
-        "date": date,
-        "time": time_,
-        "admin_uid": str(ADMIN_ID),
-        "webhook_url": VOXIM_WEBHOOK_URL,
-    }, ensure_ascii=False)
-    data = {
-        "account_id":   VOXIM_ACCOUNT_ID,
-        "api_key":      VOXIM_API_KEY,
-        "rule_name":    VOXIM_RULE_NAME,
-        "script_custom_data": custom_data,
-        "reference_to_call":  phone,
-    }
-    if VOXIM_CALLER_ID:
-        data["caller_id"] = VOXIM_CALLER_ID
-    try:
-        async with httpx.AsyncClient(timeout=20) as client:
-            r = await client.post("https://api.voximplant.com/platform_api/StartScenarios/", data=data)
-            return r.json()
-    except Exception as e:
-        return {"error": str(e)}
-
-def calls_kb() -> ReplyKeyboardMarkup:
-    b = ReplyKeyboardBuilder()
-    b.row(KeyboardButton(text="📅 Подтверждение записи"))
-    b.row(KeyboardButton(text="⭐ Сбор отзывов"))
-    b.row(KeyboardButton(text="🏠 В главное меню"))
-    return b.as_markup(resize_keyboard=True)
-
-def calls_cancel_kb() -> ReplyKeyboardMarkup:
-    b = ReplyKeyboardBuilder()
-    b.row(KeyboardButton(text="❌ Отмена"))
-    return b.as_markup(resize_keyboard=True)
-
-@router.message(F.text == "📞 Звонки пациентам")
-async def calls_menu_handler(message: Message, state: FSMContext):
-    if message.from_user.id != ADMIN_ID:
-        return
-    await state.clear()
-    await state.set_state(State_.calls_menu)
-    await message.answer(
-        "📞 *Звонки пациентам*\n\n"
-        "Выбери тип звонка:",
-        parse_mode="Markdown",
-        reply_markup=calls_kb()
-    )
-
-@router.message(StateFilter(State_.calls_menu), F.text.in_(["📅 Подтверждение записи", "⭐ Сбор отзывов"]))
-async def calls_type_selected(message: Message, state: FSMContext):
-    call_type = "confirm" if "Подтверждение" in message.text else "review"
-    await state.update_data(call_type=call_type)
-    await state.set_state(State_.calls_input)
-
-    if call_type == "confirm":
-        await message.answer(
-            "📋 *Подтверждение записи*\n\n"
-            "Отправь номера телефонов — каждый с новой строки.\n"
-            "Можно добавить дату и время через запятую:\n\n"
-            "```\n"
-            "+79001234567, завтра, 14:00\n"
-            "+79009876543, 15 июля, 10:30\n"
-            "+79001112233\n"
-            "```",
-            parse_mode="Markdown",
-            reply_markup=calls_cancel_kb()
-        )
-    else:
-        await message.answer(
-            "⭐ *Сбор отзывов*\n\n"
-            "Отправь номера телефонов пациентов которые уже побывали на приёме — каждый с новой строки:\n\n"
-            "```\n"
-            "+79001234567\n"
-            "+79009876543\n"
-            "```",
-            parse_mode="Markdown",
-            reply_markup=calls_cancel_kb()
-        )
-
-@router.message(StateFilter(State_.calls_input), F.text == "❌ Отмена")
-async def calls_cancel(message: Message, state: FSMContext):
-    await state.clear()
-    await message.answer("Отменено.", reply_markup=main_kb(True))
-
-@router.message(StateFilter(State_.calls_input))
-async def calls_start(message: Message, state: FSMContext):
-    data = await state.get_data()
-    call_type = data.get("call_type", "confirm")
-    await state.clear()
-
-    lines = [l.strip() for l in (message.text or "").splitlines() if l.strip()]
-    if not lines:
-        await message.answer("Нет номеров. Попробуй ещё раз.", reply_markup=main_kb(True))
-        return
-
-    phones = []
-    for line in lines:
-        parts = [p.strip() for p in line.split(",")]
-        phone = parts[0]
-        date  = parts[1] if len(parts) > 1 else "завтра"
-        time_ = parts[2] if len(parts) > 2 else ""
-        phones.append((phone, date, time_))
-
-    await message.answer(
-        f"📞 Начинаю обзвон: *{len(phones)} номер(ов)*...",
-        parse_mode="Markdown",
-        reply_markup=main_kb(True)
-    )
-
-    for phone, date, time_ in phones:
-        result = await voximplant_call(phone, call_type, date, time_)
-        if "error" in result:
-            await message.answer(f"❌ {phone}: {result['error']}")
-        elif result.get("result") == 1:
-            await message.answer(f"📲 {phone} — звонок запущен")
-        else:
-            err = result.get("error", str(result))
-            await message.answer(f"⚠️ {phone}: {err}")
-        await asyncio.sleep(5)  # пауза между звонками
-
-    await message.answer(f"✅ Обзвон завершён. Результаты придут сюда автоматически.")
-
-# Webhook для результатов звонков (Voximplant шлёт GET-запрос)
-# Для работы нужен публичный URL (Railway даёт его автоматически)
-# Добавь в Railway env: VOXIM_WEBHOOK_URL=https://ВАШ_APP.railway.app/vox_webhook
-async def vox_webhook_handler(request):
-    """Принимает результаты звонков от Voximplant."""
-    from aiohttp.web import Response
-    phone     = request.rel_url.query.get("phone", "")
-    result    = request.rel_url.query.get("result", "")
-    call_type = request.rel_url.query.get("call_type", "")
-    admin_uid = request.rel_url.query.get("admin_uid", str(ADMIN_ID))
-
-    result_ru = CALL_RESULTS_RU.get(result, result)
-    emoji = "📅" if call_type == "confirm" else "⭐"
-
-    try:
-        bot = Bot(token=BOT_TOKEN)
-        await bot.send_message(
-            int(admin_uid),
-            f"{emoji} *Результат звонка*\n\n"
-            f"📱 Номер: `{phone}`\n"
-            f"📊 Результат: {result_ru}",
-            parse_mode="Markdown"
-        )
-        await bot.session.close()
-    except Exception:
-        pass
-
-    return Response(text="ok")
-
-
-# ══════════════════════════════════════════════════════
-#  🤝 МОИ АГЕНТЫ (маркетолог, финансист, СММ, ассистент)
-# ══════════════════════════════════════════════════════
-
-MY_AGENTS = {
-    "📣 Маркетолог": {
-        "emoji": "📣",
-        "system": (
-            "Ты — опытный маркетолог медицинской клиники. Помогаешь привлекать пациентов и развивать бизнес.\n"
-            "Ты умеешь: разрабатывать акции и спецпредложения, писать рекламные тексты, придумывать названия услуг, "
-            "анализировать конкурентов, строить воронки продаж, делать скрипты для администраторов.\n"
-            "Отвечай конкретно, с готовыми примерами. Пиши на русском языке."
-        )
-    },
-    "💹 Финансист": {
-        "emoji": "💹",
-        "system": (
-            "Ты — финансовый директор и аналитик медицинской клиники.\n"
-            "Ты умеешь: анализировать выручку и расходы, считать рентабельность услуг и врачей, "
-            "строить финансовые прогнозы, находить точки роста прибыли, оптимизировать ФОТ, "
-            "советовать по ценообразованию, анализировать unit-экономику.\n"
-            "Давай конкретные цифры и рекомендации. Пиши на русском языке."
-        )
-    },
-    "📱 СММ": {
-        "emoji": "📱",
-        "system": (
-            "Ты — профессиональный SMM-менеджер для медицинской клиники.\n"
-            "Работаешь со всеми платформами: Instagram, Telegram-канал, ВКонтакте, TikTok, YouTube.\n"
-            "Ты умеешь: писать продающие посты и сторис, делать контент-планы, придумывать рубрики, "
-            "писать подписи к фото, создавать вирусный контент, делать экспертные статьи для блога, "
-            "писать тексты для Reels и TikTok, придумывать конкурсы и активации.\n"
-            "Пиши живо, по-человечески, с эмодзи где уместно. Русский язык."
-        )
-    },
-    "🧠 Ассистент": {
-        "emoji": "🧠",
-        "system": (
-            "Ты — личный ИИ-ассистент руководителя медицинской клиники.\n"
-            "Помогаешь с любыми задачами: составляешь письма и договоры, пишешь инструкции для персонала, "
-            "готовишь презентации и отчёты, отвечаешь на любые вопросы, помогаешь принимать решения, "
-            "структурируешь задачи и планы, переводишь тексты, объясняешь сложные вещи простым языком.\n"
-            "Будь полезным, конкретным и быстрым. Пиши на русском языке."
-        )
-    },
-}
-
-# хранилище истории агентов: {(user_id, agent_name): [{"role":..,"content":..}]}
-_agent_histories: dict[tuple, list] = {}
-
-def agents_kb() -> ReplyKeyboardMarkup:
-    b = ReplyKeyboardBuilder()
-    b.row(KeyboardButton(text="📣 Маркетолог"), KeyboardButton(text="💹 Финансист"))
-    b.row(KeyboardButton(text="📱 СММ"),        KeyboardButton(text="🧠 Ассистент"))
-    b.row(KeyboardButton(text="🏠 В главное меню"))
-    return b.as_markup(resize_keyboard=True)
-
-def agent_chat_kb() -> ReplyKeyboardMarkup:
-    b = ReplyKeyboardBuilder()
-    b.row(KeyboardButton(text="🗑 Очистить диалог"))
-    b.row(KeyboardButton(text="◀️ К агентам"), KeyboardButton(text="🏠 В главное меню"))
-    return b.as_markup(resize_keyboard=True)
-
-@router.message(F.text == "🤝 Мои агенты")
-async def my_agents_menu(message: Message, state: FSMContext):
-    await state.clear()
-    await message.answer(
-        "🤝 *Мои агенты*\n\nВыбери с кем хочешь поговорить:",
-        parse_mode="Markdown",
-        reply_markup=agents_kb()
-    )
-
-@router.message(F.text.in_(MY_AGENTS.keys()))
-async def agent_selected(message: Message, state: FSMContext):
-    agent_name = message.text
-    agent = MY_AGENTS[agent_name]
-    await state.set_state(State_.agent_chat)
-    await state.update_data(agent_name=agent_name)
-    await message.answer(
-        f"{agent['emoji']} *{agent_name}* готов к работе!\n\n"
-        f"Задай любой вопрос. Я помню наш диалог.\n"
-        f"Для сброса истории нажми «🗑 Очистить диалог».",
-        parse_mode="Markdown",
-        reply_markup=agent_chat_kb()
-    )
-
-@router.message(StateFilter(State_.agent_chat), F.text == "🗑 Очистить диалог")
-async def agent_clear_history(message: Message, state: FSMContext):
-    data = await state.get_data()
-    key = (message.from_user.id, data.get("agent_name", ""))
-    _agent_histories.pop(key, None)
-    await message.answer("🗑 Диалог очищен. Начнём заново!", reply_markup=agent_chat_kb())
-
-@router.message(StateFilter(State_.agent_chat), F.text == "◀️ К агентам")
-async def agent_back(message: Message, state: FSMContext):
-    await state.clear()
-    await message.answer("Выбери агента:", reply_markup=agents_kb())
-
-@router.message(StateFilter(State_.agent_chat), F.text == "🏠 В главное меню")
-async def agent_to_main(message: Message, state: FSMContext):
-    await state.clear()
-    is_admin = message.from_user.id == ADMIN_ID
-    await message.answer("Главное меню:", reply_markup=main_kb(is_admin))
-
-@router.message(StateFilter(State_.agent_chat))
-async def agent_chat_handler(message: Message, state: FSMContext):
-    if not message.text:
-        await message.answer("Пришли текстовое сообщение.")
-        return
-
-    data = await state.get_data()
-    agent_name = data.get("agent_name", "🧠 Ассистент")
-    agent = MY_AGENTS.get(agent_name, MY_AGENTS["🧠 Ассистент"])
-    key = (message.from_user.id, agent_name)
-
-    if key not in _agent_histories:
-        _agent_histories[key] = []
-
-    _agent_histories[key].append({"role": "user", "content": message.text})
-    # Держим последние 20 сообщений
-    if len(_agent_histories[key]) > 20:
-        _agent_histories[key] = _agent_histories[key][-20:]
-
-    thinking_msg = await message.answer("⏳ Думаю...")
-    try:
-        result = await call_text_ai(
-            prompt=message.text,
-            system=agent["system"],
-            model_id="claude",
-            uid=message.from_user.id,
-            use_history=False,
-            history_msgs=_agent_histories[key][:-1],
-            timeout_s=30
-        )
-        _agent_histories[key].append({"role": "assistant", "content": result})
-
-        chunks = [result[i:i+3500] for i in range(0, len(result), 3500)]
-        for i, chunk in enumerate(chunks):
-            if i == 0:
-                try:
-                    await thinking_msg.edit_text(
-                        f"{agent['emoji']} *{agent_name}*\n\n{chunk}",
-                        parse_mode="Markdown"
-                    )
-                except Exception:
-                    await message.answer(f"{agent['emoji']} *{agent_name}*\n\n{chunk}", parse_mode="Markdown")
-            else:
-                await message.answer(chunk)
-
-    except asyncio.TimeoutError:
-        await thinking_msg.edit_text("⏱ Время вышло. Попробуй ещё раз.")
-    except Exception as e:
-        await thinking_msg.edit_text(f"❌ Ошибка: {str(e)[:200]}")
-
-
 async def main():
     global anthropic_client, openai_client, deepseek_client
 
@@ -7072,27 +6487,10 @@ async def main():
     dp.include_router(router)
     start_autoposter(bot)
     start_biz_sync(bot)
-    start_zp_sync(bot)
-    start_daily_messenger(bot)
 
     logging.info(f"🚀 AuraAI Bot v3.44 FIX-отчётность запущен | @{BOT_USERNAME}")
     logging.info("✅ ВЕРСИЯ С ВЫБОРОМ ФОРМАТА 9:16 16:9 — если видишь это, новый код работает")
     await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except Exception as e:
-        import traceback, httpx as _httpx
-        err = traceback.format_exc()
-        print(f"FATAL: {err}")
-        # Отправляем ошибку админу через Telegram API напрямую
-        try:
-            import urllib.request, urllib.parse
-            token = os.getenv("BOT_TOKEN","")
-            admin = os.getenv("ADMIN_ID","0")
-            msg = f"❌ БОТ УПАЛ ПРИ СТАРТЕ:\n\n{err[:3000]}"
-            data = urllib.parse.urlencode({"chat_id": admin, "text": msg}).encode()
-            urllib.request.urlopen(f"https://api.telegram.org/bot{token}/sendMessage", data, timeout=10)
-        except Exception:
-            pass
+    asyncio.run(main())

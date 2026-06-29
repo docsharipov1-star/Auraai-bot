@@ -3546,6 +3546,32 @@ async def cmd_gift(message: Message):
     except Exception:
         await message.answer("⚠️ Кредиты начислены, но уведомление отправить не вышло (человек мог не открывать бота или закрыл личку).")
 
+@router.message(Command("testai"))
+async def cmd_testai(message: Message):
+    if message.from_user.id != ADMIN_ID: return
+    await message.answer("🔧 Проверяю подключение к ИИ, подожди несколько секунд…")
+    lines = ["🔧 Проверка ИИ-провайдеров\n"]
+    lines.append(
+        f"Ключи в .env: "
+        f"Anthropic={'есть' if ANTHROPIC_KEY else 'НЕТ'} · "
+        f"DeepSeek={'есть' if DEEPSEEK_KEY else 'НЕТ'} · "
+        f"OpenAI={'есть' if OPENAI_KEY else 'НЕТ'}\n"
+    )
+    clients = {"anthropic": anthropic_client, "deepseek": deepseek_client, "openai": openai_client}
+    for model_id, prov in (("claude", "anthropic"), ("deepseek", "deepseek"), ("gpt4o", "openai")):
+        if not clients[prov]:
+            lines.append(f"• {model_id}: ключ не задан — клиент не создан")
+            continue
+        try:
+            r = await call_text_ai("Ответь одним словом: тест", "Ты — тест.", model_id, timeout_s=20)
+            if r and not r.startswith("❌"):
+                lines.append(f"• {model_id}: ✅ работает")
+            else:
+                lines.append(f"• {model_id}: ⚠️ {str(r)[:90]}")
+        except Exception as e:
+            lines.append(f"• {model_id}: ❌ {str(e)[:160]}")
+    await message.answer("\n".join(lines)[:3900])
+
 @router.message(Command("users"))
 async def cmd_users(message: Message):
     if message.from_user.id != ADMIN_ID: return

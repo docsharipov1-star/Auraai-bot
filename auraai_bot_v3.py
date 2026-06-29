@@ -6436,9 +6436,25 @@ async def doctors_cmd(message: Message):
         else:
             on_date = _norm_date(arg)
 
-    # ── По умолчанию (кнопка «Доктора») — сводка ПО МЕСЯЦАМ ──
+    # ── По умолчанию (кнопка «Доктора») ──
     if not arg:
-        # Берём shift-данные как основной источник; clean — только для периодов без shift
+        DFILTER = "AND doctor IS NOT NULL AND doctor != '' AND doctor != '—' AND LOWER(doctor) NOT LIKE '%не указан%'"
+        aliases = await _get_aliases()
+        pct_map = await _get_doctor_percents()
+
+        # 1. Сегодня — детальный отчёт
+        today_rows = await db_all(f"SELECT doctor,service,kind,ref_from,revenue,percent,pay,src,patient FROM visits WHERE day=date('now') AND src='shift' {DFILTER}")
+        if not today_rows:
+            today_rows = await db_all(f"SELECT doctor,service,kind,ref_from,revenue,percent,pay,src,patient FROM visits WHERE day=date('now') AND src='clean' {DFILTER}")
+        if not today_rows:
+            today_rows = await db_all(f"SELECT doctor,service,kind,ref_from,revenue,percent,pay,src,patient FROM visits WHERE day=date('now') AND src='zp' {DFILTER}")
+
+        if today_rows:
+            await _render_doctor_detail(message, today_rows, "Сегодня")
+        else:
+            await message.answer("📊 *Сегодня* — данных пока нет в таблицах смен.", parse_mode="Markdown")
+
+        # 2. Сводка по месяцам
         allv = await db_all("""
             SELECT period, day, doctor, revenue FROM visits WHERE src='shift'
             UNION ALL
@@ -6446,15 +6462,9 @@ async def doctors_cmd(message: Message):
               AND period NOT IN (SELECT DISTINCT period FROM visits WHERE src='shift' AND period IS NOT NULL)
         """)
         if not allv:
-            msg = "📊 По врачам пока нет данных.\n\n"
             if sync_err:
-                msg += f"⚠️ Таблица: {sync_err}\n\n"
-            msg += ("Проверь:\n• таблица открыта «по ссылке: Читатель»\n"
-                    "• /visits — что подключено, /diag — диагностика")
-            await message.answer(msg)
+                await message.answer(f"⚠️ Таблица: {sync_err}\n\nПроверь /visits и /setshift")
             return
-        aliases = await _get_aliases()
-        pct_map = await _get_doctor_percents()
         per_map = {}
         for r in allv:
             p = r["period"] or ((r["day"] or "")[:7]) or "—"
@@ -6479,11 +6489,11 @@ async def doctors_cmd(message: Message):
         more = [p for p in ordered if p not in recent]
         if more:
             tail += "\n\n📂 Ещё есть месяцы: " + ", ".join(_period_label(p) for p in more[:12])
-        tail += "\n\nПодробно за месяц: напиши «/doctors Июнь 2026» — врачи, направления, оплаты."
+        tail += "\n\nПодробно за месяц: напиши «/doctors Июнь 2026»"
         await _send_block(message, "📊 *Врачи по месяцам*", "\n\n".join(out) + tail)
         ps = await _doctor_periods()
         if ps:
-            await message.answer("📅 Открыть конкретный месяц — выбери год:", reply_markup=_doctor_year_kb(ps))
+            await message.answer("📅 Открыть конкретный месяц:", reply_markup=_doctor_year_kb(ps))
         return
 
     # ── Подробный отчёт: за конкретный месяц / дату / N дней ──

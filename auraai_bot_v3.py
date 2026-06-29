@@ -6284,10 +6284,17 @@ async def cb_dmon(cq: CallbackQuery):
         return
     period = cq.data.split("_", 1)[1]
     await cq.answer("Готовлю отчёт...")
-    rows = await db_all("SELECT doctor,service,kind,ref_from,revenue,percent,pay,src,patient FROM visits WHERE period = ?", (period,))
+    DFILTER = "AND doctor IS NOT NULL AND doctor != '' AND doctor != '—' AND LOWER(doctor) NOT LIKE '%не указан%'"
+    # shift/clean первичный источник, zp — резерв
+    rows = await db_all(f"SELECT doctor,service,kind,ref_from,revenue,percent,pay,src,patient FROM visits WHERE period=? AND src IN ('shift','clean') {DFILTER}", (period,))
+    if not rows:
+        rows = await db_all(f"SELECT doctor,service,kind,ref_from,revenue,percent,pay,src,patient FROM visits WHERE period=? AND src='zp' {DFILTER}", (period,))
     if not rows:
         await cq.message.answer(f"За {_period_label(period)} данных нет.")
         return
+    # Подтягиваем % из ZP
+    zp_pct = {(r["doctor"] or "").lower(): r["percent"] for r in await db_all("SELECT doctor, percent FROM visits WHERE period=? AND src='zp' AND percent>0", (period,))}
+    rows = [{**dict(r), "percent": r["percent"] or zp_pct.get((r["doctor"] or "").lower(), 0)} for r in rows]
     await _render_doctor_detail(cq.message, rows, _period_label(period))
 
 
@@ -6435,31 +6442,26 @@ async def doctors_cmd(message: Message):
         return
 
     # ── Подробный отчёт: за конкретный месяц / дату / N дней ──
+    DFILTER = "AND doctor IS NOT NULL AND doctor != '' AND doctor != '—' AND LOWER(doctor) NOT LIKE '%не указан%'"
     if period:
-        rows = await db_all("SELECT doctor,service,kind,ref_from,revenue,percent,pay,src,patient FROM visits WHERE period = ?", (period,))
+        # shift/clean — основной источник. ZP — только если shift нет.
+        rows = await db_all(f"SELECT doctor,service,kind,ref_from,revenue,percent,pay,src,patient FROM visits WHERE period = ? AND src IN ('shift','clean') {DFILTER}", (period,))
+        if not rows:
+            rows = await db_all(f"SELECT doctor,service,kind,ref_from,revenue,percent,pay,src,patient FROM visits WHERE period = ? AND src='zp' {DFILTER}", (period,))
+        # Подтягиваем % из ZP для врачей у которых процент не задан
+        if rows:
+            zp_pct = {(r["doctor"] or "").lower(): r["percent"] for r in await db_all("SELECT doctor, percent FROM visits WHERE period=? AND src='zp' AND percent>0", (period,))}
+            rows = [{**dict(r), "percent": r["percent"] or zp_pct.get((r["doctor"] or "").lower(), 0)} for r in rows]
         period_label = _period_label(period)
     elif on_date:
-        rows = await db_all("SELECT doctor,service,kind,ref_from,revenue,percent,pay,src,patient FROM visits WHERE day = ?", (on_date,))
+        rows = await db_all(f"SELECT doctor,service,kind,ref_from,revenue,percent,pay,src,patient FROM visits WHERE day = ? {DFILTER}", (on_date,))
         period_label = on_date
     else:
-        rows = await db_all("SELECT doctor,service,kind,ref_from,revenue,percent,pay,src,patient FROM visits WHERE day >= date('now', ?)",
-                            (f"-{days - 1} day",))
+        rows = await db_all(f"SELECT doctor,service,kind,ref_from,revenue,percent,pay,src,patient FROM visits WHERE day >= date('now', ?) AND day <= date('now') {DFILTER}", (f"-{days - 1} day",))
         period_label = f"{days} дн."
     if not rows:
-        allrows = await db_all("SELECT doctor,service,kind,ref_from,revenue,percent,pay,src,patient FROM visits")
-        if not allrows:
-            msg = "📊 По врачам пока нет данных.\n\n"
-            if sync_err:
-                msg += f"⚠️ Таблица: {sync_err}\n\n"
-            msg += ("Проверь:\n"
-                    "• таблица открыта «по ссылке: Читатель»\n"
-                    "• ссылка ведёт на нужную вкладку (день/ночь)\n"
-                    "• /visits — что подключено, /diag — диагностика")
-            await message.answer(msg)
-            return
-        rng = await db_get("SELECT MIN(day) a, MAX(day) b FROM visits")
-        rows = allrows
-        period_label = f"все данные ({rng['a']} — {rng['b']})"
+        await message.answer(f"📊 За {period_label or 'этот период'} данных нет.\n\nПроверь:\n• таблица смен подключена: /setshift\n• /zpsync для обновления данных")
+        return
     await _render_doctor_detail(message, rows, period_label)
 
 

@@ -5875,8 +5875,10 @@ async def _iter_shift_sheets(shift):
         data = await _fetch_xlsx(sid)
         parsed = _parse_xlsx(data) if data else None
         names_from_book = [nm for nm, _ in parsed if nm] if parsed else []
-        # реальные названия свежих месяцев из этой книги
-        targets = [nm for nm in names_from_book if nm.strip().lower() in recent]
+        # Подбираем вкладки у которых название СОДЕРЖИТ "месяц год"
+        # Это позволяет читать "Июнь 2026 ночь", "Июнь 2026 день", "июнь 2026" и т.д.
+        targets = [nm for nm in names_from_book
+                   if any(key in nm.strip().lower() for key in recent)]
         if targets:
             seen_nm = set()
             for nm in targets:
@@ -5888,7 +5890,7 @@ async def _iter_shift_sheets(shift):
                 if rows:
                     sheets[nm] = rows
         else:
-            # имена не получили — пробуем сгенерированные варианты, по месяцу до первого успеха
+            # имена не получили — пробуем сгенерированные варианты
             for m, y in _recent_month_names(15):
                 for nm in (f"{m.capitalize()} {y}", f"{m} {y}", f"{m.upper()} {y}"):
                     rows = await _gviz_sheet(sid, nm)
@@ -6453,25 +6455,11 @@ async def doctors_cmd(message: Message):
         else:
             on_date = _norm_date(arg)
 
-    # ── По умолчанию (кнопка «Доктора») ──
+    # ── По умолчанию (кнопка «Доктора») — только сводка по месяцам ──
     if not arg:
-        DFILTER = "AND doctor IS NOT NULL AND doctor != '' AND doctor != '—' AND LOWER(doctor) NOT LIKE '%не указан%'"
         aliases = await _get_aliases()
         pct_map = await _get_doctor_percents()
 
-        # 1. Сегодня — детальный отчёт
-        today_rows = await db_all(f"SELECT doctor,service,kind,ref_from,revenue,percent,pay,src,patient FROM visits WHERE day=date('now') AND src='shift' {DFILTER}")
-        if not today_rows:
-            today_rows = await db_all(f"SELECT doctor,service,kind,ref_from,revenue,percent,pay,src,patient FROM visits WHERE day=date('now') AND src='clean' {DFILTER}")
-        if not today_rows:
-            today_rows = await db_all(f"SELECT doctor,service,kind,ref_from,revenue,percent,pay,src,patient FROM visits WHERE day=date('now') AND src='zp' {DFILTER}")
-
-        if today_rows:
-            await _render_doctor_detail(message, today_rows, "Сегодня")
-        else:
-            await message.answer("📊 *Сегодня* — данных пока нет в таблицах смен.", parse_mode="Markdown")
-
-        # 2. Сводка по месяцам
         allv = await db_all("""
             SELECT period, day, doctor, revenue FROM visits WHERE src='shift'
             UNION ALL
@@ -6479,9 +6467,13 @@ async def doctors_cmd(message: Message):
               AND period NOT IN (SELECT DISTINCT period FROM visits WHERE src='shift' AND period IS NOT NULL)
         """)
         if not allv:
+            msg = "📊 По врачам пока нет данных.\n\n"
             if sync_err:
-                await message.answer(f"⚠️ Таблица: {sync_err}\n\nПроверь /visits и /setshift")
+                msg += f"⚠️ Таблица: {sync_err}\n\n"
+            msg += "Проверь:\n• /visits — что подключено\n• /setshift — таблицы смен\n• /diag — диагностика"
+            await message.answer(msg)
             return
+
         per_map = {}
         for r in allv:
             p = r["period"] or ((r["day"] or "")[:7]) or "—"
@@ -6489,28 +6481,25 @@ async def doctors_cmd(message: Message):
             x = per_map.setdefault(p, {}).setdefault(d, {"n": 0, "rev": 0.0})
             x["n"] += 1
             x["rev"] += r["revenue"] or 0
+
         ordered = sorted(per_map.keys(), reverse=True)
-        recent = ordered[:6]
         out = []
-        for p in recent:
+        for p in ordered[:6]:
             docs = per_map[p]
             totn = sum(v["n"] for v in docs.values())
             totr = sum(v["rev"] for v in docs.values())
-            lines = [f"📅 *{_period_label(p)}* · {totn} приёмов · {_money(totr)}"]
+            lines = [f"📅 *{_period_label(p)}* — {totn} приёмов, {_money(totr)}"]
             for d, v in sorted(docs.items(), key=lambda kv: -kv[1]["rev"]):
                 pct = pct_map.get(d)
-                zp = f" · ЗП {pct}%: {_money(v['rev'] * pct / 100)}" if pct else ""
-                lines.append(f"• {d} — {v['n']} приёмов, {_money(v['rev'])}{zp}")
+                zp = f" (ЗП {_money(v['rev'] * pct / 100)})" if pct else ""
+                lines.append(f"  • {d}: {v['n']} приёмов, {_money(v['rev'])}{zp}")
             out.append("\n".join(lines))
-        tail = ""
-        more = [p for p in ordered if p not in recent]
-        if more:
-            tail += "\n\n📂 Ещё есть месяцы: " + ", ".join(_period_label(p) for p in more[:12])
-        tail += "\n\nПодробно за месяц: напиши «/doctors Июнь 2026»"
+
+        tail = "\n\n👇 Выбери месяц для полного отчёта (день + ночь)"
         await _send_block(message, "📊 *Врачи по месяцам*", "\n\n".join(out) + tail)
         ps = await _doctor_periods()
         if ps:
-            await message.answer("📅 Открыть конкретный месяц:", reply_markup=_doctor_year_kb(ps))
+            await message.answer("📅 Выбери месяц:", reply_markup=_doctor_year_kb(ps))
         return
 
     # ── Подробный отчёт: за конкретный месяц / дату / N дней ──

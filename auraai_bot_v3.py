@@ -1267,6 +1267,7 @@ class State_(StatesGroup):
     biz_menu  = State()  # финансы бизнеса: меню
     biz_input = State()  # финансы бизнеса: ввод отчёта
     biz_date  = State()  # финансы бизнеса: отчёт за конкретную дату
+    calllist  = State()  # список для обзвона Алиной
 
 user_tool:  dict[int, str] = {}
 user_model: dict[int, str] = {}
@@ -6532,6 +6533,123 @@ async def doctors_cmd(message: Message):
         await _render_doctor_detail(message, rows, period_label)
     except Exception as e:
         await message.answer(f"⚠️ Ошибка при формировании отчёта: {e}")
+
+
+@router.message(Command("calllist"))
+async def calllist_cmd(message: Message, state: FSMContext):
+    """
+    /calllist — запустить обзвон по списку.
+    После команды отправь список в любом формате:
+
+      +79991234567 Иванова Мария — болит зуб
+      89991234568, Петров Иван, подтвердить запись
+      Кузнецова Анна +7 999 111-22-33
+
+    Алина позвонит каждому. Результаты придут сюда.
+    """
+    if message.from_user.id != ADMIN_ID:
+        return
+    await state.set_state(State_.calllist)
+    await message.answer(
+        "📋 *Обзвон — Алина позвонит по списку*\n\n"
+        "Пришли список в любом формате, каждый человек с новой строки:\n\n"
+        "`+79991234567 Иванова Мария — болит зуб`\n"
+        "`89991234568 Петров Иван — подтвердить запись`\n"
+        "`Кузнецова Анна +7 999 111-22-33`\n\n"
+        "Тип звонка определяется автоматически по заметке:\n"
+        "• *подтвердить / запись* → звонок-подтверждение\n"
+        "• *отзыв / как прошло* → звонок за отзывом\n"
+        "• *ничего* → продажный сценарий\n\n"
+        "/cancel — отменить",
+        parse_mode="Markdown"
+    )
+
+
+@router.message(State_.calllist, Command("cancel"))
+async def calllist_cancel(message: Message, state: FSMContext):
+    if message.from_user.id != ADMIN_ID:
+        return
+    await state.clear()
+    await message.answer("❌ Отменено.", reply_markup=main_kb())
+
+
+@router.message(State_.calllist)
+async def calllist_receive(message: Message, state: FSMContext):
+    """Получаем список, показываем превью, кнопки Запустить / Отмена."""
+    if message.from_user.id != ADMIN_ID:
+        return
+
+    from call_queue import parse_call_list
+    text = message.text or ""
+    tasks = parse_call_list(text)
+
+    if not tasks:
+        await message.answer(
+            "⚠️ Не нашёл ни одного номера. Убедись что в каждой строке есть телефон:\n"
+            "`+79991234567 Имя Фамилия`",
+            parse_mode="Markdown"
+        )
+        return
+
+    # Сохраняем список в FSM
+    raw_tasks = [{"phone": t.phone, "name": t.name, "note": t.note, "call_type": t.call_type}
+                 for t in tasks]
+    await state.update_data(tasks=raw_tasks)
+
+    # Превью
+    lines = [f"📋 *Список для обзвона — {len(tasks)} чел.*\n"]
+    type_emoji = {"confirm": "✅", "review": "⭐", "return": "🔄", "inbound": "📞"}
+    for i, t in enumerate(tasks[:20], 1):
+        em = type_emoji.get(t.call_type, "📞")
+        lines.append(f"{i}. {em} {t.name} — {t.phone}" + (f"\n    _{t.note}_" if t.note else ""))
+    if len(tasks) > 20:
+        lines.append(f"...и ещё {len(tasks) - 20}")
+
+    lines.append("\n_Алина позвонит по очереди с паузой 45 сек._")
+
+    kb = InlineKeyboardBuilder()
+    kb.row(
+        InlineKeyboardButton(text="🚀 Запустить", callback_data="callqueue_start"),
+        InlineKeyboardButton(text="❌ Отмена",    callback_data="callqueue_cancel"),
+    )
+    await message.answer("\n".join(lines), parse_mode="Markdown", reply_markup=kb.as_markup())
+
+
+@router.callback_query(F.data == "callqueue_start")
+async def callqueue_start(cq: CallbackQuery, state: FSMContext):
+    if cq.from_user.id != ADMIN_ID:
+        return
+    data = await state.get_data()
+    raw_tasks = data.get("tasks", [])
+    await state.clear()
+
+    if not raw_tasks:
+        await cq.answer("Список пуст")
+        return
+
+    from call_queue import CallTask, load_queue, start_queue, _notify
+    tasks = [CallTask(**t) for t in raw_tasks]
+    load_queue(tasks)
+
+    await cq.message.edit_reply_markup(reply_markup=None)
+    await cq.message.answer(
+        f"🚀 Запускаю обзвон — {len(tasks)} человек.\n"
+        f"Результаты буду присылать по мере звонков.",
+    )
+    await cq.answer()
+
+    # Запускаем в фоне чтобы не блокировать бот
+    asyncio.create_task(start_queue())
+
+
+@router.callback_query(F.data == "callqueue_cancel")
+async def callqueue_cancel_cb(cq: CallbackQuery, state: FSMContext):
+    if cq.from_user.id != ADMIN_ID:
+        return
+    await state.clear()
+    await cq.message.edit_reply_markup(reply_markup=None)
+    await cq.message.answer("❌ Обзвон отменён.")
+    await cq.answer()
 
 
 @router.message(Command("alina"))

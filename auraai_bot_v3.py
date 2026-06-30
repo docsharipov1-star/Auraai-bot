@@ -4847,7 +4847,7 @@ async def _biz_agg(days):
         rev = sum(r["revenue"] or 0 for r in rows)
         pat = sum(r["patients"] or 0 for r in rows)
 
-    vsalary = sum((r["revenue"] or 0) * pct_map.get(_canon_with(r["doctor"], aliases), 0) / 100 for r in v)
+    vsalary = sum((r["revenue"] or 0) * pct_map.get(_canon_with(r["doctor"] or "", aliases), 0) / 100 for r in v)
     if vsalary > 0:
         exp += vsalary
         cats["ФОТ врачей"] = cats.get("ФОТ врачей", 0) + vsalary
@@ -4862,7 +4862,7 @@ async def _biz_agg(days):
         prev_exp = sum(r["expenses"] or 0 for r in prev)
 
     return {"label": label, "n": vpat or len(rows), "patients": pat, "revenue": rev, "expenses": exp,
-            "profit": rev - exp, "check": (rev / pat) if pat else 0, "categories": cats,
+            "fot": vsalary, "profit": rev - exp, "check": (rev / pat) if pat else 0, "categories": cats,
             "prev_revenue": prev_rev, "prev_profit": prev_rev - prev_exp, "from_shift": vpat > 0}
 
 def biz_kb():
@@ -5020,24 +5020,41 @@ async def _send_biz_report_date(message, date_iso):
     await message.answer(f"💰 *Финансы бизнеса · {date_iso}*\n\n{summary}", parse_mode="Markdown", reply_markup=biz_kb())
 
 async def _send_biz_report(message, days):
+    await _sync_visits()
     agg = await _biz_agg(days)
     if agg["n"] == 0:
         await message.answer("За этот период данных нет. Внеси отчёт 👇", reply_markup=biz_kb()); return
-    margin = (agg["profit"] / agg["revenue"] * 100) if agg["revenue"] else 0
+    revenue = agg["revenue"]
+    fot     = agg.get("fot", 0)
+    exp_other = agg["expenses"] - fot
+    total_exp = agg["expenses"]
+    profit  = revenue - total_exp
+    margin  = (profit / revenue * 100) if revenue else 0
+    # Показываем рост только если у обоих периодов есть реальные данные
     growth = ""
-    if agg.get("prev_revenue"):
-        dr = (agg["revenue"] - agg["prev_revenue"]) / agg["prev_revenue"] * 100
-        growth = f"\nВыручка к пред. периоду: {dr:+.0f}%"
+    prev_rev = agg.get("prev_revenue") or 0
+    if prev_rev > 0 and revenue > 0:
+        dr = (revenue - prev_rev) / prev_rev * 100
+        # Убираем аномальные значения (>200% скорее всего нет данных за прошлый период)
+        if abs(dr) <= 200:
+            growth = f"\nДинамика выручки: {dr:+.0f}% к пред. периоду"
     cats = agg.get("categories") or {}
-    cat_str = ""
+    cat_lines = ""
     if cats:
         top = sorted(cats.items(), key=lambda x: -x[1])[:5]
-        cat_str = "\nРасходы по статьям: " + ", ".join(f"{k} {_money(v)}" for k, v in top)
-    src_note = "\n\n📋 Выручка и пациенты взяты из таблиц «день/ночь». Расходы вносятся вручную (кнопка «📥 Внести отчёт»)." if agg.get("from_shift") else ""
-    summary = (f"Период: {agg['label']} ({agg['n']} записей)\nПациентов/приёмов: {agg['patients']}\n"
-               f"Выручка: {_money(agg['revenue'])}\nРасходы: {_money(agg['expenses'])}\n"
-               f"Чистая прибыль: {_money(agg['profit'])}\nРентабельность: {margin:.0f}%\n"
-               f"Средний чек: {_money(agg['check'])}{growth}{cat_str}{src_note}")
+        cat_lines = "\nРасходы по статьям:\n" + "\n".join(f"  • {k}: {_money(v)}" for k, v in top)
+    src_note = "\n\n📋 Выручка из таблиц «день/ночь». Прочие расходы — ручной ввод («📥 Внести отчёт»)." if agg.get("from_shift") else ""
+    fot_line = f"\nФОТ врачей: {_money(fot)}" if fot > 0 else "\nФОТ врачей: не задан (/setpercent)"
+    summary = (f"Период: {agg['label']} ({agg['n']} приёмов)\n"
+               f"Пациентов: {agg['patients']}\n"
+               f"Выручка: {_money(revenue)}\n"
+               f"{fot_line}\n"
+               f"Прочие расходы: {_money(exp_other)}\n"
+               f"Итого расходы: {_money(total_exp)}\n"
+               f"Чистая прибыль: {_money(profit)}\n"
+               f"Рентабельность: {margin:.0f}%\n"
+               f"Средний чек: {_money(agg['check'])}"
+               f"{growth}{cat_lines}{src_note}")
     thinking = await message.answer("💰 Готовлю отчёт...")
     narrative = None
     for mid in ("claude", "gpt4o", "deepseek"):
@@ -6186,7 +6203,7 @@ async def _get_doctor_percents():
     except Exception:
         stored = {}
     # заданные вручную проценты (приоритетные) поверх извлечённых из таблиц
-    return {**stored, **DEFAULT_PERCENTS}
+    return {**DEFAULT_PERCENTS, **stored}
 
 @router.message(Command("setpercent"))
 async def setpercent_cmd(message: Message):

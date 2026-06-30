@@ -6534,6 +6534,65 @@ async def doctors_cmd(message: Message):
         await message.answer(f"⚠️ Ошибка при формировании отчёта: {e}")
 
 
+@router.message(Command("alina"))
+async def alina_cmd(message: Message):
+    """
+    /alina [текст] — тест голосового агента.
+    Без текста — начинает новый разговор.
+    С текстом — продолжает разговор (как пациент).
+
+    Примеры:
+      /alina                      ← приветствие Алины
+      /alina Хочу записаться      ← ответ на фразу
+      /alina reset                ← сбросить разговор
+    """
+    if message.from_user.id != ADMIN_ID:
+        return
+    parts = (message.text or "").split(maxsplit=1)
+    user_text = parts[1].strip() if len(parts) > 1 else ""
+
+    call_id = f"tg_{message.from_user.id}"
+    base = os.getenv("BASE_URL", "http://localhost:8000")
+
+    try:
+        async with __import__("httpx").AsyncClient(timeout=30) as client:
+            if user_text.lower() in ("reset", "сброс", "новый"):
+                # Сбрасываем разговор
+                await client.post(f"{base}/admin/call/end", json={"call_id": call_id})
+                await message.answer("🔄 Разговор сброшен. Напиши /alina чтобы начать заново.")
+                return
+
+            r = await client.post(
+                f"{base}/admin/call/test",
+                json={
+                    "call_id":      call_id,
+                    "message":      user_text or "",
+                    "call_type":    "inbound",
+                    "patient_name": "",
+                }
+            )
+            data = r.json()
+
+        reply   = data.get("alina", "")
+        booked  = data.get("booked", False)
+        end     = data.get("end_call", False)
+
+        prefix = "🦷 *Алина:*\n"
+        suffix = ""
+        if booked:
+            b = data.get("booking") or {}
+            suffix = (f"\n\n✅ *Записала пациента*\n"
+                      f"👤 {b.get('name','?')} | 📞 {b.get('phone','?')}\n"
+                      f"🕐 {b.get('time_pref','?')} | 🔖 {b.get('issue','?')}")
+        if end:
+            suffix += "\n\n_(разговор завершён — /alina reset для нового)_"
+
+        await message.answer(f"{prefix}{reply}{suffix}", parse_mode="Markdown")
+
+    except Exception as e:
+        await message.answer(f"⚠️ Агент недоступен: {e}\n\nАгент работает только если запущен FastAPI сервер.")
+
+
 @router.message(Command("fix"))
 async def fix_cmd(message: Message):
     if message.from_user.id != ADMIN_ID:

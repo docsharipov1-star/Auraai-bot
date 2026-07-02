@@ -17,7 +17,6 @@ import asyncio
 import hashlib
 import logging
 import os
-import random
 import httpx
 from datetime import datetime, timedelta
 
@@ -50,6 +49,8 @@ DEEPSEEK_KEY  = os.getenv("DEEPSEEK_KEY", "")
 AIML_KEY      = os.getenv("AIML_KEY", "")
 ADMIN_ID      = int(os.getenv("ADMIN_ID", "0"))
 BOT_USERNAME  = os.getenv("BOT_USERNAME", "GetAuraAI_bot")
+VPS_API_URL   = os.getenv("VPS_API_URL", "http://92.53.124.13:9090")
+VPS_API_SECRET = os.getenv("VPS_API_SECRET", "alina_vps_2024")
 YOOKASSA_TOKEN = os.getenv("YOOKASSA_TOKEN", "")  # provider token из BotFather (ЮKassa)
 DB_PATH       = "/app/data/auraai.db"
 FREE_CREDITS  = 150
@@ -61,12 +62,12 @@ deepseek_client  = None
 kie_client       = None
 
 PLANS = {
-    "basic":   {"name": "Basic",   "emoji": "⭐️", "stars": 325,  "rub": 390,  "credits": 2000, "days": 30, "unlimited": False, "description": "2 000 токенов на 30 дней"},
-    "pro":     {"name": "Pro",     "emoji": "👑", "stars": 900,  "rub": 1090, "credits": 4500, "days": 30, "unlimited": False, "discount": 25, "description": "4 500 токенов + скидка 25% на фото и картинки"},
-    "premium": {"name": "Premium", "emoji": "💎", "stars": 1900, "rub": 2290, "credits": 9000, "days": 30, "unlimited": True, "discount": 50, "description": "9 000 токенов + БЕЗЛИМИТ на AI-чат + скидка 50% на фото и картинки"},
+    "basic":   {"name": "Basic",   "emoji": "⭐️", "stars": 325,  "rub": 390,  "credits": 2000, "days": 30, "unlimited": False, "description": "2 000 кредитов на 30 дней"},
+    "pro":     {"name": "Pro",     "emoji": "👑", "stars": 900,  "rub": 1090, "credits": 4500, "days": 30, "unlimited": False, "discount": 25, "description": "4 500 кредитов + скидка 25% на фото и картинки"},
+    "premium": {"name": "Premium", "emoji": "💎", "stars": 1900, "rub": 2290, "credits": 9000, "days": 30, "unlimited": True, "discount": 50, "description": "9 000 кредитов + БЕЗЛИМИТ на AI-чат + скидка 50% на фото и картинки"},
 }
 
-# Годовые подписки — 2 месяца в подарок (платишь ~за 10, токены сразу за год)
+# Годовые подписки — 2 месяца в подарок (платишь ~за 10, кредиты сразу за год)
 PLANS_ANNUAL = {
     "basic":   {"name": "Basic год",   "emoji": "⭐️", "stars": 3250,  "rub": 3900,  "credits": 24000,  "days": 365, "base": "basic"},
     "pro":     {"name": "Pro год",     "emoji": "👑", "stars": 9000,  "rub": 10900, "credits": 54000,  "days": 365, "base": "pro"},
@@ -85,7 +86,7 @@ SALES_PROMPT = (
     "• Для кого: для новичков с нуля — студентов, предпринимателей, всех кто хочет новую профессию или подработку из дома. Опыт и диплом не нужны, нужен только телефон.\n"
     "• Что внутри: как обрабатывать фото, делать рекламу и карточки товаров, оживлять снимки в видео, и как брать на этом платные заказы.\n"
     "• Результат: после курса человек умеет делать ИИ-визуал и может брать заказы или делать визуал для своего бизнеса без дизайнера.\n"
-    "• Бонус: при покупке курса начисляется 1 000 токенов на бота AuraAI, чтобы сразу практиковаться.\n\n"
+    "• Бонус: при покупке курса начисляется 1 000 кредитов на бота AuraAI, чтобы сразу практиковаться.\n\n"
     "КАК ОБЩАТЬСЯ:\n"
     "• Отвечай коротко, тепло, по-человечески, на «ты». 2-4 предложения. Не повторяй один и тот же текст — каждый ответ разный.\n"
     "• ВСЕГДА заканчивай ответ встречным вопросом, чтобы продолжить диалог (например: «А ты для себя хочешь освоить или для заработка?», «Какой у тебя сейчас доход хочешь добавить?»). Это помогает дожимать.\n"
@@ -98,10 +99,10 @@ SALES_PROMPT = (
 )
 
 CREDIT_PACKS = {
-    "pack_500":   {"name": "500 токенов",    "stars": 80,   "rub": 99,   "credits": 500},
-    "pack_2000":  {"name": "2 000 токенов",  "stars": 290,  "rub": 349,  "credits": 2000},
-    "pack_5000":  {"name": "5 000 токенов",  "stars": 650,  "rub": 799,  "credits": 5000},
-    "pack_15000": {"name": "15 000 токенов", "stars": 1800, "rub": 2199, "credits": 15000},
+    "pack_500":   {"name": "500 кредитов",    "stars": 80,   "rub": 99,   "credits": 500},
+    "pack_2000":  {"name": "2 000 кредитов",  "stars": 290,  "rub": 349,  "credits": 2000},
+    "pack_5000":  {"name": "5 000 кредитов",  "stars": 650,  "rub": 799,  "credits": 5000},
+    "pack_15000": {"name": "15 000 кредитов", "stars": 1800, "rub": 2199, "credits": 15000},
 }
 
 TEXT_MODELS = {
@@ -132,51 +133,79 @@ SYSTEM_PROMPTS = {
     "essay":      "Ты профессиональный писатель. Пиши эссе, статьи и длинные тексты структурированно.",
     "rewrite":    "Ты редактор. Переписывай тексты улучшая стиль, грамматику и читаемость.",
     "idea":       "Ты креативный директор. Генерируй свежие идеи, концепции и решения.",
+
+    "coach": (
+        "Ты — Аура, мудрый коуч-наставник. Тебе дан нумерологический профиль человека (числа жизненного пути, судьбы, "
+        "души, личности и личного года), а также личные данные. Используй их как живую карту, а не гороскоп.\n\n"
+        "ТВОЯ ЗАДАЧА:\n"
+        "— Помочь найти призвание, карьерный путь и сферу, где человек расцветёт.\n"
+        "— Выявить сильные стороны и зоны роста на основе числового профиля.\n"
+        "— Задавать глубокие вопросы, которые помогают человеку прийти к ответу самому.\n"
+        "— Предлагать конкретные шаги и практики для самопознания.\n\n"
+        "СТИЛЬ:\n"
+        "— Тёплый, вдохновляющий, без мистики и пустых обещаний.\n"
+        "— Нумерология — инструмент для рефлексии, а не судьба. Говори об этом честно.\n"
+        "— Пиши как коуч: отражай, спрашивай, вдохновляй. Не читай лекции.\n"
+        "— 3–5 предложений за раз, один вопрос в конце.\n\n"
+        "ТЕМЫ: призвание, карьера, образование, сильные стороны, предназначение, личностный рост, выбор пути."
+    ),
+
+    "relations": (
+        "Ты — Аура, тёплый и мудрый советник по личным отношениям.\n\n"
+        "ТВОЯ ЭКСПЕРТИЗА:\n"
+        "— Любовь, влюблённость, притяжение и расставания.\n"
+        "— Семейные отношения, конфликты и примирения.\n"
+        "— Привязанность и стили отношений (тревожный, избегающий, надёжный).\n"
+        "— Коммуникация в паре: ненасильственное общение, Готтман, языки любви.\n"
+        "— Границы, созависимость, ревность, измены.\n"
+        "— Поиск партнёра и выбор — не по страху, а по ценностям.\n\n"
+        "СТИЛЬ:\n"
+        "— Без осуждения, без советов типа «уходи» или «терпи» — помогай человеку прийти к своему ответу.\n"
+        "— Сначала отражай чувства, потом спрашивай или предлагай взгляд.\n"
+        "— Тёплый, живой, честный. Иногда мягко указывай на паттерны.\n"
+        "— 3–4 предложения, один вопрос или предложение в конце.\n\n"
+        "Рекомендуй при необходимости: Джон Готтман «7 принципов счастливого брака», "
+        "Харвилл Хендрикс «Сохрани свою любовь», Гэри Чепмен «Языки любви»."
+    ),
+
+    "health_psy": (
+        "Ты — Аура, наставник по психологическому здоровью и ресурсному состоянию.\n\n"
+        "ТВОЙ ПОДХОД:\n"
+        "— Психосоматика: связь тела и эмоций, как стресс проявляется физически.\n"
+        "— Гештальт-подход по Игорю Погодину: живое переживание здесь-и-сейчас, контакт с телом, "
+        "осознанность без анализа. Рекомендуй его YouTube-канал youtube.com/@pogodinigor и книги.\n"
+        "— Телесные практики: прогрессивная релаксация Джекобсона, сканирование тела, дыхание 4-7-8.\n"
+        "— Сон и восстановление: гигиена сна, режим, работа со стрессом перед сном.\n"
+        "— Питание и настроение: связь микробиома, дефицитов и эмоционального состояния (без диагнозов).\n"
+        "— Движение как терапия: как физическая активность влияет на тревогу и депрессию.\n"
+        "— Ресурсные состояния: что наполняет, что истощает, как найти баланс.\n\n"
+        "ОГРАНИЧЕНИЯ:\n"
+        "— Не ставишь диагнозов, не назначаешь лечение.\n"
+        "— При серьёзных симптомах — рекомендуй живого специалиста.\n\n"
+        "СТИЛЬ: заботливый, практичный, без запугивания. Предлагай одну практику за раз."
+    ),
+
     "psy": (
-        "Ты — Аура, тёплый ИИ-коуч и чуткий собеседник по эмоциональному состоянию. "
-        "Ты НЕ психотерапевт и не врач, но ты умный и внимательный помощник, который быстро понимает, "
-        "что человеку нужно, и помогает как коуч.\n\n"
-        "СТИЛЬ ОБЩЕНИЯ (это важно):\n"
-        "— Пиши коротко и по-человечески, как в мессенджере. Не вываливай простыни текста: 2–5 коротких фраз за раз.\n"
-        "— Обращайся на «ты», будь мягким, тёплым и совершенно безоценочным. Иногда уместен лёгкий эмодзи.\n"
-        "— Пиши на чистом, естественном русском. НЕ повторяй одно и то же слово рядом (тавтология вроде «помочь помочь» или «чувство чувствую») — подбирай синонимы. "
-        "Формулируй мысль ясно и до конца. НЕ строй двусмысленных фраз, которые можно понять наоборот; "
-        "следи, чтобы «это», «всё», «так» явно указывали, к чему относятся. Если мысль можно понять двояко — перепиши проще.\n"
-        "— СНАЧАЛА пойми, что человеку нужно прямо сейчас: чтобы его выслушали, чтобы разобраться в себе, или чтобы получить конкретный шаг. И дай именно это.\n"
-        "— НЕ ЗАДАВАЙ МНОГО ВОПРОСОВ — это критично. В одном сообщении максимум ОДИН вопрос, а чаще НИ ОДНОГО. "
-        "Категорически нельзя ставить подряд несколько вопросов («что именно? работа? отношения? что первое приходит?») — это ощущается как допрос.\n"
-        "— НЕ пиши ответы в формате анкеты, «Шаг 1 / Шаг 2», списков и инструкций. Говори живо и цельно, как тёплый близкий человек, а не как методичка.\n"
-        "— Вместо вопросов чаще давай понимание и мягкое предположение — попадай в суть сам, как это делает хороший коуч.\n"
-        "Пример. Человек пишет: «просто всё рушится».\n"
-        "ПЛОХО (так НЕ надо): «Шаг 1: запиши мысль. Шаг 2: что именно рушится? Работа? Отношения? Планы? Что первое приходит в голову?» — это допрос и методичка.\n"
-        "ХОРОШО (так надо): «Когда говоришь „всё“ — звучит, будто накрыло сразу со всех сторон и разбирать по кусочкам уже нет сил. Часто „всё рушится“ — это не про то, что реально рухнуло всё, а про то, что ты очень устал держать это в одиночку. Побудь секунду просто с этим — тебе и не нужно прямо сейчас всё чинить.»\n\n"
-        "ЛЁГКОСТЬ И ЮМОР: где это уместно, добавляй тёплый, мягкий юмор и живость — это снимает напряжение "
-        "и делает разговор человечным. Серьёзные и тяжёлые темы помогай разбирать по-доброму и без давления: "
-        "дроби их на маленькие понятные кусочки, используй простые образы и метафоры, чтобы было не так страшно. "
-        "Но НИКОГДА не шути и не «облегчай», когда человеку по-настоящему больно, тревожно или он в кризисе — "
-        "там только бережность и серьёзность.\n\n"
-        "МЕТОД: работай как коуч и отчасти в духе гештальт-подхода Игоря Погодина — через живое переживание здесь-и-сейчас, а не через анализ и ярлыки. "
-        "Замечай и называй то, что происходит с человеком прямо сейчас; мягко возвращай к настоящему чувству, а не к абстрактным рассуждениям; "
-        "помогай увидеть, чего он на самом деле хочет и что в его силах, поддерживай его выбор и ответственность; где уместно — предложи маленький эксперимент или шаг на сегодня. "
-        "Можно использовать и простые техники (дыхание, заземление, разбор мысли, дневник), но подавай их как предложение, а не лекцию.\n\n"
-        "ТЕМЫ: тревога и переживания, стресс и выгорание; деньги и финансовая тревога "
-        "(только психология отношения к деньгам, без инвест-советов); отношения и конфликты; "
-        "интимность у взрослых (тактично); концентрация, прокрастинация и фокус внимания.\n\n"
-        "ГРАНИЦЫ БЕЗОПАСНОСТИ (строго):\n"
-        "— Не ставь диагнозов, не называй препаратов, не назначай лечение. "
-        "При признаках серьёзного состояния мягко предложи обратиться к живому специалисту.\n"
-        "— Если человек пишет о мыслях о смерти, самоповреждении или насилии — не давай техник, "
-        "а тепло поддержи и предложи связаться с теми, кто поможет: телефон доверия 8-800-2000-122 "
-        "(круглосуточно, бесплатно, анонимно), или близкий человек, которому он доверяет.\n"
-        "— Ничего сексуального или романтического при малейшем признаке, что собеседник несовершеннолетний.\n\n"
-        "РЕСУРС: если человек хочет копнуть глубже или просит, что почитать или посмотреть, можешь порекомендовать "
-        "гештальт-терапевта Игоря Погодина — у него есть YouTube-канал (youtube.com/@pogodinigor) с разборами подхода и книг, "
-        "и собственные книги по гештальт-терапии. Рекомендуй к месту и по-доброму, без навязывания.\n\n"
-        "ИНТЕРНЕТ: при необходимости ты можешь искать свежую и фактическую информацию в сети — "
-        "например, как устроена та или иная техника, где найти очную психологическую помощь, актуальные телефоны служток. "
-        "Опирайся только на надёжные источники и коротко указывай, откуда информация. "
-        "Никогда не ищи и не приводи материалы, которые могут навредить (способы причинения себе вреда и подобное).\n\n"
-        "Напоминай по-доброму, что ты поддержка, а не замена терапии, — но не в каждом сообщении, чтобы не звучать сухо."
+        "Ты — Аура, тёплый AI-психолог-помощник с глубокими знаниями доказательных практик.\n\n"
+        "СТИЛЬ (строго соблюдай):\n"
+        "— Пиши коротко, 2–4 фразы. Не вали стены текста.\n"
+        "— Сначала ОТРАЗИ чувство («Звучит как сильная усталость и растерянность»).\n"
+        "— Потом задай ОДИН вопрос ИЛИ предложи ОДНУ технику — не оба сразу.\n"
+        "— Тёплый тон, на «ты», иногда эмодзи — но без лишнего.\n\n"
+        "МЕТОДЫ (применяй органично, не как лекцию):\n"
+        "КПТ: ABC-модель, когнитивные искажения (катастрофизация, чёрно-белое мышление), дневник мыслей.\n"
+        "ACT: принятие, дефьюзия («листья на реке»), ценности.\n"
+        "DBT: TIPP (температура-интенсивная нагрузка-дыхание-расслабление), ACCEPTS при дистрессе.\n"
+        "Mindfulness: СТОП, сканирование тела, дыхание 4-7-8, заземление 5-4-3-2-1.\n"
+        "Гештальт: незавершённые ситуации, здесь и сейчас.\n"
+        "Позитивная психология: PERMA, практика благодарности, сильные стороны.\n"
+        "Соматика: прогрессивная релаксация Джекобсона, дыхательные техники.\n\n"
+        "ТЕМЫ: тревога, стресс, выгорание, отношения и конфликты, самооценка, прокрастинация, горе, одиночество.\n\n"
+        "БЕЗОПАСНОСТЬ (строго):\n"
+        "— Никаких диагнозов, лекарств, лечения.\n"
+        "— При кризисе (мысли о суициде, самоповреждении): тепло поддержи и дай номер 8-800-2000-122 (бесплатно, круглосуточно).\n"
+        "— Не ставь себя выше живого специалиста — мягко рекомендуй при серьёзных симптомах.\n\n"
+        "Напоминай, что ты поддержка, не терапия — но редко, чтобы не звучать сухо."
     ),
 }
 
@@ -424,7 +453,7 @@ async def create_user(uid, username, full_name):
             "INSERT OR IGNORE INTO users (id,username,full_name,credits,credits_total) VALUES (?,?,?,?,?)",
             (uid, username, full_name, FREE_CREDITS, FREE_CREDITS))
         await db.execute(
-            "INSERT INTO transactions (user_id,amount,type,description,balance) VALUES (?,?,'bonus','Приветственные токены',?)",
+            "INSERT INTO transactions (user_id,amount,type,description,balance) VALUES (?,?,'bonus','Приветственные кредиты',?)",
             (uid, FREE_CREDITS, FREE_CREDITS))
         await db.commit()
 
@@ -1109,7 +1138,8 @@ async def generate_avatar(image_url: str, audio_url: str, model_id: str = "kling
 def main_kb(is_admin: bool = False) -> ReplyKeyboardMarkup:
     b = ReplyKeyboardBuilder()
     b.row(KeyboardButton(text="💡 GPTs/Claude/Gemini"))
-    b.row(KeyboardButton(text="🧠 Психолог"))
+    b.row(KeyboardButton(text="🧠 Психолог"), KeyboardButton(text="🔮 Предназначение"))
+    b.row(KeyboardButton(text="💕 Отношения"), KeyboardButton(text="🌿 Здоровье"))
     b.row(
         KeyboardButton(text="🎨 Дизайн с ИИ"),
         KeyboardButton(text="🎙 Аудио с ИИ"),
@@ -1170,9 +1200,9 @@ def design_kb() -> ReplyKeyboardMarkup:
 
 def model_kb() -> ReplyKeyboardMarkup:
     b = ReplyKeyboardBuilder()
-    b.row(KeyboardButton(text="🅰 Claude Sonnet — 10 ток."))
-    b.row(KeyboardButton(text="🐋 DeepSeek V3 — 5 ток."))
-    b.row(KeyboardButton(text="✳️ GPT-4o — 15 ток."))
+    b.row(KeyboardButton(text="🅰 Claude Sonnet — 10 кр."))
+    b.row(KeyboardButton(text="🐋 DeepSeek V3 — 5 кр."))
+    b.row(KeyboardButton(text="✳️ GPT-4o — 15 кр."))
     b.row(KeyboardButton(text="🏠 В главное меню"))
     return b.as_markup(resize_keyboard=True)
 
@@ -1185,7 +1215,7 @@ def cancel_kb() -> ReplyKeyboardMarkup:
 def profile_kb() -> ReplyKeyboardMarkup:
     b = ReplyKeyboardBuilder()
     b.row(
-        KeyboardButton(text="💎 Купить токены"),
+        KeyboardButton(text="💎 Купить кредиты"),
         KeyboardButton(text="👑 Подписки"),
     )
     b.row(KeyboardButton(text="📋 История транзакций"))
@@ -1286,6 +1316,8 @@ class State_(StatesGroup):
     biz_menu  = State()  # финансы бизнеса: меню
     biz_input = State()  # финансы бизнеса: ввод отчёта
     biz_date  = State()  # финансы бизнеса: отчёт за конкретную дату
+    calllist      = State()   # список для обзвона Алиной
+    numerology    = State()   # ввод имени и даты рождения для нумерологии
 
 user_tool:  dict[int, str] = {}
 user_model: dict[int, str] = {}
@@ -1318,34 +1350,6 @@ MOOD_LABELS = {1: "😟 Очень плохо", 2: "😕 Так себе", 3: "�
 async def log_mood(uid: int, score: int):
     await db_run("INSERT INTO mood_log (user_id, score) VALUES (?, ?)", (uid, score))
 
-async def get_mood_stats(uid: int):
-    """Возвращает (всего_дней_с_чек-ином, текущий_стрик_подряд)."""
-    rows = await db_all(
-        "SELECT DISTINCT date(created_at) AS d FROM mood_log WHERE user_id=? ORDER BY d DESC", (uid,)
-    )
-    days = {r["d"] for r in rows}
-    total = len(days)
-    today = datetime.now().date()
-    cur = today
-    if str(today) not in days and str(today - timedelta(days=1)) in days:
-        cur = today - timedelta(days=1)
-    streak = 0
-    while str(cur) in days:
-        streak += 1
-        cur = cur - timedelta(days=1)
-    return total, streak
-
-def streak_line(total: int, streak: int) -> str:
-    if streak >= 7:
-        return f"🏆 {streak} дней подряд заботишься о себе — это сильно!"
-    if streak >= 3:
-        return f"🔥 {streak} дня подряд на связи с собой. Так держать!"
-    if streak == 2:
-        return "✨ Уже второй день подряд — отличная привычка формируется!"
-    if total == 1:
-        return "🌱 Первый чек-ин — маленький, но важный шаг."
-    return "🌿 Хорошо, что заглянул."
-
 async def get_mood_summary(uid: int) -> str:
     rows = await db_all(
         "SELECT score, created_at FROM mood_log WHERE user_id=? ORDER BY created_at DESC LIMIT 7", (uid,)
@@ -1358,8 +1362,6 @@ async def get_mood_summary(uid: int) -> str:
         lines.append(f"`{r['created_at'][:10]}` — {label}")
     avg = sum(r["score"] for r in rows) / len(rows)
     lines.append(f"\nСредняя оценка: *{avg:.1f}* из 5")
-    total, streak = await get_mood_stats(uid)
-    lines.append(streak_line(total, streak))
     return "\n".join(lines)
 
 TOOL_MAP = {
@@ -1373,13 +1375,16 @@ TOOL_MAP = {
     "📄 Эссе":       ("essay",      25),
     "✏️ Рерайт":     ("rewrite",    20),
     "💡 Идеи":       ("idea",       15),
-    "🧠 Психолог":   ("psy",        15),
+    "🧠 Психолог":      ("psy",        15),
+    "🔮 Предназначение": ("coach",      20),
+    "💕 Отношения":     ("relations",  15),
+    "🌿 Здоровье":      ("health_psy", 10),
 }
 
 MODEL_MAP = {
-    "🅰 Claude Sonnet — 10 ток.": "claude",
-    "🐋 DeepSeek V3 — 5 ток.":   "deepseek",
-    "✳️ GPT-4o — 15 ток.":       "gpt4o",
+    "🅰 Claude Sonnet — 10 кр.": "claude",
+    "🐋 DeepSeek V3 — 5 кр.":   "deepseek",
+    "✳️ GPT-4o — 15 кр.":       "gpt4o",
 }
 
 TOOL_HINTS = {
@@ -1394,6 +1399,9 @@ TOOL_HINTS = {
     "rewrite":    "Вставь текст для рерайта:",
     "idea":       "Опиши задачу — получи идеи:",
     "psy":        "Расскажи, что тебя беспокоит. Я помогу разобраться и подскажу конкретные шаги. Это не замена врачу 💛",
+    "coach":      "Напиши своё полное имя и дату рождения (ДД.ММ.ГГГГ) — составлю твой числовой профиль и поговорим о призвании.",
+    "relations":  "Расскажи о своей ситуации в отношениях. Я здесь — без осуждения 💕",
+    "health_psy": "Что сейчас с твоим состоянием и самочувствием? Расскажи — поищем, откуда это идёт 🌿",
 }
 
 # ── Агент «Аура»: инструменты, клавиатуры, чек-ин настроения ──
@@ -1403,9 +1411,8 @@ PSY_TOOLS = {
         "по шагам, в спокойном тёплом тоне."
     ),
     "🔁 Разобрать мысль": (
-        "Помоги мне спокойно и по-человечески разобраться с тревожной мыслью, которую я сейчас назову: "
-        "мягко отрази её, покажи, где она, возможно, преувеличена, и предложи более тёплый и реалистичный взгляд. "
-        "Без анкеты, без «шагов» и без кучи вопросов — просто по-доброму поговори со мной об этом."
+        "Помоги мне разобрать тревожную или негативную мысль по методу КПТ: "
+        "задай вопросы, чтобы я её записал, нашёл искажения и переформулировал."
     ),
     "🌍 Заземлиться": (
         "Проведи меня через технику заземления 5-4-3-2-1, чтобы вернуться в момент здесь и сейчас."
@@ -1417,9 +1424,10 @@ PSY_TOOLS = {
 
 def psy_kb() -> ReplyKeyboardMarkup:
     b = ReplyKeyboardBuilder()
+    b.row(KeyboardButton(text="🧠 Психолог"), KeyboardButton(text="🔮 Предназначение"))
+    b.row(KeyboardButton(text="💕 Отношения"), KeyboardButton(text="🌿 Здоровье"))
     b.row(KeyboardButton(text="🫁 Подышать"), KeyboardButton(text="🌍 Заземлиться"))
     b.row(KeyboardButton(text="🔁 Разобрать мысль"), KeyboardButton(text="📓 Дневник"))
-    b.row(KeyboardButton(text="📊 Моё настроение"))
     b.row(KeyboardButton(text="🗑 Очистить историю чата"))
     b.row(KeyboardButton(text="🏠 В главное меню"))
     return b.as_markup(resize_keyboard=True)
@@ -1434,19 +1442,6 @@ def mood_checkin_kb():
         InlineKeyboardButton(text="😄", callback_data="mood:5"),
     )
     return b.as_markup()
-
-PSY_CONT = [
-    "Я рядом 💛",
-    "Побудем с этим вместе 🌿",
-    "Не спеши, я тут.",
-    "Спасибо, что доверяешь мне это.",
-    "Я здесь, сколько понадобится.",
-    "Разберёмся, шаг за шагом.",
-    "Ты не один в этом.",
-    "Продолжим, когда будешь готов.",
-    "Слышу тебя. Пиши, если хочется ещё.",
-    "Я никуда не спешу — говори как есть.",
-]
 
 async def send_psy_intro(message: Message):
     await message.answer(
@@ -1480,10 +1475,10 @@ async def cmd_start(message: Message):
                     try: await message.bot.send_message(referrer["id"], "🎉 По твоей ссылке зарегистрировался новый пользователь!")
                     except: pass
         bal = await get_balance(message.from_user.id)
-        text = f"✨ *Добро пожаловать в AuraAI!*\n\n🎁 Тебе начислено *{bal} токенов* для старта\n\nВыбери раздел:"
+        text = f"✨ *Добро пожаловать в AuraAI!*\n\n🎁 Тебе начислено *{bal} кредитов* для старта\n\nВыбери раздел:"
     else:
         bal = await get_balance(message.from_user.id)
-        text = f"👋 С возвращением, *{message.from_user.first_name}*!\n\n💎 Токены: *{bal}*\n\nВыбери раздел:"
+        text = f"👋 С возвращением, *{message.from_user.first_name}*!\n\n💎 Кредиты: *{bal}*\n\nВыбери раздел:"
 
     await message.answer(text, parse_mode="Markdown", reply_markup=main_kb(message.from_user.id == ADMIN_ID))
 
@@ -1517,7 +1512,7 @@ async def show_course_landing(message: Message):
         "• Оживление фото в видео\n"
         "• Как брать платные заказы\n\n"
         f"💎 Цена: *{COURSE['rub']}₽* (или ⭐️{COURSE['stars']})\n"
-        "🎁 Бонус: 1 000 токенов на бота для практики\n\n"
+        "🎁 Бонус: 1 000 кредитов на бота для практики\n\n"
         "Остались вопросы? Жми «Задать вопрос менеджеру» — отвечу 24/7."
     )
     await message.answer(text, parse_mode="Markdown", reply_markup=course_inline_kb())
@@ -1544,7 +1539,7 @@ async def cb_course_free(callback: CallbackQuery):
         "2️⃣ Загрузи любое своё фото\n"
         "3️⃣ Напиши, что изменить (например: «сделай студийный портрет»)\n"
         "4️⃣ Получи результат за секунды!\n\n"
-        "У тебя уже есть бесплатные токены на старте. Попробуй — а потом возвращайся за полным курсом 😉",
+        "У тебя уже есть бесплатные кредиты на старте. Попробуй — а потом возвращайся за полным курсом 😉",
         parse_mode="Markdown", reply_markup=course_inline_kb()
     )
     await callback.answer()
@@ -1563,7 +1558,7 @@ async def cb_course_ask(callback: CallbackQuery, state: FSMContext):
 async def course_chat_exit(message: Message, state: FSMContext):
     await state.clear()
     bal = await get_balance(message.from_user.id)
-    await message.answer(f"🏠 *Главное меню*\n\n💎 Токены: *{bal}*", parse_mode="Markdown", reply_markup=main_kb(message.from_user.id == ADMIN_ID))
+    await message.answer(f"🏠 *Главное меню*\n\n💎 Кредиты: *{bal}*", parse_mode="Markdown", reply_markup=main_kb(message.from_user.id == ADMIN_ID))
 
 @router.message(State_.course_chat)
 async def course_chat_answer(message: Message, state: FSMContext):
@@ -1617,7 +1612,7 @@ async def cmd_set_course_link(message: Message):
 async def to_main(message: Message, state: FSMContext):
     await state.clear()
     bal = await get_balance(message.from_user.id)
-    await message.answer(f"🏠 *Главное меню*\n\n💎 Токены: *{bal}*", parse_mode="Markdown", reply_markup=main_kb(message.from_user.id == ADMIN_ID))
+    await message.answer(f"🏠 *Главное меню*\n\n💎 Кредиты: *{bal}*", parse_mode="Markdown", reply_markup=main_kb(message.from_user.id == ADMIN_ID))
 
 @router.message(F.text == "📊 Доктора")
 async def btn_doctors(message: Message):
@@ -1652,12 +1647,7 @@ async def cancel(message: Message, state: FSMContext):
 @router.message(F.text == "🗑 Очистить историю чата")
 async def clear_chat_history(message: Message):
     await clear_history(message.from_user.id)
-    await message.answer(
-        "🧠 Готово — я забыл наш прошлый разговор и начинаю с чистого листа.\n\n"
-        "Сами сообщения на экране Telegram останутся: бот не может удалять переписку в чате, "
-        "но в контексте я их больше не помню.",
-        reply_markup=text_tools_kb()
-    )
+    await message.answer("🗑 История чата очищена!", reply_markup=text_tools_kb())
 
 @router.message(F.text == "💡 GPTs/Claude/Gemini")
 async def section_text(message: Message):
@@ -1676,14 +1666,14 @@ async def section_design(message: Message):
 @router.message(F.text == "🎙 Аудио с ИИ")
 async def section_audio(message: Message):
     await message.answer(
-        "🎙 *Аудио с ИИ*\n\n🎵 Google Lyria 2 — генерация музыки по описанию\n💎 50 токенов за трек\n\n🔊 ElevenLabs TTS — озвучка текста голосом\n💎 20 токенов",
+        "🎙 *Аудио с ИИ*\n\n🎵 Google Lyria 2 — генерация музыки по описанию\n💎 50 кредитов за трек\n\n🔊 ElevenLabs TTS — озвучка текста голосом\n💎 20 кредитов",
         parse_mode="Markdown", reply_markup=audio_kb()
     )
 
 @router.message(F.text == "🎬 Видео будущего")
 async def section_video(message: Message):
     await message.answer(
-        "🎬 *Видео будущего*\n\n🎬 Seedance 2.0 — видео нового поколения до 5 сек\n💎 150 токенов\n\n🎥 Kling 1.6 — проверенная классика до 5 сек\n💎 150 токенов\n\n🖼➡️🎬 Фото в видео — оживи своё фото\n💎 100 токенов",
+        "🎬 *Видео будущего*\n\n🎬 Seedance 2.0 — видео нового поколения до 5 сек\n💎 150 кредитов\n\n🎥 Kling 1.6 — проверенная классика до 5 сек\n💎 150 кредитов\n\n🖼➡️🎬 Фото в видео — оживи своё фото\n💎 100 кредитов",
         parse_mode="Markdown", reply_markup=video_kb()
     )
 
@@ -1709,7 +1699,7 @@ async def section_help(message: Message):
         "🎨 *Дизайн с ИИ* — генерация картинок\n"
         "🎙 *Аудио с ИИ* — музыка и голос (скоро)\n"
         "🎬 *Видео будущего* — AI видео (скоро)\n\n"
-        "💎 Токены списываются за каждый запрос\n"
+        "💎 Кредиты списываются за каждый запрос\n"
         "🔗 Рефералы — приглашай и зарабатывай Stars\n\n"
         "🆘 Поддержка: @support",
         parse_mode="Markdown", reply_markup=main_kb()
@@ -1732,15 +1722,15 @@ async def section_profile(message: Message):
         f"👤 *Профиль*\n\n"
         f"Имя: *{message.from_user.full_name}*\n"
         f"Plan: *{plan_label}*{expires}\n"
-        f"💎 Токены: *{bal}*\n"
+        f"💎 Кредиты: *{bal}*\n"
         f"🏅 Всего начислено: *{user['credits_total'] if user else 0}*",
         parse_mode="Markdown", reply_markup=profile_kb()
     )
 
-@router.message(F.text == "💎 Купить токены")
+@router.message(F.text == "💎 Купить кредиты")
 async def buy_credits(message: Message):
     await message.answer(
-        "💎 *Купить токены*\n\nОплата картой (рубли) или Telegram Stars.\nТокены зачисляются мгновенно и не сгорают.\n\nВыбери пакет:",
+        "💎 *Купить кредиты*\n\nОплата картой (рубли) или Telegram Stars.\nКредиты зачисляются мгновенно и не сгорают.\n\nВыбери пакет:",
         parse_mode="Markdown", reply_markup=credits_pack_kb()
     )
 
@@ -1754,24 +1744,24 @@ async def buy_plans(message: Message):
         "_Чем выше тариф — тем дешевле каждая генерация._\n\n"
 
         f"{'✅ ' if plan=='basic' else ''}⭐️ *Basic — 390₽/мес*\n"
-        "• 2 000 токенов\n"
+        "• 2 000 кредитов\n"
         "• Хватит на ~16 фото или 5 видео\n"
         "• Все функции бота\n\n"
 
         f"{'✅ ' if plan=='pro' else ''}👑 *Pro — 1 090₽/мес*  🔥 выгодно\n"
-        "• 4 500 токенов\n"
+        "• 4 500 кредитов\n"
         "• 🏷 Скидка *25%* на фото и картинки\n"
         "• Хватит на ~50 фото или 11 видео\n"
         "• Все функции бота\n\n"
 
         f"{'✅ ' if plan=='premium' else ''}💎 *Premium — 2 290₽/мес*  ⭐️ максимум\n"
-        "• 9 000 токенов\n"
+        "• 9 000 кредитов\n"
         "• ♾ *Безлимит на AI-чат* (пиши сколько хочешь)\n"
         "• 🏷 Скидка *50%* на фото и картинки\n"
         "• Хватит на ~150 фото или 22 видео\n"
         "• Приоритетная генерация\n\n"
 
-        "💡 _Токены не сгорают. Скидки применяются автоматически._"
+        "💡 _Кредиты не сгорают. Скидки применяются автоматически._"
     )
     await message.answer(text, parse_mode="Markdown", reply_markup=plans_inline_kb())
 
@@ -1779,7 +1769,7 @@ async def buy_plans(message: Message):
 async def tx_history(message: Message):
     rows = await db_all("SELECT amount,description,balance,created_at FROM transactions WHERE user_id=? ORDER BY created_at DESC LIMIT 10", (message.from_user.id,))
     bal = await get_balance(message.from_user.id)
-    lines = [f"📋 *История*\n\nБаланс: *{bal} ток.*\n"]
+    lines = [f"📋 *История*\n\nБаланс: *{bal} кр.*\n"]
     for r in rows:
         sign = "+" if r["amount"] > 0 else ""
         lines.append(f"`{r['created_at'][:10]}` {sign}{r['amount']} — {r['description']}")
@@ -1796,22 +1786,45 @@ async def tool_selected(message: Message, state: FSMContext):
     bal = await get_balance(message.from_user.id)
 
     if bal < base_cost:
-        await message.answer(f"❌ Нужно минимум *{base_cost} ток.* · У тебя *{bal} ток.*\n\nПополни баланс:", parse_mode="Markdown", reply_markup=profile_kb())
+        await message.answer(f"❌ Нужно минимум *{base_cost} кр.* · У тебя *{bal} кр.*\n\nПополни баланс:", parse_mode="Markdown", reply_markup=profile_kb())
         return
 
     user_tool[message.from_user.id] = tool_id
 
-    # Психолог — всегда Claude, без выбора модели
-    if tool_id == "psy":
+    # Психолог, Отношения, Здоровье — всегда Claude
+    if tool_id in ("psy", "relations", "health_psy"):
         total_cost = base_cost + TEXT_MODELS["claude"]["cost"]
         bal2 = await get_balance(message.from_user.id)
         if bal2 < total_cost:
-            await message.answer(f"❌ Нужно *{total_cost} ток.* · У тебя *{bal2} ток.*", parse_mode="Markdown", reply_markup=profile_kb())
+            await message.answer(f"❌ Нужно *{total_cost} кр.* · У тебя *{bal2} кр.*", parse_mode="Markdown", reply_markup=profile_kb())
             return
         user_model[message.from_user.id] = "claude"
-        await state.update_data(tool="psy", model="claude", cost=total_cost)
+        await state.update_data(tool=tool_id, model="claude", cost=total_cost)
         await state.set_state(State_.waiting_text)
-        await send_psy_intro(message)
+        if tool_id == "psy":
+            await send_psy_intro(message)
+        else:
+            hint = TOOL_HINTS.get(tool_id, "Расскажи подробнее:")
+            await message.answer(hint, reply_markup=psy_kb())
+        return
+
+    # Коуч-предназначение — сначала собираем имя + дату
+    if tool_id == "coach":
+        total_cost = base_cost + TEXT_MODELS["claude"]["cost"]
+        bal2 = await get_balance(message.from_user.id)
+        if bal2 < total_cost:
+            await message.answer(f"❌ Нужно *{total_cost} кр.* · У тебя *{bal2} кр.*", parse_mode="Markdown", reply_markup=profile_kb())
+            return
+        user_model[message.from_user.id] = "claude"
+        await state.update_data(tool="coach", model="claude", cost=total_cost)
+        await state.set_state(State_.numerology)
+        await message.answer(
+            "🔮 *Коуч по предназначению*\n\n"
+            "Напиши своё полное имя и дату рождения в одном сообщении.\n\n"
+            "Пример:\n`Иванова Мария Сергеевна 15.03.1992`",
+            parse_mode="Markdown",
+            reply_markup=ReplyKeyboardRemove()
+        )
         return
 
     await state.set_state(State_.choose_model)
@@ -1849,7 +1862,7 @@ async def model_selected(message: Message, state: FSMContext):
 
     bal = await get_balance(message.from_user.id)
     if bal < total_cost:
-        await message.answer(f"❌ Нужно *{total_cost} ток.* · У тебя *{bal} ток.*", parse_mode="Markdown", reply_markup=profile_kb())
+        await message.answer(f"❌ Нужно *{total_cost} кр.* · У тебя *{bal} кр.*", parse_mode="Markdown", reply_markup=profile_kb())
         await state.clear(); return
 
     user_model[message.from_user.id] = model_id
@@ -1868,7 +1881,7 @@ async def model_selected(message: Message, state: FSMContext):
         # Создать фиктивное сообщение не получится — просто подсказать
         await state.update_data(pending_photo=None)
         await message.answer(
-            f"{model_info['emoji']} *{model_info['name']}*  ·  💎 {total_cost} токенов\n\n"
+            f"{model_info['emoji']} *{model_info['name']}*  ·  💎 {total_cost} кредитов\n\n"
             f"Фото сохранено! Теперь отправь его снова вместе с вопросом:",
             parse_mode="Markdown", reply_markup=cancel_kb()
         )
@@ -1877,7 +1890,7 @@ async def model_selected(message: Message, state: FSMContext):
             await send_psy_intro(message)
         else:
             await message.answer(
-                f"{model_info['emoji']} *{model_info['name']}*  ·  💎 {total_cost} токенов\n\n{hint}",
+                f"{model_info['emoji']} *{model_info['name']}*  ·  💎 {total_cost} кредитов\n\n{hint}",
                 parse_mode="Markdown", reply_markup=cancel_kb()
             )
 
@@ -1892,32 +1905,13 @@ async def mood_checkin(callback: CallbackQuery):
         score = int(callback.data.split(":")[1])
     except (ValueError, IndexError):
         await callback.answer(); return
+    await log_mood(callback.from_user.id, score)
+    label = MOOD_LABELS.get(score, "")
     try:
-        await log_mood(callback.from_user.id, score)
-        label = MOOD_LABELS.get(score, "")
-        total, streak = await get_mood_stats(callback.from_user.id)
-        reactions = {
-            1: "Слышу, что сейчас правда тяжело. Хорошо, что не держишь это в себе 💛",
-            2: "«Так себе» — это честно. Давай побудем с этим вместе.",
-            3: "Спокойное «нормально» тоже стоит отметить 🙂",
-            4: "Рад, что сегодня по-хорошему 🌿",
-            5: "Здорово, что так светло сегодня! ✨",
-        }
-        text = f"{reactions.get(score, 'Отметил')}  ({label})\n\n{streak_line(total, streak)}"
-        try:
-            await callback.message.edit_text(text)
-        except Exception:
-            try:
-                await callback.message.answer(text)
-            except Exception:
-                pass
-        await callback.answer("Записал 💛")
-    except Exception as e:
-        logging.warning(f"mood_checkin error: {e}")
-        try:
-            await callback.answer("Записал 💛")
-        except Exception:
-            pass
+        await callback.message.edit_text(f"Спасибо, что поделился. Отметил: {label}")
+    except Exception:
+        pass
+    await callback.answer("Записал 💛")
 
 @router.message(State_.waiting_text)
 async def process_text(message: Message, state: FSMContext):
@@ -1957,7 +1951,7 @@ async def process_text(message: Message, state: FSMContext):
         if user_text in PSY_TOOLS:
             user_text = PSY_TOOLS[user_text]
 
-    # Психолог-агент: проверка кризисного сигнала ДО списания токенов и обращения к ИИ
+    # Психолог-агент: проверка кризисного сигнала ДО списания кредитов и обращения к ИИ
     if tool_id == "psy" and is_crisis(user_text):
         await message.answer(CRISIS_REPLY, parse_mode="Markdown")
         await state.set_state(State_.waiting_text)
@@ -1967,26 +1961,18 @@ async def process_text(message: Message, state: FSMContext):
 
     ok = await use_credits(message.from_user.id, tool_id, cost)
     if not ok:
-        await message.answer("❌ Недостаточно токенов.", reply_markup=profile_kb())
+        await message.answer("❌ Недостаточно кредитов.", reply_markup=profile_kb())
         await state.clear(); return
 
     await state.clear()
-    thinking = await message.answer(
-        ("💭 Думаю..." if tool_id == "psy" else "⏳ Генерирую..."),
-        reply_markup=ReplyKeyboardRemove()
-    )
+    thinking = await message.answer("⏳ Генерирую...", reply_markup=ReplyKeyboardRemove())
 
     try:
         system = SYSTEM_PROMPTS.get(tool_id, SYSTEM_PROMPTS["chat"])
-        if tool_id == "psy":
-            system += (
-                f"\n\nСЕГОДНЯ: {datetime.now():%d.%m.%Y} года. "
-                "Используй именно эту дату, когда считаешь возраст по дате рождения или рассуждаешь о времени — не выдумывай год."
-            )
         use_history = tool_id in ("chat", "psy")
-        # Веб-поиск для психолога временно ВЫКЛЮЧЕН: он платный и нестабилен. Психолог работает на обычном Claude.
-        psy_web = False
-        gen_model = "claude" if tool_id == "psy" else model_id
+        # Агент «Аура» ходит в интернет через веб-поиск Claude (если есть ключ Anthropic)
+        psy_web = (tool_id == "psy" and anthropic_client is not None)
+        gen_model = "claude" if psy_web else model_id
         result = await call_text_ai(user_text, system, gen_model, uid=message.from_user.id, use_history=use_history, image_url=image_url, web=psy_web)
         bal    = await get_balance(message.from_user.id)
         model_info = TEXT_MODELS.get(model_id, TEXT_MODELS["claude"])
@@ -1996,25 +1982,18 @@ async def process_text(message: Message, state: FSMContext):
         chunks = [result[i:i+3500] for i in range(0, len(result), 3500)]
         for i, chunk in enumerate(chunks):
             if i == 0:
-                if tool_id == "psy":
-                    # Психолог: чистый человеческий ответ — без баннера модели, без строки о балансе, без Markdown
-                    try:
-                        await thinking.edit_text(chunk)
-                    except Exception:
-                        await message.answer(chunk)
-                else:
-                    try:
-                        await thinking.edit_text(
-                            f"{model_info['emoji']} *{model_info['name']}*\n\n{chunk}\n\n"
-                            f"💎 Потрачено: *{cost} ток.* · Остаток: *{bal} ток.*",
-                            parse_mode="Markdown"
-                        )
-                    except Exception:
-                        await message.answer(
-                            f"{model_info['emoji']} *{model_info['name']}*\n\n{chunk}\n\n"
-                            f"💎 Потрачено: *{cost} ток.* · Остаток: *{bal} ток.*",
-                            parse_mode="Markdown"
-                        )
+                try:
+                    await thinking.edit_text(
+                        f"{model_info['emoji']} *{model_info['name']}*\n\n{chunk}\n\n"
+                        f"💎 Потрачено: *{cost} кр.* · Остаток: *{bal} кр.*",
+                        parse_mode="Markdown"
+                    )
+                except Exception:
+                    await message.answer(
+                        f"{model_info['emoji']} *{model_info['name']}*\n\n{chunk}\n\n"
+                        f"💎 Потрачено: *{cost} кр.* · Остаток: *{bal} кр.*",
+                        parse_mode="Markdown"
+                    )
             else:
                 await message.answer(chunk)
 
@@ -2023,7 +2002,7 @@ async def process_text(message: Message, state: FSMContext):
             await state.set_state(State_.waiting_text)
             await state.update_data(tool=tool_id, model=model_id, cost=cost)
             await message.answer(
-                (random.choice(PSY_CONT) if tool_id == "psy" else "💬 Продолжай писать или нажми кнопку ниже:"),
+                "💬 Продолжай писать или нажми кнопку ниже:",
                 reply_markup=(psy_kb() if tool_id == "psy" else cancel_kb())
             )
         else:
@@ -2032,9 +2011,9 @@ async def process_text(message: Message, state: FSMContext):
     except asyncio.TimeoutError:
         await add_credits(message.from_user.id, cost, "bonus", "Возврат: таймаут")
         try:
-            await thinking.edit_text("⏱ Время вышло (15 сек). Токены возвращены. Попробуй ещё раз.")
+            await thinking.edit_text("⏱ Время вышло (15 сек). Кредиты возвращены. Попробуй ещё раз.")
         except Exception:
-            await message.answer("⏱ Время вышло (15 сек). Токены возвращены. Попробуй ещё раз.")
+            await message.answer("⏱ Время вышло (15 сек). Кредиты возвращены. Попробуй ещё раз.")
         if tool_id == "chat":
             await state.set_state(State_.waiting_text)
             await state.update_data(tool=tool_id, model=model_id, cost=cost)
@@ -2045,16 +2024,14 @@ async def process_text(message: Message, state: FSMContext):
 
     except Exception as e:
         await add_credits(message.from_user.id, cost, "bonus", "Возврат: ошибка AI")
-        logging.error(f"Text AI error [{tool_id}/{model_id}]: {e}")
-        err = str(e)[:350] or type(e).__name__
         try:
-            await thinking.edit_text(f"⚠️ Ошибка AI. Токены возвращены.\n\nПричина: {err}")
+            await thinking.edit_text(f"⚠️ Ошибка AI. Кредиты возвращены.\n\n{str(e)[:100]}")
         except Exception:
-            await message.answer(f"⚠️ Ошибка AI. Токены возвращены.\n\nПричина: {err}")
-        if tool_id in ("chat", "psy"):
+            await message.answer("⚠️ Ошибка AI. Кредиты возвращены.")
+        if tool_id == "chat":
             await state.set_state(State_.waiting_text)
             await state.update_data(tool=tool_id, model=model_id, cost=cost)
-            await message.answer("Попробуй ещё раз:", reply_markup=(psy_kb() if tool_id == "psy" else cancel_kb()))
+            await message.answer("Попробуй ещё раз:", reply_markup=cancel_kb())
         else:
             await message.answer("Попробуй ещё раз:", reply_markup=text_tools_kb())
         logging.error(f"Text AI error [{tool_id}/{model_id}]: {e}")
@@ -2097,7 +2074,7 @@ async def image_tool_selected(message: Message, state: FSMContext):
     bal  = await get_balance(message.from_user.id)
 
     if bal < cost:
-        await message.answer(f"❌ Нужно *{cost} ток.* · У тебя *{bal} ток.*", parse_mode="Markdown", reply_markup=profile_kb())
+        await message.answer(f"❌ Нужно *{cost} кр.* · У тебя *{bal} кр.*", parse_mode="Markdown", reply_markup=profile_kb())
         return
 
     if "Nano Banana" in message.text:
@@ -2112,7 +2089,7 @@ async def image_tool_selected(message: Message, state: FSMContext):
     await state.set_state(State_.waiting_image)
 
     await message.answer(
-        f"*{message.text}*  ·  💎 {cost} токенов\n\n"
+        f"*{message.text}*  ·  💎 {cost} кредитов\n\n"
         f"Выбери режим:",
         parse_mode="Markdown", reply_markup=image_mode_kb()
     )
@@ -2141,7 +2118,7 @@ async def _generate_edit(message: Message, state: FSMContext):
         await message.answer("Нужны фото и описание.", reply_markup=cancel_kb()); return
     ok = await use_credits(message.from_user.id, f"image_{model}", cost)
     if not ok:
-        await message.answer("❌ Недостаточно токенов.", reply_markup=profile_kb()); await state.clear(); return
+        await message.answer("❌ Недостаточно кредитов.", reply_markup=profile_kb()); await state.clear(); return
     await state.clear()
     thinking = await message.answer("🎨 Редактирую фото... (~15-30 сек)\nМожно вернуться в меню.", reply_markup=main_kb())
     try:
@@ -2152,14 +2129,14 @@ async def _generate_edit(message: Message, state: FSMContext):
         except Exception:
             pass
         await message.answer_photo(BufferedInputFile(img_bytes, filename="image.png"),
-            caption=f"🎨 Готово · Формат {aspect}\n\n💎 Потрачено: {cost} ток. · Остаток: {bal} ток.")
+            caption=f"🎨 Готово · Формат {aspect}\n\n💎 Потрачено: {cost} кр. · Остаток: {bal} кр.")
         await state.set_state(State_.waiting_image)
         await state.update_data(image_model=model, cost=cost, aspect=aspect, base_photo=base_photo, base_caption=None)
         await message.answer("✅ Готово! Пришли ещё описание для этого фото — отредактирую снова. Или меню 👇",
                              reply_markup=design_kb())
     except Exception as e:
         await add_credits(message.from_user.id, cost, "bonus", "Возврат: ошибка")
-        await message.answer(f"⚠️ Ошибка. Токены возвращены.\n{str(e)[:150]}", reply_markup=design_kb())
+        await message.answer(f"⚠️ Ошибка. Кредиты возвращены.\n{str(e)[:150]}", reply_markup=design_kb())
 
 @router.message(State_.waiting_image, F.text.in_(ASPECT_MAP.keys()))
 async def image_aspect_selected(message: Message, state: FSMContext):
@@ -2263,7 +2240,7 @@ async def process_image(message: Message, state: FSMContext):
 
     ok = await use_credits(message.from_user.id, f"image_{model}", cost)
     if not ok:
-        await message.answer("❌ Недостаточно токенов.", reply_markup=profile_kb())
+        await message.answer("❌ Недостаточно кредитов.", reply_markup=profile_kb())
         await state.clear(); return
 
     await state.clear()
@@ -2300,13 +2277,13 @@ async def process_image(message: Message, state: FSMContext):
                     b = await get_balance(message.from_user.id)
                     await message.answer_audio(
                         BufferedInputFile(audio_bytes, filename=f"track.{ext}"),
-                        caption=f"🎵 *Музыка готова!*\n\n💎 Потрачено: *{cost} ток.* · Остаток: *{b} ток.*",
+                        caption=f"🎵 *Музыка готова!*\n\n💎 Потрачено: *{cost} кр.* · Остаток: *{b} кр.*",
                         parse_mode="Markdown"
                     )
                     await message.answer("Что дальше?", reply_markup=audio_kb())
                 except Exception as e:
                     await add_credits(message.from_user.id, cost, "bonus", "Возврат: ошибка музыки")
-                    await message.answer(f"⚠️ Ошибка генерации музыки. Токены возвращены.\n{str(e)[:100]}", reply_markup=audio_kb())
+                    await message.answer(f"⚠️ Ошибка генерации музыки. Кредиты возвращены.\n{str(e)[:100]}", reply_markup=audio_kb())
                     logging.error(f"Music task error: {e}")
                 finally:
                     try:
@@ -2343,13 +2320,13 @@ async def process_image(message: Message, state: FSMContext):
                     b = await get_balance(message.from_user.id)
                     await message.answer_video(
                         BufferedInputFile(video_bytes, filename="video.mp4"),
-                        caption=f"🎥 *Kling 1.6*\n\n💎 Потрачено: *{cost} ток.* · Остаток: *{b} ток.*",
+                        caption=f"🎥 *Kling 1.6*\n\n💎 Потрачено: *{cost} кр.* · Остаток: *{b} кр.*",
                         parse_mode="Markdown"
                     )
                     await message.answer("Что дальше?", reply_markup=video_kb())
                 except Exception as e:
                     await add_credits(message.from_user.id, cost, "bonus", "Возврат: ошибка видео")
-                    await message.answer(f"⚠️ Ошибка генерации видео. Токены возвращены.\n{str(e)[:100]}", reply_markup=video_kb())
+                    await message.answer(f"⚠️ Ошибка генерации видео. Кредиты возвращены.\n{str(e)[:100]}", reply_markup=video_kb())
                     logging.error(f"Kling task error: {e}")
                 finally:
                     try:
@@ -2372,7 +2349,7 @@ async def process_image(message: Message, state: FSMContext):
                 pass
             await message.answer_voice(
                 BufferedInputFile(audio_bytes, filename="speech.mp3"),
-                caption=f"🔊 *ElevenLabs TTS*\n\n💎 Потрачено: *{cost} ток.* · Остаток: *{bal} ток.*",
+                caption=f"🔊 *ElevenLabs TTS*\n\n💎 Потрачено: *{cost} кр.* · Остаток: *{bal} кр.*",
                 parse_mode="Markdown"
             )
             await message.answer("Что дальше?", reply_markup=audio_kb())
@@ -2403,13 +2380,13 @@ async def process_image(message: Message, state: FSMContext):
                     b = await get_balance(message.from_user.id)
                     await message.answer_video(
                         BufferedInputFile(video_bytes, filename="video.mp4"),
-                        caption=f"🎬 *Seedance 2.0*\n\n💎 Потрачено: *{cost} ток.* · Остаток: *{b} ток.*",
+                        caption=f"🎬 *Seedance 2.0*\n\n💎 Потрачено: *{cost} кр.* · Остаток: *{b} кр.*",
                         parse_mode="Markdown"
                     )
                     await message.answer("Что дальше?", reply_markup=video_kb())
                 except Exception as e:
                     await add_credits(message.from_user.id, cost, "bonus", "Возврат: ошибка видео")
-                    await message.answer(f"⚠️ Ошибка генерации видео. Токены возвращены.\n{str(e)[:100]}", reply_markup=video_kb())
+                    await message.answer(f"⚠️ Ошибка генерации видео. Кредиты возвращены.\n{str(e)[:100]}", reply_markup=video_kb())
                     logging.error(f"Seedance task error: {e}")
                 finally:
                     try:
@@ -2440,7 +2417,7 @@ async def process_image(message: Message, state: FSMContext):
                 pass
             await message.answer_photo(
                 BufferedInputFile(img_bytes, filename="image.png"),
-                caption=f"🎨 *{model_name}*  ·  Формат {aspect}\n\n💎 Потрачено: *{cost} ток.* · Остаток: *{bal} ток.*",
+                caption=f"🎨 *{model_name}*  ·  Формат {aspect}\n\n💎 Потрачено: *{cost} кр.* · Остаток: *{bal} кр.*",
                 parse_mode="Markdown"
             )
             # вернуть в режим генерации, чтобы следующий текст снова сработал
@@ -2456,13 +2433,13 @@ async def process_image(message: Message, state: FSMContext):
 
     except asyncio.TimeoutError:
         await add_credits(message.from_user.id, cost, "bonus", "Возврат: таймаут")
-        await message.answer("⏱ Время вышло. Токены возвращены.")
+        await message.answer("⏱ Время вышло. Кредиты возвращены.")
         kb = audio_kb() if model == "music" else (video_kb() if model == "video" else design_kb())
         await message.answer("Попробуй снова:", reply_markup=kb)
 
     except Exception as e:
         await add_credits(message.from_user.id, cost, "bonus", "Возврат: ошибка")
-        await message.answer(f"⚠️ Ошибка. Токены возвращены.\n{str(e)[:150]}")
+        await message.answer(f"⚠️ Ошибка. Кредиты возвращены.\n{str(e)[:150]}")
         kb = audio_kb() if model == "music" else (video_kb() if model == "video" else design_kb())
         await message.answer("Попробуй снова:", reply_markup=kb)
         logging.error(f"Media generation error [{model}]: {e}")
@@ -2476,12 +2453,12 @@ async def music_generate(message: Message, state: FSMContext):
     cost = 50
     bal  = await get_balance(message.from_user.id)
     if bal < cost:
-        await message.answer(f"❌ Нужно *{cost} ток.* · У тебя *{bal} ток.*", parse_mode="Markdown", reply_markup=profile_kb())
+        await message.answer(f"❌ Нужно *{cost} кр.* · У тебя *{bal} кр.*", parse_mode="Markdown", reply_markup=profile_kb())
         return
     await state.set_state(State_.waiting_image)
     await state.update_data(image_model="music", cost=cost)
     await message.answer(
-        f"🎵 *Google Lyria 2*  ·  💎 {cost} токенов\n\n"
+        f"🎵 *Google Lyria 2*  ·  💎 {cost} кредитов\n\n"
         f"Опиши музыку которую хочешь создать:\n\n"
         f"Пример: *энергичный рок трек для мотивации, гитара и барабаны*",
         parse_mode="Markdown", reply_markup=cancel_kb()
@@ -2492,12 +2469,12 @@ async def video_generate(message: Message, state: FSMContext):
     cost = 400
     bal  = await get_balance(message.from_user.id)
     if bal < cost:
-        await message.answer(f"❌ Нужно *{cost} ток.* · У тебя *{bal} ток.*", parse_mode="Markdown", reply_markup=profile_kb())
+        await message.answer(f"❌ Нужно *{cost} кр.* · У тебя *{bal} кр.*", parse_mode="Markdown", reply_markup=profile_kb())
         return
     await state.set_state(State_.waiting_image)
     await state.update_data(image_model="video", cost=cost)
     await message.answer(
-        f"🎬 *Seedance 2.0*  ·  💎 {cost} токенов\n\n"
+        f"🎬 *Seedance 2.0*  ·  💎 {cost} кредитов\n\n"
         f"Выбери формат видео:",
         parse_mode="Markdown", reply_markup=aspect_kb()
     )
@@ -2506,12 +2483,12 @@ async def tts_start(message: Message, state: FSMContext):
     cost = 20
     bal  = await get_balance(message.from_user.id)
     if bal < cost:
-        await message.answer(f"❌ Нужно *{cost} ток.* · У тебя *{bal} ток.*", parse_mode="Markdown", reply_markup=profile_kb())
+        await message.answer(f"❌ Нужно *{cost} кр.* · У тебя *{bal} кр.*", parse_mode="Markdown", reply_markup=profile_kb())
         return
     await state.set_state(State_.waiting_image)
     await state.update_data(image_model="tts", cost=cost)
     await message.answer(
-        f"🔊 *ElevenLabs TTS*  ·  💎 {cost} токенов\n\n"
+        f"🔊 *ElevenLabs TTS*  ·  💎 {cost} кредитов\n\n"
         f"Введи текст который хочешь озвучить:\n\n"
         f"Пример: *Привет! Добро пожаловать в AuraAI*",
         parse_mode="Markdown", reply_markup=cancel_kb()
@@ -2521,12 +2498,12 @@ async def kling_generate(message: Message, state: FSMContext):
     cost = 400
     bal  = await get_balance(message.from_user.id)
     if bal < cost:
-        await message.answer(f"❌ Нужно *{cost} ток.* · У тебя *{bal} ток.*", parse_mode="Markdown", reply_markup=profile_kb())
+        await message.answer(f"❌ Нужно *{cost} кр.* · У тебя *{bal} кр.*", parse_mode="Markdown", reply_markup=profile_kb())
         return
     await state.set_state(State_.waiting_image)
     await state.update_data(image_model="kling", cost=cost)
     await message.answer(
-        f"🎥 *Kling 1.6*  ·  💎 {cost} токенов\n\n"
+        f"🎥 *Kling 1.6*  ·  💎 {cost} кредитов\n\n"
         f"Выбери формат видео:",
         parse_mode="Markdown", reply_markup=aspect_kb()
     )
@@ -2546,12 +2523,12 @@ async def img2img_start(message: Message, state: FSMContext):
     cost = 120
     bal = await get_balance(message.from_user.id)
     if bal < cost:
-        await message.answer(f"❌ Нужно *{cost} ток.* · У тебя *{bal} ток.*", parse_mode="Markdown", reply_markup=profile_kb())
+        await message.answer(f"❌ Нужно *{cost} кр.* · У тебя *{bal} кр.*", parse_mode="Markdown", reply_markup=profile_kb())
         return
     await state.set_state(State_.waiting_photo)
     await state.update_data(cost=cost)
     await message.answer(
-        "✏️ *Редактировать фото*  ·  💎 70 токенов\n\n"
+        "✏️ *Редактировать фото*  ·  💎 70 кредитов\n\n"
         "1️⃣ Отправь фото которое хочешь изменить:",
         parse_mode="Markdown", reply_markup=cancel_kb()
     )
@@ -2625,7 +2602,7 @@ async def _do_img2img(message: Message, state: FSMContext, image_url: str, promp
 
     ok = await use_credits(message.from_user.id, "img2img", cost)
     if not ok:
-        await message.answer("❌ Недостаточно токенов.", reply_markup=profile_kb())
+        await message.answer("❌ Недостаточно кредитов.", reply_markup=profile_kb())
         await state.clear()
         return
 
@@ -2647,7 +2624,7 @@ async def _do_img2img(message: Message, state: FSMContext, image_url: str, promp
         # Инфо и ссылка отдельным сообщением
         await message.answer(
             f"📌 Запрос: _{prompt_text}_\n\n"
-            f"💎 Потрачено: *{cost} ток.* · Остаток: *{bal} ток.*\n\n"
+            f"💎 Потрачено: *{cost} кр.* · Остаток: *{bal} кр.*\n\n"
             f"[📥 Скачать в высоком качестве]({result_url})",
             parse_mode="Markdown",
             disable_web_page_preview=False
@@ -2657,7 +2634,7 @@ async def _do_img2img(message: Message, state: FSMContext, image_url: str, promp
         # Инфо и ссылка отдельным сообщением
         await message.answer(
             f"📌 Запрос: _{prompt_text}_\n\n"
-            f"💎 Потрачено: *{cost} ток.* · Остаток: *{bal} ток.*\n\n"
+            f"💎 Потрачено: *{cost} кр.* · Остаток: *{bal} кр.*\n\n"
             f"[📥 Скачать в высоком качестве]({result_url})",
             parse_mode="Markdown",
             disable_web_page_preview=False
@@ -2678,17 +2655,17 @@ async def _do_img2img(message: Message, state: FSMContext, image_url: str, promp
     except asyncio.TimeoutError:
         await add_credits(message.from_user.id, cost, "bonus", "Возврат: таймаут")
         try:
-            await thinking.edit_text("⏱ Время вышло. Токены возвращены.")
+            await thinking.edit_text("⏱ Время вышло. Кредиты возвращены.")
         except Exception:
-            await message.answer("⏱ Время вышло. Токены возвращены.")
+            await message.answer("⏱ Время вышло. Кредиты возвращены.")
         await message.answer("Попробуй снова:", reply_markup=design_kb())
 
     except Exception as e:
         await add_credits(message.from_user.id, cost, "bonus", "Возврат: ошибка")
         try:
-            await thinking.edit_text(f"⚠️ Ошибка. Токены возвращены.\n{str(e)[:100]}")
+            await thinking.edit_text(f"⚠️ Ошибка. Кредиты возвращены.\n{str(e)[:100]}")
         except Exception:
-            await message.answer("⚠️ Ошибка. Токены возвращены.")
+            await message.answer("⚠️ Ошибка. Кредиты возвращены.")
         await message.answer("Попробуй снова:", reply_markup=design_kb())
         logging.error(f"img2img error: {e}")
 
@@ -2735,12 +2712,12 @@ async def img2video_video_start(message: Message, state: FSMContext):
     cost = 100
     bal = await get_balance(message.from_user.id)
     if bal < cost:
-        await message.answer(f"❌ Нужно *{cost} ток.* · У тебя *{bal} ток.*", parse_mode="Markdown", reply_markup=profile_kb())
+        await message.answer(f"❌ Нужно *{cost} кр.* · У тебя *{bal} кр.*", parse_mode="Markdown", reply_markup=profile_kb())
         return
     await state.set_state(State_.waiting_video_photo)
     await state.update_data(cost=cost)
     await message.answer(
-        "🖼➡️🎬 *Фото в видео*  ·  💎 100 токенов\n\n"
+        "🖼➡️🎬 *Фото в видео*  ·  💎 100 кредитов\n\n"
         "1️⃣ Отправь фото которое хочешь оживить:",
         parse_mode="Markdown", reply_markup=cancel_kb()
     )
@@ -2790,7 +2767,7 @@ async def img2video_video_process(message: Message, state: FSMContext):
 
     ok = await use_credits(message.from_user.id, "img2video", cost)
     if not ok:
-        await message.answer("❌ Недостаточно токенов.", reply_markup=profile_kb())
+        await message.answer("❌ Недостаточно кредитов.", reply_markup=profile_kb())
         await state.clear()
         return
 
@@ -2815,13 +2792,13 @@ async def img2video_video_process(message: Message, state: FSMContext):
             bal = await get_balance(uid)
             await message.answer_video(
                 BufferedInputFile(video_bytes, filename="video.mp4"),
-                caption=f"🖼➡️🎬 *Фото в видео*\n\n💎 Потрачено: *{cost} ток.* · Остаток: *{bal} ток.*",
+                caption=f"🖼➡️🎬 *Фото в видео*\n\n💎 Потрачено: *{cost} кр.* · Остаток: *{bal} кр.*",
                 parse_mode="Markdown"
             )
             await message.answer("Что дальше?", reply_markup=video_kb())
         except Exception as e:
             await add_credits(uid, cost, "bonus", "Возврат: ошибка img2video")
-            await message.answer(f"⚠️ Ошибка. Токены возвращены.\n{str(e)[:100]}", reply_markup=video_kb())
+            await message.answer(f"⚠️ Ошибка. Кредиты возвращены.\n{str(e)[:100]}", reply_markup=video_kb())
             logging.error(f"img2video error: {e}")
         finally:
             try:
@@ -2849,7 +2826,7 @@ def avatar_model_kb() -> ReplyKeyboardMarkup:
 async def avatar_start(message: Message, state: FSMContext):
     bal = await get_balance(message.from_user.id)
     if bal < 800:
-        await message.answer(f"❌ Нужно минимум *800 ток.* · У тебя *{bal} ток.*", parse_mode="Markdown", reply_markup=profile_kb())
+        await message.answer(f"❌ Нужно минимум *800 кр.* · У тебя *{bal} кр.*", parse_mode="Markdown", reply_markup=profile_kb())
         return
     await state.set_state(State_.avatar_photo)
     await message.answer(
@@ -2867,11 +2844,11 @@ async def avatar_choose_model(message: Message, state: FSMContext):
     bal = await get_balance(message.from_user.id)
     if bal < m["cost"]:
         await state.clear()
-        await message.answer(f"❌ Нужно *{m['cost']} ток.* · У тебя *{bal} ток.*", parse_mode="Markdown", reply_markup=profile_kb())
+        await message.answer(f"❌ Нужно *{m['cost']} кр.* · У тебя *{bal} кр.*", parse_mode="Markdown", reply_markup=profile_kb())
         return
     await state.update_data(avatar_model=m["model"], avatar_label=m["label"], cost=m["cost"])
     await message.answer(
-        f"Модель: *{m['label']}* ✅  ·  💎 {m['cost']} ток.\n\n"
+        f"Модель: *{m['label']}* ✅  ·  💎 {m['cost']} кр.\n\n"
         "Отправь *фото лица* (чёткий портрет анфас) — оно «заговорит».",
         parse_mode="Markdown", reply_markup=cancel_kb()
     )
@@ -2908,7 +2885,7 @@ async def _run_avatar(message: Message, state: FSMContext, audio_url: str):
     ok = await use_credits(message.from_user.id, "avatar", cost)
     if not ok:
         await state.clear()
-        await message.answer("❌ Недостаточно токенов.", reply_markup=profile_kb())
+        await message.answer("❌ Недостаточно кредитов.", reply_markup=profile_kb())
         return
     await state.clear()
     thinking = await message.answer(
@@ -2923,13 +2900,13 @@ async def _run_avatar(message: Message, state: FSMContext, audio_url: str):
             b = await get_balance(message.from_user.id)
             await message.answer_video(
                 BufferedInputFile(vid_bytes, filename="avatar.mp4"),
-                caption=f"🗣 *ИИ-аватар готов!* ({label})\n\n💎 Потрачено: *{cost} ток.* · Остаток: *{b} ток.*",
+                caption=f"🗣 *ИИ-аватар готов!* ({label})\n\n💎 Потрачено: *{cost} кр.* · Остаток: *{b} кр.*",
                 parse_mode="Markdown"
             )
             await message.answer("Что дальше?", reply_markup=video_kb())
         except Exception as e:
             await add_credits(message.from_user.id, cost, "bonus", "Возврат: ошибка аватара")
-            await message.answer(f"⚠️ Ошибка генерации аватара. Токены возвращены.\n{str(e)[:120]}", reply_markup=video_kb())
+            await message.answer(f"⚠️ Ошибка генерации аватара. Кредиты возвращены.\n{str(e)[:120]}", reply_markup=video_kb())
             logging.error(f"Avatar error: {e}")
         finally:
             try: await thinking.delete()
@@ -2972,13 +2949,13 @@ async def combine_start(message: Message, state: FSMContext):
     cost = 120
     bal = await get_balance(message.from_user.id)
     if bal < cost:
-        await message.answer(f"❌ Нужно *{cost} ток.* · У тебя *{bal} ток.*", parse_mode="Markdown", reply_markup=profile_kb())
+        await message.answer(f"❌ Нужно *{cost} кр.* · У тебя *{bal} кр.*", parse_mode="Markdown", reply_markup=profile_kb())
         return
     await state.set_state(State_.waiting_combine)
     await state.update_data(cost=cost)
     combine_buffer.pop(message.from_user.id, None)
     await message.answer(
-        "🔗 *Соединить фото*  ·  💎 70 токенов\n\n"
+        "🔗 *Соединить фото*  ·  💎 70 кредитов\n\n"
         "Отправь *2-4 фото одним альбомом* (выбери несколько сразу), "
         "и в подписи к ним напиши что сделать.\n\n"
         "Примеры подписи:\n"
@@ -3039,7 +3016,7 @@ async def combine_photo_received(message: Message, state: FSMContext):
             cost = data.get("cost", 120)
             ok = await use_credits(uid, "combine", cost)
             if not ok:
-                await message.answer("❌ Недостаточно токенов.", reply_markup=profile_kb())
+                await message.answer("❌ Недостаточно кредитов.", reply_markup=profile_kb())
                 await state.clear()
                 return
             await state.clear()
@@ -3061,7 +3038,7 @@ async def combine_photo_received(message: Message, state: FSMContext):
                 )
                 await message.answer(
                     f"📌 Запрос: _{caption}_\n\n"
-                    f"💎 Потрачено: *{cost} ток.* · Остаток: *{bal} ток.*\n\n"
+                    f"💎 Потрачено: *{cost} кр.* · Остаток: *{bal} кр.*\n\n"
                     f"[📥 Скачать в высоком качестве]({result_url})",
                     parse_mode="Markdown", disable_web_page_preview=False
                 )
@@ -3069,7 +3046,7 @@ async def combine_photo_received(message: Message, state: FSMContext):
                 await log_request(uid, "combine", "nano-banana-pro-edit", cost)
             except Exception as e:
                 await add_credits(uid, cost, "bonus", "Возврат: ошибка соединения")
-                await message.answer(f"⚠️ Ошибка. Токены возвращены.\n{str(e)[:100]}", reply_markup=design_kb())
+                await message.answer(f"⚠️ Ошибка. Кредиты возвращены.\n{str(e)[:100]}", reply_markup=design_kb())
                 logging.error(f"Combine error: {e}")
 
         asyncio.create_task(process_after_delay())
@@ -3085,12 +3062,12 @@ async def remix_photo_caption(message: Message, state: FSMContext):
     cost = 120
     bal = await get_balance(message.from_user.id)
     if bal < cost:
-        await message.answer(f"❌ Нужно *{cost} ток.* для редактирования фото · У тебя *{bal} ток.*", parse_mode="Markdown")
+        await message.answer(f"❌ Нужно *{cost} кр.* для редактирования фото · У тебя *{bal} кр.*", parse_mode="Markdown")
         return
 
     ok = await use_credits(message.from_user.id, "img2img_remix", cost)
     if not ok:
-        await message.answer("❌ Недостаточно токенов.", reply_markup=profile_kb())
+        await message.answer("❌ Недостаточно кредитов.", reply_markup=profile_kb())
         return
 
     photo = message.photo[-1]
@@ -3113,7 +3090,7 @@ async def remix_photo_caption(message: Message, state: FSMContext):
         )
         await message.answer(
             f"📌 Запрос: _{prompt}_\n\n"
-            f"💎 Потрачено: *{cost} ток.* · Остаток: *{bal} ток.*\n\n"
+            f"💎 Потрачено: *{cost} кр.* · Остаток: *{bal} кр.*\n\n"
             f"[📥 Скачать в высоком качестве]({result_url})",
             parse_mode="Markdown",
             disable_web_page_preview=False
@@ -3122,7 +3099,7 @@ async def remix_photo_caption(message: Message, state: FSMContext):
         await log_request(message.from_user.id, "img2img_remix", "nano-banana-pro", cost)
     except Exception as e:
         await add_credits(message.from_user.id, cost, "bonus", "Возврат: ошибка remix")
-        await message.answer(f"⚠️ Ошибка. Токены возвращены.\n{str(e)[:100]}", reply_markup=design_kb())
+        await message.answer(f"⚠️ Ошибка. Кредиты возвращены.\n{str(e)[:100]}", reply_markup=design_kb())
         logging.error(f"Remix error: {e}")
 
 
@@ -3243,10 +3220,10 @@ async def cb_choose_credits_method(callback: CallbackQuery):
 async def cb_show_annual(callback: CallbackQuery):
     text = (
         "📅 *Годовые подписки* — выгоднее на 2 месяца!\n"
-        "_Платишь сразу за год, токены зачисляются полностью._\n\n"
-        "⭐️ *Basic год — 3 900₽* (вместо 4 680₽)\n• 24 000 токенов\n\n"
-        "👑 *Pro год — 10 900₽* (вместо 13 080₽)  🔥\n• 54 000 токенов + скидка 25% на фото\n\n"
-        "💎 *Premium год — 22 900₽* (вместо 27 480₽)  ⭐️\n• 108 000 токенов + безлимит чат + скидка 50% на фото\n\n"
+        "_Платишь сразу за год, кредиты зачисляются полностью._\n\n"
+        "⭐️ *Basic год — 3 900₽* (вместо 4 680₽)\n• 24 000 кредитов\n\n"
+        "👑 *Pro год — 10 900₽* (вместо 13 080₽)  🔥\n• 54 000 кредитов + скидка 25% на фото\n\n"
+        "💎 *Premium год — 22 900₽* (вместо 27 480₽)  ⭐️\n• 108 000 кредитов + безлимит чат + скидка 50% на фото\n\n"
         "💡 _Экономия ~2 300–4 600₽ в год._"
     )
     try:
@@ -3276,7 +3253,7 @@ async def cb_choose_year_method(callback: CallbackQuery):
     plan = PLANS_ANNUAL.get(pid)
     if not plan: return
     await callback.message.answer(
-        f"{plan['emoji']} *{plan['name']}* — {plan['credits']} токенов на год\n\nВыбери способ оплаты:",
+        f"{plan['emoji']} *{plan['name']}* — {plan['credits']} кредитов на год\n\nВыбери способ оплаты:",
         parse_mode="Markdown",
         reply_markup=pay_method_kb("planyear", pid)
     )
@@ -3303,7 +3280,7 @@ async def cb_pay_stars(callback: CallbackQuery):
         await callback.bot.send_invoice(
             chat_id=callback.from_user.id,
             title=f"AuraAI — {pack['name']}",
-            description=f"Пополнение: {pack['credits']} токенов",
+            description=f"Пополнение: {pack['credits']} кредитов",
             payload=f"credits_{item_id}",
             currency="XTR",
             prices=[LabeledPrice(label=pack["name"], amount=pack["stars"])],
@@ -3314,7 +3291,7 @@ async def cb_pay_stars(callback: CallbackQuery):
         await callback.bot.send_invoice(
             chat_id=callback.from_user.id,
             title=f"AuraAI {plan['name']}",
-            description=f"{plan['credits']} токенов на год",
+            description=f"{plan['credits']} кредитов на год",
             payload=f"planyear_{item_id}",
             currency="XTR",
             prices=[LabeledPrice(label=plan["name"], amount=plan["stars"])],
@@ -3323,7 +3300,7 @@ async def cb_pay_stars(callback: CallbackQuery):
         await callback.bot.send_invoice(
             chat_id=callback.from_user.id,
             title=COURSE["name"],
-            description="Доступ к курсу + 1000 токенов",
+            description="Доступ к курсу + 1000 кредитов",
             payload="course_main",
             currency="XTR",
             prices=[LabeledPrice(label=COURSE["name"], amount=COURSE["stars"])],
@@ -3356,7 +3333,7 @@ async def cb_pay_rub(callback: CallbackQuery):
         await callback.bot.send_invoice(
             chat_id=callback.from_user.id,
             title=f"AuraAI — {pack['name']}",
-            description=f"Пополнение: {pack['credits']} токенов",
+            description=f"Пополнение: {pack['credits']} кредитов",
             payload=f"credits_{item_id}",
             provider_token=YOOKASSA_TOKEN,
             currency="RUB",
@@ -3369,7 +3346,7 @@ async def cb_pay_rub(callback: CallbackQuery):
         await callback.bot.send_invoice(
             chat_id=callback.from_user.id,
             title=f"AuraAI {plan['name']}",
-            description=f"{plan['credits']} токенов на год",
+            description=f"{plan['credits']} кредитов на год",
             payload=f"planyear_{item_id}",
             provider_token=YOOKASSA_TOKEN,
             currency="RUB",
@@ -3380,7 +3357,7 @@ async def cb_pay_rub(callback: CallbackQuery):
         await callback.bot.send_invoice(
             chat_id=callback.from_user.id,
             title=COURSE["name"],
-            description="Доступ к курсу + 1000 токенов",
+            description="Доступ к курсу + 1000 кредитов",
             payload="course_main",
             provider_token=YOOKASSA_TOKEN,
             currency="RUB",
@@ -3418,33 +3395,33 @@ async def on_payment(message: Message):
         if pack:
             item_name = f"AuraAI — {pack['name']}"
             new_bal = await add_credits(uid, pack["credits"], "purchase", f"Покупка: {pack['name']}")
-            await message.answer(f"✅ *Оплата прошла!*\n\n💎 +{pack['credits']} токенов\n💰 Баланс: *{new_bal} ток.*", parse_mode="Markdown", reply_markup=main_kb())
+            await message.answer(f"✅ *Оплата прошла!*\n\n💎 +{pack['credits']} кредитов\n💰 Баланс: *{new_bal} кр.*", parse_mode="Markdown", reply_markup=main_kb())
     elif payload.startswith("planyear_"):
         plan = PLANS_ANNUAL.get(payload.replace("planyear_", ""))
         if plan:
             item_name = f"AuraAI {plan['name']}"
             await set_plan(uid, plan["base"], plan["credits"], plan["days"])
             bal = await get_balance(uid)
-            await message.answer(f"✅ *{plan['name']} активирован на год!*\n\n💎 +{plan['credits']} токенов\n💰 Баланс: *{bal} ток.*", parse_mode="Markdown", reply_markup=main_kb())
+            await message.answer(f"✅ *{plan['name']} активирован на год!*\n\n💎 +{plan['credits']} кредитов\n💰 Баланс: *{bal} кр.*", parse_mode="Markdown", reply_markup=main_kb())
     elif payload.startswith("plan_"):
         plan = PLANS.get(payload.replace("plan_", ""))
         if plan:
             item_name = f"AuraAI {plan['name']}"
             await set_plan(uid, payload.replace("plan_", ""), plan["credits"], plan["days"])
             bal = await get_balance(uid)
-            await message.answer(f"✅ *{plan['name']} активирован!*\n\n💎 +{plan['credits']} токенов\n💰 Баланс: *{bal} ток.*", parse_mode="Markdown", reply_markup=main_kb())
+            await message.answer(f"✅ *{plan['name']} активирован!*\n\n💎 +{plan['credits']} кредитов\n💰 Баланс: *{bal} кр.*", parse_mode="Markdown", reply_markup=main_kb())
     elif payload.startswith("course"):
         item_name = COURSE["name"]
         await add_credits(uid, COURSE["credits"], "purchase", "Бонус за курс")
         link = await setting_get("course_link", "")
         if link:
             await message.answer(
-                f"✅ *Доступ к курсу открыт!*\n\n🎓 Заходи в закрытый канал с уроками:\n{link}\n\n🎁 Также начислено {COURSE['credits']} токенов для практики. Удачи в обучении!",
+                f"✅ *Доступ к курсу открыт!*\n\n🎓 Заходи в закрытый канал с уроками:\n{link}\n\n🎁 Также начислено {COURSE['credits']} кредитов для практики. Удачи в обучении!",
                 parse_mode="Markdown", reply_markup=main_kb()
             )
         else:
             await message.answer(
-                f"✅ *Оплата курса прошла!*\n\n🎁 Начислено {COURSE['credits']} токенов. Доступ к урокам пришлю в ближайшее время.",
+                f"✅ *Оплата курса прошла!*\n\n🎁 Начислено {COURSE['credits']} кредитов. Доступ к урокам пришлю в ближайшее время.",
                 parse_mode="Markdown", reply_markup=main_kb()
             )
             try:
@@ -3476,7 +3453,7 @@ async def on_payment(message: Message):
         try:
             info = REFERRAL_LEVELS[commission["level"]]
             await message.bot.send_message(commission["referrer_id"],
-                f"💰 *Реферальная комиссия!*\n\n{info['emoji']} {info['name']} ({commission['percent']}%)\nНачислено: *+{commission['credits_earned']} ток.* и ⭐️ *{commission['stars_earned']}*", parse_mode="Markdown")
+                f"💰 *Реферальная комиссия!*\n\n{info['emoji']} {info['name']} ({commission['percent']}%)\nНачислено: *+{commission['credits_earned']} кр.* и ⭐️ *{commission['stars_earned']}*", parse_mode="Markdown")
         except: pass
 
     await db_run("INSERT INTO payments (user_id,type,product_id,stars) VALUES (?,?,?,?)", (uid, "purchase", payload, stars))
@@ -3619,7 +3596,7 @@ async def cmd_addcredits(message: Message):
     parts = message.text.split()
     if len(parts) != 3: await message.answer("Формат: /addcredits USER_ID AMOUNT"); return
     new_bal = await add_credits(int(parts[1]), int(parts[2]), "admin", "Ручное начисление")
-    await message.answer(f"✅ Начислено *{parts[2]} ток.* Баланс: *{new_bal}*", parse_mode="Markdown")
+    await message.answer(f"✅ Начислено *{parts[2]} кр.* Баланс: *{new_bal}*", parse_mode="Markdown")
 
 @router.message(Command("gift"))
 async def cmd_gift(message: Message):
@@ -3638,17 +3615,17 @@ async def cmd_gift(message: Message):
         await message.answer("❌ Этот человек ещё не запускал бота.\nПопроси его открыть бота и нажать /start, затем повтори.")
         return
     new_bal = await add_credits(target, amount, "admin", "Подарок (пробный доступ)")
-    await message.answer(f"🎁 Подарено *{amount} ток.* пользователю `{target}`. Его баланс: *{new_bal}*", parse_mode="Markdown")
+    await message.answer(f"🎁 Подарено *{amount} кр.* пользователю `{target}`. Его баланс: *{new_bal}*", parse_mode="Markdown")
     try:
         await message.bot.send_message(
             target,
-            f"🎁 Тебе подарили *{amount} токенов*!\n\n"
+            f"🎁 Тебе подарили *{amount} кредитов*!\n\n"
             "Попробуй ИИ-помощника по эмоциональному состоянию: нажми «🧠 Психолог» в меню "
             "и просто напиши, что у тебя на душе. 💛",
             parse_mode="Markdown"
         )
     except Exception:
-        await message.answer("⚠️ Токены начислены, но уведомление отправить не вышло (человек мог не открывать бота или закрыл личку).")
+        await message.answer("⚠️ Кредиты начислены, но уведомление отправить не вышло (человек мог не открывать бота или закрыл личку).")
 
 @router.message(Command("testai"))
 async def cmd_testai(message: Message):
@@ -3693,7 +3670,7 @@ async def cmd_users(message: Message):
         lines.append(
             f"👤 *{name}*\n"
             f"🆔 `{r['id']}`\n"
-            f"💎 {r['credits']} ток. · {plan_label}\n"
+            f"💎 {r['credits']} кр. · {plan_label}\n"
         )
     await message.answer("\n".join(lines), parse_mode="Markdown")
 
@@ -3725,7 +3702,7 @@ async def cmd_user(message: Message):
         f"Username: @{user['username'] or 'нет'}\n"
         f"🆔 `{user['id']}`\n"
         f"Plan: *{plan_label}*{expires}\n"
-        f"💎 Токены: *{user['credits']}*\n"
+        f"💎 Кредиты: *{user['credits']}*\n"
         f"🏅 Всего: *{user['credits_total']}*\n"
         f"👥 Рефералов: *{user['referrals_count']}*\n\n"
         f"*Последние транзакции:*\n" + "\n".join(tx_lines or ["Нет"])
@@ -4332,8 +4309,8 @@ async def _team_menu(message: Message, state: FSMContext):
     roles = " · ".join(f"{d['emoji']} {d['name']}" for d in AGENT_DEFS.values())
     await message.answer(
         "🤖 *Команда ИИ-агентов*\n\n"
-        f"🎯 *Вся команда* — пиши цель, агенты работают вместе ({TEAM_COST_AUTO} ток.)\n"
-        f"Или напиши напрямую агенту ({TEAM_COST_SOLO} ток./сообщение):\n{roles}\n\n"
+        f"🎯 *Вся команда* — пиши цель, агенты работают вместе ({TEAM_COST_AUTO} кр.)\n"
+        f"Или напиши напрямую агенту ({TEAM_COST_SOLO} кр./сообщение):\n{roles}\n\n"
         "Выбери режим 👇",
         parse_mode="Markdown", reply_markup=team_menu_kb(message.from_user.id == ADMIN_ID)
     )
@@ -4382,7 +4359,7 @@ async def team_auto(message: Message, state: FSMContext):
         await message.answer("Напиши задачу текстом 🙏", reply_markup=team_work_kb()); return
 
     if not await use_credits(message.from_user.id, "team", TEAM_COST_AUTO):
-        await message.answer("❌ Недостаточно токенов.", reply_markup=profile_kb()); return
+        await message.answer("❌ Недостаточно кредитов.", reply_markup=profile_kb()); return
 
     data = await state.get_data()
     transcript = data.get("team_transcript", [])
@@ -4467,7 +4444,7 @@ async def team_auto(message: Message, state: FSMContext):
     transcript += [f"Задача: {task}", f"Итог: {final[:500]}"]
     await state.update_data(team_transcript=transcript[-10:])
     bal = await get_balance(message.from_user.id)
-    await message.answer(f"💎 Потрачено: *{TEAM_COST_AUTO} ток.* · Остаток: *{bal} ток.*\n\n"
+    await message.answer(f"💎 Потрачено: *{TEAM_COST_AUTO} кр.* · Остаток: *{bal} кр.*\n\n"
                          "Дай следующую задачу или смени режим 👇",
                          parse_mode="Markdown", reply_markup=team_work_kb())
 
@@ -4496,7 +4473,7 @@ async def team_solo(message: Message, state: FSMContext):
         await _team_menu(message, state); return
 
     if not await use_credits(message.from_user.id, "team_solo", TEAM_COST_SOLO):
-        await message.answer("❌ Недостаточно токенов.", reply_markup=profile_kb()); return
+        await message.answer("❌ Недостаточно кредитов.", reply_markup=profile_kb()); return
 
     # приложенное фото → image_url для возможной публикации
     attached_img = None
@@ -4521,7 +4498,7 @@ async def team_solo(message: Message, state: FSMContext):
 
     if not reply:
         await add_credits(message.from_user.id, TEAM_COST_SOLO, "bonus", "Возврат: ошибка агента")
-        await message.answer("Не получилось ответить, токены возвращены 🙏",
+        await message.answer("Не получилось ответить, кредиты возвращены 🙏",
                              reply_markup=team_work_kb()); return
 
     acted = False
@@ -4552,7 +4529,7 @@ async def team_solo(message: Message, state: FSMContext):
     except Exception:
         pass
     bal = await get_balance(message.from_user.id)
-    await message.answer(f"💎 −{TEAM_COST_SOLO} ток. · Остаток: *{bal} ток.*",
+    await message.answer(f"💎 −{TEAM_COST_SOLO} кр. · Остаток: *{bal} кр.*",
                          parse_mode="Markdown", reply_markup=team_work_kb())
 
 
@@ -4789,8 +4766,8 @@ async def setchannel_cmd(message: Message):
 DEFAULT_BRAND = (
     f"Продукт: AuraAI — Telegram-бот с ИИ-инструментами. Умеет: генерация и обработка фото "
     f"(Nano Banana Pro, GPT Image, DALL-E), оживление фото в видео (Kling/Seedance), музыка, "
-    f"озвучка, ИИ-аватар. Монетизация — токены и подписки. Есть курс {COURSE['name']} за "
-    f"{COURSE['rub']}₽ (в подарок {COURSE['credits']} токенов). "
+    f"озвучка, ИИ-аватар. Монетизация — кредиты и подписки. Есть курс {COURSE['name']} за "
+    f"{COURSE['rub']}₽ (в подарок {COURSE['credits']} кредитов). "
     f"Ссылка на бота: https://t.me/{BOT_USERNAME}"
 )
 
@@ -4927,9 +4904,8 @@ async def _biz_agg(days):
         vp = await db_all("SELECT doctor, revenue FROM visits WHERE src='shift' AND day >= date('now', ?) AND day < date('now', ?)",
                           (f"-{2 * days - 1} day", f"-{days - 1} day"))
         label = f"{days} дней"
-    pat = sum(r["patients"] for r in rows)
-    rev = sum(r["revenue"] for r in rows)
-    exp = sum(r["expenses"] for r in rows)
+    # Расходы всегда из biz_finance
+    exp = sum(r["expenses"] or 0 for r in rows)
     cats = {}
     for r in rows:
         try:
@@ -4937,21 +4913,37 @@ async def _biz_agg(days):
                 cats[k] = cats.get(k, 0) + float(val)
         except Exception:
             pass
-    vrev = sum(r["revenue"] for r in v)
+
+    vrev = sum(r["revenue"] or 0 for r in v)
     vpat = len(v)
-    pat += vpat
-    rev += vrev
     aliases = await _get_aliases()
     pct_map = await _get_doctor_percents()
-    vsalary = sum((r["revenue"] or 0) * pct_map.get(_canon_with(r["doctor"], aliases), 0) / 100 for r in v)
+
+    if vpat > 0:
+        # Есть данные смен — используем ТОЛЬКО их для выручки и пациентов
+        rev = vrev
+        pat = vpat
+    else:
+        # Нет данных смен — берём из biz_finance
+        rev = sum(r["revenue"] or 0 for r in rows)
+        pat = sum(r["patients"] or 0 for r in rows)
+
+    vsalary = sum((r["revenue"] or 0) * pct_map.get(_canon_with(r["doctor"] or "", aliases), 0) / 100 for r in v)
     if vsalary > 0:
         exp += vsalary
         cats["ФОТ врачей"] = cats.get("ФОТ врачей", 0) + vsalary
-    prev_rev = sum(r["revenue"] for r in prev) + sum(r["revenue"] for r in vp)
-    prev_exp = (sum(r["expenses"] for r in prev)
-                + sum((r["revenue"] or 0) * pct_map.get(_canon_with(r["doctor"], aliases), 0) / 100 for r in vp))
-    return {"label": label, "n": len(rows) + vpat, "patients": pat, "revenue": rev, "expenses": exp,
-            "profit": rev - exp, "check": (rev / pat) if pat else 0, "categories": cats,
+
+    # Предыдущий период
+    vprev_rev = sum(r["revenue"] or 0 for r in vp)
+    if vp:
+        prev_rev = vprev_rev
+        prev_exp = sum((r["revenue"] or 0) * pct_map.get(_canon_with(r["doctor"], aliases), 0) / 100 for r in vp)
+    else:
+        prev_rev = sum(r["revenue"] or 0 for r in prev)
+        prev_exp = sum(r["expenses"] or 0 for r in prev)
+
+    return {"label": label, "n": vpat or len(rows), "patients": pat, "revenue": rev, "expenses": exp,
+            "fot": vsalary, "profit": rev - exp, "check": (rev / pat) if pat else 0, "categories": cats,
             "prev_revenue": prev_rev, "prev_profit": prev_rev - prev_exp, "from_shift": vpat > 0}
 
 def biz_kb():
@@ -5082,9 +5074,9 @@ async def _send_biz_report_date(message, date_iso):
     v = await db_all("SELECT doctor, revenue FROM visits WHERE src='shift' AND day = ?", (date_iso,))
     if not rows and not v:
         await message.answer(f"За {date_iso} данных нет.", reply_markup=biz_kb()); return
-    pat = sum(r["patients"] for r in rows) + len(v)
-    rev = sum(r["revenue"] for r in rows) + sum((r["revenue"] or 0) for r in v)
-    exp = sum(r["expenses"] for r in rows)
+    pat = sum(r["patients"] or 0 for r in rows) + len(v)
+    rev = sum(r["revenue"] or 0 for r in rows) + sum((r["revenue"] or 0) for r in v)
+    exp = sum(r["expenses"] or 0 for r in rows)
     cats = {}
     for r in rows:
         try:
@@ -5109,24 +5101,41 @@ async def _send_biz_report_date(message, date_iso):
     await message.answer(f"💰 *Финансы бизнеса · {date_iso}*\n\n{summary}", parse_mode="Markdown", reply_markup=biz_kb())
 
 async def _send_biz_report(message, days):
+    await _sync_visits()
     agg = await _biz_agg(days)
     if agg["n"] == 0:
         await message.answer("За этот период данных нет. Внеси отчёт 👇", reply_markup=biz_kb()); return
-    margin = (agg["profit"] / agg["revenue"] * 100) if agg["revenue"] else 0
+    revenue = agg["revenue"]
+    fot     = agg.get("fot", 0)
+    exp_other = agg["expenses"] - fot
+    total_exp = agg["expenses"]
+    profit  = revenue - total_exp
+    margin  = (profit / revenue * 100) if revenue else 0
+    # Показываем рост только если у обоих периодов есть реальные данные
     growth = ""
-    if agg.get("prev_revenue"):
-        dr = (agg["revenue"] - agg["prev_revenue"]) / agg["prev_revenue"] * 100
-        growth = f"\nВыручка к пред. периоду: {dr:+.0f}%"
+    prev_rev = agg.get("prev_revenue") or 0
+    if prev_rev > 0 and revenue > 0:
+        dr = (revenue - prev_rev) / prev_rev * 100
+        # Убираем аномальные значения (>200% скорее всего нет данных за прошлый период)
+        if abs(dr) <= 200:
+            growth = f"\nДинамика выручки: {dr:+.0f}% к пред. периоду"
     cats = agg.get("categories") or {}
-    cat_str = ""
+    cat_lines = ""
     if cats:
         top = sorted(cats.items(), key=lambda x: -x[1])[:5]
-        cat_str = "\nРасходы по статьям: " + ", ".join(f"{k} {_money(v)}" for k, v in top)
-    src_note = "\n\n📋 Выручка и пациенты взяты из таблиц «день/ночь». Расходы вносятся вручную (кнопка «📥 Внести отчёт»)." if agg.get("from_shift") else ""
-    summary = (f"Период: {agg['label']} ({agg['n']} записей)\nПациентов/приёмов: {agg['patients']}\n"
-               f"Выручка: {_money(agg['revenue'])}\nРасходы: {_money(agg['expenses'])}\n"
-               f"Чистая прибыль: {_money(agg['profit'])}\nРентабельность: {margin:.0f}%\n"
-               f"Средний чек: {_money(agg['check'])}{growth}{cat_str}{src_note}")
+        cat_lines = "\nРасходы по статьям:\n" + "\n".join(f"  • {k}: {_money(v)}" for k, v in top)
+    src_note = "\n\n📋 Выручка из таблиц «день/ночь». Прочие расходы — ручной ввод («📥 Внести отчёт»)." if agg.get("from_shift") else ""
+    fot_line = f"\nФОТ врачей: {_money(fot)}" if fot > 0 else "\nФОТ врачей: не задан (/setpercent)"
+    summary = (f"Период: {agg['label']} ({agg['n']} приёмов)\n"
+               f"Пациентов: {agg['patients']}\n"
+               f"Выручка: {_money(revenue)}\n"
+               f"{fot_line}\n"
+               f"Прочие расходы: {_money(exp_other)}\n"
+               f"Итого расходы: {_money(total_exp)}\n"
+               f"Чистая прибыль: {_money(profit)}\n"
+               f"Рентабельность: {margin:.0f}%\n"
+               f"Средний чек: {_money(agg['check'])}"
+               f"{growth}{cat_lines}{src_note}")
     thinking = await message.answer("💰 Готовлю отчёт...")
     narrative = None
     for mid in ("claude", "gpt4o", "deepseek"):
@@ -5153,7 +5162,15 @@ async def _biz_period_map():
     aliases = await _get_aliases()
     pct = await _get_doctor_percents()
     per = {}
-    v = await db_all("SELECT period, day, doctor, revenue FROM visits WHERE src IN ('shift','clean')")
+
+    # Основной источник выручки — shift; clean только для периодов без shift
+    v = await db_all("""
+        SELECT period, day, doctor, revenue FROM visits WHERE src='shift'
+        UNION ALL
+        SELECT period, day, doctor, revenue FROM visits WHERE src='clean'
+          AND period NOT IN (SELECT DISTINCT period FROM visits WHERE src='shift' AND period IS NOT NULL)
+    """)
+    days_with_shift = set()
     for r in v:
         p = r["period"] or ((r["day"] or "")[:7]) or "—"
         s = per.setdefault(p, {"rev": 0.0, "fot": 0.0, "exp": 0.0, "n": 0})
@@ -5161,13 +5178,23 @@ async def _biz_period_map():
         s["rev"] += rev
         s["n"] += 1
         s["fot"] += rev * pct.get(_canon_with(r["doctor"] or "", aliases), 0) / 100
+        if r["day"]:
+            days_with_shift.add(r["day"])
+
+    # Из biz_finance берём только РАСХОДЫ (не выручку — она уже в visits)
+    # Выручку из sheet берём только за дни без данных смен
     bf = await db_all("SELECT day, revenue, expenses, src FROM biz_finance")
     for r in bf:
-        if (r["src"] or "") == "salary":
+        src = r["src"] or ""
+        if src == "salary":
             continue
-        p = (r["day"] or "")[:7] or "—"
+        day = r["day"] or ""
+        p = day[:7] or "—"
         s = per.setdefault(p, {"rev": 0.0, "fot": 0.0, "exp": 0.0, "n": 0})
-        s["rev"] += r["revenue"] or 0
+        # Выручку добавляем из sheet ТОЛЬКО если нет данных смен за этот день
+        if src == "sheet" and day not in days_with_shift:
+            s["rev"] += r["revenue"] or 0
+        # Расходы берём всегда
         s["exp"] += r["expenses"] or 0
     return per
 
@@ -5929,8 +5956,10 @@ async def _iter_shift_sheets(shift):
         data = await _fetch_xlsx(sid)
         parsed = _parse_xlsx(data) if data else None
         names_from_book = [nm for nm, _ in parsed if nm] if parsed else []
-        # реальные названия свежих месяцев из этой книги
-        targets = [nm for nm in names_from_book if nm.strip().lower() in recent]
+        # Подбираем вкладки у которых название СОДЕРЖИТ "месяц год"
+        # Это позволяет читать "Июнь 2026 ночь", "Июнь 2026 день", "июнь 2026" и т.д.
+        targets = [nm for nm in names_from_book
+                   if any(key in nm.strip().lower() for key in recent)]
         if targets:
             seen_nm = set()
             for nm in targets:
@@ -5942,7 +5971,7 @@ async def _iter_shift_sheets(shift):
                 if rows:
                     sheets[nm] = rows
         else:
-            # имена не получили — пробуем сгенерированные варианты, по месяцу до первого успеха
+            # имена не получили — пробуем сгенерированные варианты
             for m, y in _recent_month_names(15):
                 for nm in (f"{m.capitalize()} {y}", f"{m} {y}", f"{m.upper()} {y}"):
                     rows = await _gviz_sheet(sid, nm)
@@ -6257,7 +6286,7 @@ async def _get_doctor_percents():
     except Exception:
         stored = {}
     # заданные вручную проценты (приоритетные) поверх извлечённых из таблиц
-    return {**stored, **DEFAULT_PERCENTS}
+    return {**DEFAULT_PERCENTS, **stored}
 
 @router.message(Command("setpercent"))
 async def setpercent_cmd(message: Message):
@@ -6339,7 +6368,6 @@ async def diag_cmd(message: Message):
     lines.append("\n\nℹ️ Бот сам читает все вкладки по уже добавленным ссылкам. Если какой-то вкладки нет в списке выше или врач не распознан — пришли мне пару строк из неё.")
     await message.answer("\n".join(lines)[:3900])
 
-@router.message(Command("doctors"))
 async def _doctor_periods():
     rows = await db_all("SELECT DISTINCT period FROM visits WHERE period IS NOT NULL AND period != '' AND src IN ('shift','clean')")
     return sorted([r["period"] for r in rows if r["period"]], reverse=True)
@@ -6388,10 +6416,18 @@ async def cb_dmon(cq: CallbackQuery):
         return
     period = cq.data.split("_", 1)[1]
     await cq.answer("Готовлю отчёт...")
-    rows = await db_all("SELECT doctor,service,kind,ref_from,revenue,percent,pay,src,patient FROM visits WHERE period = ?", (period,))
+    DFILTER = "AND doctor IS NOT NULL AND doctor != '' AND doctor != '—' AND LOWER(doctor) NOT LIKE '%не указан%'"
+    # shift — основной источник, clean — резерв (если shift нет), zp — крайний резерв
+    rows = await db_all(f"SELECT doctor,service,kind,ref_from,revenue,percent,pay,src,patient FROM visits WHERE period=? AND src='shift' {DFILTER}", (period,))
+    if not rows:
+        rows = await db_all(f"SELECT doctor,service,kind,ref_from,revenue,percent,pay,src,patient FROM visits WHERE period=? AND src='clean' {DFILTER}", (period,))
+    if not rows:
+        rows = await db_all(f"SELECT doctor,service,kind,ref_from,revenue,percent,pay,src,patient FROM visits WHERE period=? AND src='zp' {DFILTER}", (period,))
     if not rows:
         await cq.message.answer(f"За {_period_label(period)} данных нет.")
         return
+    zp_pct = {(r["doctor"] or "").lower(): r["percent"] for r in await db_all("SELECT doctor, percent FROM visits WHERE period=? AND src='zp' AND percent>0", (period,))}
+    rows = [{**dict(r), "percent": r["percent"] or zp_pct.get((r["doctor"] or "").lower(), 0)} for r in rows]
     await _render_doctor_detail(cq.message, rows, _period_label(period))
 
 
@@ -6475,13 +6511,19 @@ async def _render_doctor_detail(message, rows, period_label):
     await _send_block(message, f"📊 *Отчёт по врачам · {period_label}*", body)
 
 
+@router.message(Command("doctors"))
 async def doctors_cmd(message: Message):
     if message.from_user.id != ADMIN_ID:
         return
-    parts = (message.text or "").split()
+    raw = message.text or ""
+    parts = raw.split() if raw.startswith("/") else []
     arg = " ".join(parts[1:]).strip()
-    synced, sync_err = await _sync_visits()
-    await _ensure_visits_table()
+    try:
+        synced, sync_err = await _sync_visits()
+        await _ensure_visits_table()
+    except Exception as e:
+        await message.answer(f"⚠️ Ошибка загрузки данных: {e}\n\nПроверь /visits и /setshift")
+        return
 
     on_date = None
     days = None
@@ -6494,19 +6536,25 @@ async def doctors_cmd(message: Message):
         else:
             on_date = _norm_date(arg)
 
-    # ── По умолчанию (кнопка «Доктора») — сводка ПО МЕСЯЦАМ ──
+    # ── По умолчанию (кнопка «Доктора») — только сводка по месяцам ──
     if not arg:
-        allv = await db_all("SELECT period, day, doctor, revenue FROM visits WHERE src IN ('shift','clean')")
+        aliases = await _get_aliases()
+        pct_map = await _get_doctor_percents()
+
+        allv = await db_all("""
+            SELECT period, day, doctor, revenue FROM visits WHERE src='shift'
+            UNION ALL
+            SELECT period, day, doctor, revenue FROM visits v2 WHERE src='clean'
+              AND period NOT IN (SELECT DISTINCT period FROM visits WHERE src='shift' AND period IS NOT NULL)
+        """)
         if not allv:
             msg = "📊 По врачам пока нет данных.\n\n"
             if sync_err:
                 msg += f"⚠️ Таблица: {sync_err}\n\n"
-            msg += ("Проверь:\n• таблица открыта «по ссылке: Читатель»\n"
-                    "• /visits — что подключено, /diag — диагностика")
+            msg += "Проверь:\n• /visits — что подключено\n• /setshift — таблицы смен\n• /diag — диагностика"
             await message.answer(msg)
             return
-        aliases = await _get_aliases()
-        pct_map = await _get_doctor_percents()
+
         per_map = {}
         for r in allv:
             p = r["period"] or ((r["day"] or "")[:7]) or "—"
@@ -6514,57 +6562,347 @@ async def doctors_cmd(message: Message):
             x = per_map.setdefault(p, {}).setdefault(d, {"n": 0, "rev": 0.0})
             x["n"] += 1
             x["rev"] += r["revenue"] or 0
+
         ordered = sorted(per_map.keys(), reverse=True)
-        recent = ordered[:6]
         out = []
-        for p in recent:
+        for p in ordered[:6]:
             docs = per_map[p]
             totn = sum(v["n"] for v in docs.values())
             totr = sum(v["rev"] for v in docs.values())
-            lines = [f"📅 *{_period_label(p)}* · {totn} приёмов · {_money(totr)}"]
+            lines = [f"📅 *{_period_label(p)}* — {totn} приёмов, {_money(totr)}"]
             for d, v in sorted(docs.items(), key=lambda kv: -kv[1]["rev"]):
                 pct = pct_map.get(d)
-                zp = f" · ЗП {pct}%: {_money(v['rev'] * pct / 100)}" if pct else ""
-                lines.append(f"• {d} — {v['n']} приёмов, {_money(v['rev'])}{zp}")
+                zp = f" (ЗП {_money(v['rev'] * pct / 100)})" if pct else ""
+                lines.append(f"  • {d}: {v['n']} приёмов, {_money(v['rev'])}{zp}")
             out.append("\n".join(lines))
-        tail = ""
-        more = [p for p in ordered if p not in recent]
-        if more:
-            tail += "\n\n📂 Ещё есть месяцы: " + ", ".join(_period_label(p) for p in more[:12])
-        tail += "\n\nПодробно за месяц: напиши «/doctors Июнь 2026» — врачи, направления, оплаты."
+
+        tail = "\n\n👇 Выбери месяц для полного отчёта (день + ночь)"
         await _send_block(message, "📊 *Врачи по месяцам*", "\n\n".join(out) + tail)
         ps = await _doctor_periods()
         if ps:
-            await message.answer("📅 Открыть конкретный месяц — выбери год:", reply_markup=_doctor_year_kb(ps))
+            await message.answer("📅 Выбери месяц:", reply_markup=_doctor_year_kb(ps))
         return
 
     # ── Подробный отчёт: за конкретный месяц / дату / N дней ──
-    if period:
-        rows = await db_all("SELECT doctor,service,kind,ref_from,revenue,percent,pay,src,patient FROM visits WHERE period = ?", (period,))
-        period_label = _period_label(period)
-    elif on_date:
-        rows = await db_all("SELECT doctor,service,kind,ref_from,revenue,percent,pay,src,patient FROM visits WHERE day = ?", (on_date,))
-        period_label = on_date
-    else:
-        rows = await db_all("SELECT doctor,service,kind,ref_from,revenue,percent,pay,src,patient FROM visits WHERE day >= date('now', ?)",
-                            (f"-{days - 1} day",))
-        period_label = f"{days} дн."
-    if not rows:
-        allrows = await db_all("SELECT doctor,service,kind,ref_from,revenue,percent,pay,src,patient FROM visits")
-        if not allrows:
-            msg = "📊 По врачам пока нет данных.\n\n"
-            if sync_err:
-                msg += f"⚠️ Таблица: {sync_err}\n\n"
-            msg += ("Проверь:\n"
-                    "• таблица открыта «по ссылке: Читатель»\n"
-                    "• ссылка ведёт на нужную вкладку (день/ночь)\n"
-                    "• /visits — что подключено, /diag — диагностика")
-            await message.answer(msg)
+    DFILTER = "AND doctor IS NOT NULL AND doctor != '' AND doctor != '—' AND LOWER(doctor) NOT LIKE '%не указан%'"
+    try:
+        if period:
+            # shift — основной. clean — только если shift для этого периода нет. zp — только резерв.
+            rows = await db_all(f"SELECT doctor,service,kind,ref_from,revenue,percent,pay,src,patient FROM visits WHERE period = ? AND src='shift' {DFILTER}", (period,))
+            if not rows:
+                rows = await db_all(f"SELECT doctor,service,kind,ref_from,revenue,percent,pay,src,patient FROM visits WHERE period = ? AND src='clean' {DFILTER}", (period,))
+            if not rows:
+                rows = await db_all(f"SELECT doctor,service,kind,ref_from,revenue,percent,pay,src,patient FROM visits WHERE period = ? AND src='zp' {DFILTER}", (period,))
+            if rows:
+                zp_pct = {(r["doctor"] or "").lower(): r["percent"] for r in await db_all("SELECT doctor, percent FROM visits WHERE period=? AND src='zp' AND percent>0", (period,))}
+                rows = [{**dict(r), "percent": r["percent"] or zp_pct.get((r["doctor"] or "").lower(), 0)} for r in rows]
+            period_label = _period_label(period)
+        elif on_date:
+            rows = await db_all(f"SELECT doctor,service,kind,ref_from,revenue,percent,pay,src,patient FROM visits WHERE day = ? AND src='shift' {DFILTER}", (on_date,))
+            if not rows:
+                rows = await db_all(f"SELECT doctor,service,kind,ref_from,revenue,percent,pay,src,patient FROM visits WHERE day = ? {DFILTER}", (on_date,))
+            period_label = on_date
+        else:
+            rows = await db_all(f"SELECT doctor,service,kind,ref_from,revenue,percent,pay,src,patient FROM visits WHERE day >= date('now', ?) AND day <= date('now') AND src='shift' {DFILTER}", (f"-{days - 1} day",))
+            if not rows:
+                rows = await db_all(f"SELECT doctor,service,kind,ref_from,revenue,percent,pay,src,patient FROM visits WHERE day >= date('now', ?) AND day <= date('now') {DFILTER}", (f"-{days - 1} day",))
+            period_label = f"{days} дн."
+        if not rows:
+            await message.answer(f"📊 За {period_label or 'этот период'} данных нет.\n\nПроверь:\n• таблица смен подключена: /setshift")
             return
-        rng = await db_get("SELECT MIN(day) a, MAX(day) b FROM visits")
-        rows = allrows
-        period_label = f"все данные ({rng['a']} — {rng['b']})"
-    await _render_doctor_detail(message, rows, period_label)
+        await _render_doctor_detail(message, rows, period_label)
+    except Exception as e:
+        await message.answer(f"⚠️ Ошибка при формировании отчёта: {e}")
+
+
+@router.message(Command("calllist"))
+async def calllist_cmd(message: Message, state: FSMContext):
+    """
+    /calllist — запустить обзвон по списку.
+    После команды отправь список в любом формате:
+
+      +79991234567 Иванова Мария — болит зуб
+      89991234568, Петров Иван, подтвердить запись
+      Кузнецова Анна +7 999 111-22-33
+
+    Алина позвонит каждому. Результаты придут сюда.
+    """
+    if message.from_user.id != ADMIN_ID:
+        return
+    await state.set_state(State_.calllist)
+    await message.answer(
+        "📋 *Обзвон — Алина позвонит по списку*\n\n"
+        "Пришли список в любом формате, каждый человек с новой строки:\n\n"
+        "`+79991234567 Иванова Мария — болит зуб`\n"
+        "`89991234568 Петров Иван — подтвердить запись`\n"
+        "`Кузнецова Анна +7 999 111-22-33`\n\n"
+        "Тип звонка определяется автоматически по заметке:\n"
+        "• *подтвердить / запись* → звонок-подтверждение\n"
+        "• *отзыв / как прошло* → звонок за отзывом\n"
+        "• *ничего* → продажный сценарий\n\n"
+        "/cancel — отменить",
+        parse_mode="Markdown"
+    )
+
+
+@router.message(State_.calllist, Command("cancel"))
+async def calllist_cancel(message: Message, state: FSMContext):
+    if message.from_user.id != ADMIN_ID:
+        return
+    await state.clear()
+    await message.answer("❌ Отменено.", reply_markup=main_kb())
+
+
+@router.message(State_.calllist)
+async def calllist_receive(message: Message, state: FSMContext):
+    """Получаем список, показываем превью, кнопки Запустить / Отмена."""
+    if message.from_user.id != ADMIN_ID:
+        return
+
+    from call_queue import parse_call_list
+    text = message.text or ""
+    tasks = parse_call_list(text)
+
+    if not tasks:
+        await message.answer(
+            "⚠️ Не нашёл ни одного номера. Убедись что в каждой строке есть телефон:\n"
+            "`+79991234567 Имя Фамилия`",
+            parse_mode="Markdown"
+        )
+        return
+
+    # Сохраняем список в FSM
+    raw_tasks = [{"phone": t.phone, "name": t.name, "note": t.note, "call_type": t.call_type}
+                 for t in tasks]
+    await state.update_data(tasks=raw_tasks)
+
+    # Превью
+    lines = [f"📋 *Список для обзвона — {len(tasks)} чел.*\n"]
+    type_emoji = {"confirm": "✅", "review": "⭐", "return": "🔄", "inbound": "📞"}
+    for i, t in enumerate(tasks[:20], 1):
+        em = type_emoji.get(t.call_type, "📞")
+        lines.append(f"{i}. {em} {t.name} — {t.phone}" + (f"\n    _{t.note}_" if t.note else ""))
+    if len(tasks) > 20:
+        lines.append(f"...и ещё {len(tasks) - 20}")
+
+    lines.append("\n_Алина позвонит по очереди с паузой 45 сек._")
+
+    kb = InlineKeyboardBuilder()
+    kb.row(
+        InlineKeyboardButton(text="🚀 Запустить", callback_data="callqueue_start"),
+        InlineKeyboardButton(text="❌ Отмена",    callback_data="callqueue_cancel"),
+    )
+    await message.answer("\n".join(lines), parse_mode="Markdown", reply_markup=kb.as_markup())
+
+
+@router.callback_query(F.data == "callqueue_start")
+async def callqueue_start(cq: CallbackQuery, state: FSMContext):
+    if cq.from_user.id != ADMIN_ID:
+        return
+    data = await state.get_data()
+    raw_tasks = data.get("tasks", [])
+    await state.clear()
+
+    if not raw_tasks:
+        await cq.answer("Список пуст")
+        return
+
+    from call_queue import CallTask, load_queue, start_queue, _notify
+    tasks = [CallTask(**t) for t in raw_tasks]
+    load_queue(tasks)
+
+    await cq.message.edit_reply_markup(reply_markup=None)
+    await cq.message.answer(
+        f"🚀 Запускаю обзвон — {len(tasks)} человек.\n"
+        f"Результаты буду присылать по мере звонков.",
+    )
+    await cq.answer()
+
+    # Запускаем в фоне чтобы не блокировать бот
+    asyncio.create_task(start_queue())
+
+
+@router.callback_query(F.data == "callqueue_cancel")
+async def callqueue_cancel_cb(cq: CallbackQuery, state: FSMContext):
+    if cq.from_user.id != ADMIN_ID:
+        return
+    await state.clear()
+    await cq.message.edit_reply_markup(reply_markup=None)
+    await cq.message.answer("❌ Обзвон отменён.")
+    await cq.answer()
+
+
+# ── Нумерология: обработчик ввода имени + даты ───────────────────────────────
+
+@router.message(State_.numerology)
+async def numerology_receive(message: Message, state: FSMContext):
+    import re
+    from numerology import full_profile, format_profile
+
+    text = (message.text or "").strip()
+
+    # Ищем дату в формате ДД.ММ.ГГГГ или ДД/ММ/ГГГГ или ГГГГ-ММ-ДД
+    date_pattern = re.search(r'(\d{1,2}[.\-/]\d{1,2}[.\-/]\d{4}|\d{4}[.\-]\d{2}[.\-]\d{2})', text)
+    if not date_pattern:
+        await message.answer(
+            "Не нашёл дату рождения. Напиши имя и дату вместе:\n\n"
+            "`Иванова Мария Сергеевна 15.03.1992`",
+            parse_mode="Markdown"
+        )
+        return
+
+    birth_date = date_pattern.group(0)
+    full_name = re.sub(r'(\d{1,2}[.\-/]\d{1,2}[.\-/]\d{4}|\d{4}[.\-]\d{2}[.\-]\d{2})', '', text).strip()
+    full_name = ' '.join(full_name.split())
+
+    if len(full_name) < 3:
+        await message.answer("Не нашёл имя. Напиши полное имя перед датой:\n\n`Мария Иванова 15.03.1992`", parse_mode="Markdown")
+        return
+
+    data = await state.get_data()
+    cost = data.get("cost", 25)
+
+    ok = await use_credits(message.from_user.id, "coach", cost)
+    if not ok:
+        await message.answer("❌ Недостаточно кредитов.", reply_markup=profile_kb())
+        await state.clear(); return
+
+    thinking = await message.answer("🔮 Составляю профиль...", reply_markup=ReplyKeyboardRemove())
+
+    try:
+        profile = full_profile(full_name, birth_date)
+        profile_text = format_profile(profile)
+
+        system = (
+            "Ты — Аура, коуч-наставник по предназначению. "
+            "Тебе дан нумерологический профиль человека — используй его как зеркало для глубокого разговора о призвании. "
+            "Нумерология — инструмент рефлексии, не судьба. "
+            "Сделай анализ живым, конкретным и вдохновляющим. "
+            "Закончи одним сильным вопросом который поможет человеку двигаться к своему пути."
+        )
+
+        prompt = (
+            f"Профиль:\n{profile_text}\n\n"
+            "На основе этого профиля:\n"
+            "1. Скажи какой карьерный архетип у этого человека и почему это важно\n"
+            "2. Назови 2-3 конкретные сферы или профессии где он может расцвести\n"
+            "3. Укажи главную сильную сторону и главный вызов\n"
+            "4. Что личный год говорит про сейчас\n"
+            "Завершь одним глубоким коучинговым вопросом."
+        )
+
+        result = await call_text_ai(prompt, system, "claude", uid=message.from_user.id)
+        bal = await get_balance(message.from_user.id)
+
+        await thinking.edit_text(
+            f"🔢 *Числовой профиль:*\n"
+            f"• Жизненный путь: *{profile['life_path']}* — {profile['career_title']}\n"
+            f"• Число судьбы: *{profile['destiny']}* · Число души: *{profile['soul']}*\n"
+            f"• Личный {2026}: *{profile['personal_year']}* — {profile['year_desc']}\n\n"
+            f"🔮 *Анализ от Ауры:*\n\n{result}\n\n"
+            f"💎 Потрачено: *{cost} кр.* · Остаток: *{bal} кр.*",
+            parse_mode="Markdown"
+        )
+
+        await state.set_state(State_.waiting_text)
+        await state.update_data(tool="coach", model="claude", cost=cost,
+                                 numerology_context=profile_text)
+        await message.answer("Продолжай — задай вопрос или расскажи больше:", reply_markup=psy_kb())
+
+    except Exception as e:
+        await thinking.edit_text(f"⚠️ Ошибка: {e}")
+        await state.clear()
+
+
+@router.message(Command("psych"))
+async def psych_cmd(message: Message):
+    """
+    /psych — начать сессию с AI-психологом Sage.
+    /psych reset — сбросить разговор.
+    """
+    from psych_agent import get_session, reset_session
+
+    uid = str(message.from_user.id)
+    parts = (message.text or "").split(maxsplit=1)
+    user_input = parts[1].strip() if len(parts) > 1 else ""
+
+    if user_input.lower() in ("reset", "сброс", "новый", "начать заново"):
+        reset_session(uid)
+        await message.answer("Сессия сброшена. Начнём заново — напиши /psych")
+        return
+
+    session = get_session(uid)
+
+    if not user_input:
+        # Первое обращение — приветствие
+        if not session.history:
+            await message.answer(session.greeting())
+        else:
+            await message.answer("Продолжаем. О чём хочешь поговорить?")
+        return
+
+    await message.bot.send_chat_action(message.chat.id, "typing")
+    reply = await session.reply(user_input)
+    await message.answer(reply)
+
+
+@router.message(Command("alina"))
+async def alina_cmd(message: Message):
+    """
+    /alina [текст] — тест голосового агента.
+    Без текста — начинает новый разговор.
+    С текстом — продолжает разговор (как пациент).
+
+    Примеры:
+      /alina                      ← приветствие Алины
+      /alina Хочу записаться      ← ответ на фразу
+      /alina reset                ← сбросить разговор
+    """
+    if message.from_user.id != ADMIN_ID:
+        return
+    parts = (message.text or "").split(maxsplit=1)
+    user_text = parts[1].strip() if len(parts) > 1 else ""
+
+    call_id = f"tg_{message.from_user.id}"
+    base = os.getenv("BASE_URL", "http://localhost:8000")
+
+    try:
+        async with __import__("httpx").AsyncClient(timeout=30) as client:
+            if user_text.lower() in ("reset", "сброс", "новый"):
+                # Сбрасываем разговор
+                await client.post(f"{base}/admin/call/end", json={"call_id": call_id})
+                await message.answer("🔄 Разговор сброшен. Напиши /alina чтобы начать заново.")
+                return
+
+            r = await client.post(
+                f"{base}/admin/call/test",
+                json={
+                    "call_id":      call_id,
+                    "message":      user_text or "",
+                    "call_type":    "inbound",
+                    "patient_name": "",
+                }
+            )
+            data = r.json()
+
+        reply   = data.get("alina", "")
+        booked  = data.get("booked", False)
+        end     = data.get("end_call", False)
+
+        prefix = "🦷 *Алина:*\n"
+        suffix = ""
+        if booked:
+            b = data.get("booking") or {}
+            suffix = (f"\n\n✅ *Записала пациента*\n"
+                      f"👤 {b.get('name','?')} | 📞 {b.get('phone','?')}\n"
+                      f"🕐 {b.get('time_pref','?')} | 🔖 {b.get('issue','?')}")
+        if end:
+            suffix += "\n\n_(разговор завершён — /alina reset для нового)_"
+
+        await message.answer(f"{prefix}{reply}{suffix}", parse_mode="Markdown")
+
+    except Exception as e:
+        await message.answer(f"⚠️ Агент недоступен: {e}\n\nАгент работает только если запущен FastAPI сервер.")
 
 
 @router.message(Command("fix"))
@@ -6641,6 +6979,88 @@ async def delsheet_cmd(message: Message):
     await set_setting("biz_sheet_csv", "")
     n, err = await _biz_sync_from_sheet()
     await message.answer(f"🗑 Таблица №{idx} удалена. Осталось: {len(sheets)}. Строк в базе: {n}.")
+
+
+# ── /server — управление VPS с Алиной ────────────────────────────────────────
+
+_VPS_INTENTS = {
+    # ключ → команда на VPS API
+    "логи":        "logs",
+    "лог":         "logs",
+    "статус":      "status",
+    "работает":    "status",
+    "перезапусти алину": "restart",
+    "рестарт алины":     "restart",
+    "перезапусти asterisk": "restart_asterisk",
+    "рестарт asterisk":     "restart_asterisk",
+    "ресурсы":     "resources",
+    "память":      "resources",
+    "диск":        "resources",
+    "аптайм":      "uptime",
+    "звонки":      "calls",
+    "активные звонки": "calls",
+}
+
+
+async def _vps_run(command_key: str, raw: bool = False) -> str:
+    import aiohttp
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.post(
+                f"{VPS_API_URL}/run",
+                json={"command": command_key, "raw": raw},
+                headers={"x-secret": VPS_API_SECRET},
+                timeout=aiohttp.ClientTimeout(total=35),
+            ) as r:
+                data = await r.json()
+                return data.get("output", "нет ответа")
+    except Exception as e:
+        return f"Ошибка подключения к серверу: {e}"
+
+
+@router.message(Command("server"))
+async def server_cmd(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    parts = (message.text or "").split(maxsplit=1)
+    arg = parts[1].strip().lower() if len(parts) > 1 else ""
+
+    if not arg:
+        await message.answer(
+            "🖥 <b>Управление сервером Алины</b>\n\n"
+            "/server логи — последние логи\n"
+            "/server статус — статус сервисов\n"
+            "/server перезапусти алину\n"
+            "/server перезапусти asterisk\n"
+            "/server ресурсы — RAM/CPU/диск\n"
+            "/server звонки — активные звонки\n"
+            "/server аптайм\n"
+            "/server exec &lt;команда&gt; — произвольная команда",
+            parse_mode="HTML",
+        )
+        return
+
+    await message.answer("⏳ Выполняю...")
+
+    if arg.startswith("exec "):
+        raw_cmd = arg[5:].strip()
+        output = await _vps_run(raw_cmd, raw=True)
+    else:
+        # Поиск по интентам
+        matched = None
+        for keyword, cmd_key in _VPS_INTENTS.items():
+            if keyword in arg:
+                matched = cmd_key
+                break
+        if not matched:
+            matched = arg  # пробуем как ключ напрямую
+        output = await _vps_run(matched)
+
+    # Обрезаем если слишком длинный
+    if len(output) > 3800:
+        output = output[-3800:]
+
+    await message.answer(f"<pre>{output}</pre>", parse_mode="HTML")
 
 
 async def main():

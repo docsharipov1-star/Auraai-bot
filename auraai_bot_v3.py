@@ -2020,14 +2020,15 @@ async def process_text(message: Message, state: FSMContext):
         await state.clear(); return
 
     await state.clear()
-    thinking = await message.answer("⏳ Генерирую...", reply_markup=ReplyKeyboardRemove())
+    PSY_TOOLS_IDS = ("psy", "relations", "health_psy", "coach")
+    is_psy = tool_id in PSY_TOOLS_IDS
+    thinking = await message.answer("···", reply_markup=ReplyKeyboardRemove())
 
     try:
         system = SYSTEM_PROMPTS.get(tool_id, SYSTEM_PROMPTS["chat"])
         use_history = tool_id in ("chat", "psy", "relations", "health_psy", "coach")
-        # Психолог-агенты ходят в интернет через веб-поиск Claude
         psy_web = (tool_id in ("psy", "relations", "health_psy") and anthropic_client is not None)
-        gen_model = "claude" if psy_web else model_id
+        gen_model = "claude" if (psy_web or is_psy) else model_id
         result = await call_text_ai(user_text, system, gen_model, uid=message.from_user.id, use_history=use_history, image_url=image_url, web=psy_web)
         bal    = await get_balance(message.from_user.id)
         model_info = TEXT_MODELS.get(model_id, TEXT_MODELS["claude"])
@@ -2037,28 +2038,39 @@ async def process_text(message: Message, state: FSMContext):
         chunks = [result[i:i+3500] for i in range(0, len(result), 3500)]
         for i, chunk in enumerate(chunks):
             if i == 0:
-                try:
-                    await thinking.edit_text(
-                        f"{model_info['emoji']} *{model_info['name']}*\n\n{chunk}\n\n"
-                        f"💎 Потрачено: *{cost} кр.* · Остаток: *{bal} кр.*",
-                        parse_mode="Markdown"
-                    )
-                except Exception:
-                    await message.answer(
-                        f"{model_info['emoji']} *{model_info['name']}*\n\n{chunk}\n\n"
-                        f"💎 Потрачено: *{cost} кр.* · Остаток: *{bal} кр.*",
-                        parse_mode="Markdown"
-                    )
+                if is_psy:
+                    # Для психолог-агентов — чистый текст, без заголовка модели
+                    try:
+                        await thinking.edit_text(chunk, parse_mode="Markdown")
+                    except Exception:
+                        await thinking.edit_text(chunk)
+                else:
+                    try:
+                        await thinking.edit_text(
+                            f"{model_info['emoji']} *{model_info['name']}*\n\n{chunk}\n\n"
+                            f"💎 Потрачено: *{cost} кр.* · Остаток: *{bal} кр.*",
+                            parse_mode="Markdown"
+                        )
+                    except Exception:
+                        await message.answer(
+                            f"{model_info['emoji']} *{model_info['name']}*\n\n{chunk}\n\n"
+                            f"💎 Потрачено: *{cost} кр.* · Остаток: *{bal} кр.*",
+                            parse_mode="Markdown"
+                        )
             else:
                 await message.answer(chunk)
 
-        # Остаться в диалоге для всех психолог-агентов и чата
-        PSY_TOOLS_IDS = ("psy", "relations", "health_psy", "coach")
         if tool_id in ("chat",) + PSY_TOOLS_IDS:
             await state.set_state(State_.waiting_text)
             await state.update_data(tool=tool_id, model=model_id, cost=cost)
-            if tool_id in PSY_TOOLS_IDS:
-                await message.answer("Я слушаю 💛", reply_markup=psy_kb())
+            if is_psy:
+                import random
+                continuations = [
+                    "Я здесь 💛", "Слушаю тебя.", "Продолжай — я рядом.",
+                    "Я никуда не ухожу 🌿", "Говори — я слушаю.",
+                    "Ты в безопасности здесь.", "Рядом с тобой 💕",
+                ]
+                await message.answer(random.choice(continuations), reply_markup=psy_kb())
             else:
                 await message.answer("💬 Продолжай:", reply_markup=cancel_kb())
         else:
@@ -6823,7 +6835,7 @@ async def numerology_receive(message: Message, state: FSMContext):
         await message.answer("❌ Недостаточно кредитов.", reply_markup=profile_kb())
         await state.clear(); return
 
-    thinking = await message.answer("🔮 Составляю профиль...", reply_markup=ReplyKeyboardRemove())
+    thinking = await message.answer("···", reply_markup=ReplyKeyboardRemove())
 
     try:
         profile = full_profile(full_name, birth_date)
@@ -6833,7 +6845,7 @@ async def numerology_receive(message: Message, state: FSMContext):
             "Ты — Аура, коуч-наставник по предназначению. "
             "Тебе дан нумерологический профиль человека — используй его как зеркало для глубокого разговора о призвании. "
             "Нумерология — инструмент рефлексии, не судьба. "
-            "Сделай анализ живым, конкретным и вдохновляющим. "
+            "Сделай анализ живым, конкретным и вдохновляющим. Пиши без лишних звёздочек и хэдеров — просто тёплый живой текст. "
             "Закончи одним сильным вопросом который поможет человеку двигаться к своему пути."
         )
 
@@ -6850,23 +6862,29 @@ async def numerology_receive(message: Message, state: FSMContext):
         result = await call_text_ai(prompt, system, "claude", uid=message.from_user.id)
         bal = await get_balance(message.from_user.id)
 
-        await thinking.edit_text(
-            f"🔢 *Числовой профиль:*\n"
-            f"• Жизненный путь: *{profile['life_path']}* — {profile['career_title']}\n"
-            f"• Число судьбы: *{profile['destiny']}* · Число души: *{profile['soul']}*\n"
-            f"• Личный {2026}: *{profile['personal_year']}* — {profile['year_desc']}\n\n"
-            f"🔮 *Анализ от Ауры:*\n\n{result}\n\n"
-            f"💎 Потрачено: *{cost} кр.* · Остаток: *{bal} кр.*",
-            parse_mode="Markdown"
+        header = (
+            f"🔢 Жизненный путь: {profile['life_path']} — {profile['career_title']}\n"
+            f"Число судьбы: {profile['destiny']} · Душа: {profile['soul']} · Личный год: {profile['personal_year']}\n\n"
         )
+        full_msg = header + result
+        try:
+            await thinking.edit_text(full_msg)
+        except Exception:
+            await message.answer(full_msg)
 
         await state.set_state(State_.waiting_text)
         await state.update_data(tool="coach", model="claude", cost=cost,
                                  numerology_context=profile_text)
-        await message.answer("Продолжай — задай вопрос или расскажи больше:", reply_markup=psy_kb())
+        import random
+        continuations = ["Я здесь 💛", "Слушаю тебя.", "Продолжай — я рядом.", "Говори — я слушаю."]
+        await message.answer(random.choice(continuations), reply_markup=psy_kb())
 
     except Exception as e:
-        await thinking.edit_text(f"⚠️ Ошибка: {e}")
+        logging.error(f"Numerology error: {e}")
+        try:
+            await thinking.edit_text("Что-то пошло не так. Попробуй ещё раз.")
+        except Exception:
+            await message.answer("Что-то пошло не так. Попробуй ещё раз.")
         await state.clear()
 
 

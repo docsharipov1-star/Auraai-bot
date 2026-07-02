@@ -1457,34 +1457,56 @@ def mood_checkin_kb():
     )
     return b.as_markup()
 
+_PSY_INTRO_PROMPTS = {
+    "psy": (
+        "Ты — Аура, AI-психолог. Напиши короткое (2–3 предложения) уникальное тёплое приветствие "
+        "для нового сеанса. Каждый раз — разное: иногда про усталость, иногда про тревогу, "
+        "иногда просто про то что жизнь бывает тяжёлой. Заканчивай мягким приглашением рассказать — "
+        "НЕ вопросом, а ощущением безопасности. Только сам текст, без кавычек."
+    ),
+    "relations": (
+        "Ты — Аура, советник по отношениям. Напиши короткое (2–3 предложения) уникальное тёплое "
+        "приветствие. Каждый раз — разное: про близость, про боль разлуки, про непонимание, про одиночество рядом. "
+        "Без вопросов — только присутствие и приглашение говорить. Только текст."
+    ),
+    "health_psy": (
+        "Ты — Аура, наставник по психологическому здоровью. Напиши короткое (2–3 предложения) "
+        "уникальное тёплое приветствие. Каждый раз — разное: про усталость тела, про стресс, "
+        "про то как тело хранит всё что мы переживаем. Без вопросов — только мягкое присутствие. Только текст."
+    ),
+}
+
+async def _gen_intro(tool_id: str) -> str:
+    """Генерирует уникальное приветствие через Claude."""
+    if anthropic_client is None:
+        defaults = {
+            "psy":        "Привет, я Аура 💛 Я здесь — просто рядом. Расскажи, что на душе.",
+            "relations":  "Привет, я Аура 💕 Отношения — это живое и иногда очень больное. Я слушаю.",
+            "health_psy": "Привет, я Аура 🌿 Тело помнит всё. Расскажи, что сейчас происходит.",
+        }
+        return defaults.get(tool_id, "Привет, я Аура. Расскажи, что тебя привело сюда.")
+    try:
+        resp = await anthropic_client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=120,
+            messages=[{"role": "user", "content": _PSY_INTRO_PROMPTS[tool_id]}],
+        )
+        return resp.content[0].text.strip()
+    except Exception:
+        return "Привет, я Аура 💛 Я здесь. Расскажи, что сейчас происходит."
+
 async def send_psy_intro(message: Message):
-    await message.answer(
-        "Привет, я Аура 💛\n\n"
-        "Я здесь — не чтобы давать советы, а чтобы быть рядом и помочь разобраться в том, что происходит внутри.\n\n"
-        "Расскажи — что сейчас на душе? Можешь просто написать как есть.",
-        reply_markup=mood_checkin_kb()
-    )
-    await message.answer(
-        "Пиши в любом формате — я слушаю 🌿",
-        reply_markup=psy_kb()
-    )
+    text = await _gen_intro("psy")
+    await message.answer(text, reply_markup=mood_checkin_kb())
+    await message.answer("Пиши как есть — я слушаю 🌿", reply_markup=psy_kb())
 
 async def send_relations_intro(message: Message):
-    await message.answer(
-        "Привет, я Аура 💕\n\n"
-        "Отношения — это одна из самых сложных и живых частей жизни. "
-        "Здесь не будет осуждения и готовых ответов — только пространство, чтобы разобраться.\n\n"
-        "Расскажи, что сейчас происходит в твоей жизни с близкими.",
-        reply_markup=psy_kb()
-    )
+    text = await _gen_intro("relations")
+    await message.answer(text, reply_markup=psy_kb())
 
 async def send_health_intro(message: Message):
-    await message.answer(
-        "Привет, я Аура 🌿\n\n"
-        "Тело и психика — одно целое. Часто то, что болит снаружи, начинается внутри — и наоборот.\n\n"
-        "Расскажи, что сейчас с твоим состоянием. Я здесь.",
-        reply_markup=psy_kb()
-    )
+    text = await _gen_intro("health_psy")
+    await message.answer(text, reply_markup=psy_kb())
 
 # ══════════════════════════════════════════════════════
 #  /start
@@ -2002,9 +2024,9 @@ async def process_text(message: Message, state: FSMContext):
 
     try:
         system = SYSTEM_PROMPTS.get(tool_id, SYSTEM_PROMPTS["chat"])
-        use_history = tool_id in ("chat", "psy")
-        # Агент «Аура» ходит в интернет через веб-поиск Claude (если есть ключ Anthropic)
-        psy_web = (tool_id == "psy" and anthropic_client is not None)
+        use_history = tool_id in ("chat", "psy", "relations", "health_psy", "coach")
+        # Психолог-агенты ходят в интернет через веб-поиск Claude
+        psy_web = (tool_id in ("psy", "relations", "health_psy") and anthropic_client is not None)
         gen_model = "claude" if psy_web else model_id
         result = await call_text_ai(user_text, system, gen_model, uid=message.from_user.id, use_history=use_history, image_url=image_url, web=psy_web)
         bal    = await get_balance(message.from_user.id)
@@ -2030,16 +2052,17 @@ async def process_text(message: Message, state: FSMContext):
             else:
                 await message.answer(chunk)
 
-        # Если это чат или психолог — остаться в состоянии для продолжения разговора
-        if tool_id in ("chat", "psy"):
+        # Остаться в диалоге для всех психолог-агентов и чата
+        PSY_TOOLS_IDS = ("psy", "relations", "health_psy", "coach")
+        if tool_id in ("chat",) + PSY_TOOLS_IDS:
             await state.set_state(State_.waiting_text)
             await state.update_data(tool=tool_id, model=model_id, cost=cost)
-            await message.answer(
-                "💬 Продолжай писать или нажми кнопку ниже:",
-                reply_markup=(psy_kb() if tool_id == "psy" else cancel_kb())
-            )
+            if tool_id in PSY_TOOLS_IDS:
+                await message.answer("Я слушаю 💛", reply_markup=psy_kb())
+            else:
+                await message.answer("💬 Продолжай:", reply_markup=cancel_kb())
         else:
-            await message.answer("Что дальше?", reply_markup=text_tools_kb())
+            await message.answer("Готово! Выбери следующий инструмент:", reply_markup=text_tools_kb())
 
     except asyncio.TimeoutError:
         await add_credits(message.from_user.id, cost, "bonus", "Возврат: таймаут")

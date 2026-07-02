@@ -629,7 +629,7 @@ async def admin_stats():
 #  AI ФУНКЦИИ
 # ══════════════════════════════════════════════════════
 
-async def call_text_ai(prompt: str, system: str, model_id: str, uid: int = 0, use_history: bool = False, image_url: str = None, history_msgs: list = None, timeout_s: int = 15, web: bool = False) -> str:
+async def call_text_ai(prompt: str, system: str, model_id: str, uid: int = 0, use_history: bool = False, image_url: str = None, history_msgs: list = None, timeout_s: int = 45, web: bool = False) -> str:
     model_info = TEXT_MODELS.get(model_id, TEXT_MODELS["claude"])
     provider = model_info["provider"]
 
@@ -1181,23 +1181,6 @@ def main_kb(is_admin: bool = False) -> ReplyKeyboardMarkup:
 def text_tools_kb() -> ReplyKeyboardMarkup:
     b = ReplyKeyboardBuilder()
     b.row(KeyboardButton(text="💬 AI Чат"))
-    b.row(
-        KeyboardButton(text="✍️ Копирайтер"),
-        KeyboardButton(text="💻 Код"),
-    )
-    b.row(
-        KeyboardButton(text="🔍 SEO"),
-        KeyboardButton(text="🌐 Перевод"),
-    )
-    b.row(
-        KeyboardButton(text="📝 Саммари"),
-        KeyboardButton(text="📧 Email"),
-    )
-    b.row(
-        KeyboardButton(text="📄 Эссе"),
-        KeyboardButton(text="✏️ Рерайт"),
-    )
-    b.row(KeyboardButton(text="💡 Идеи"))
     b.row(KeyboardButton(text="🧠 Психолог"))
     b.row(KeyboardButton(text="🗑 Очистить историю чата"))
     b.row(KeyboardButton(text="🏠 В главное меню"))
@@ -1381,15 +1364,6 @@ async def get_mood_summary(uid: int) -> str:
 
 TOOL_MAP = {
     "💬 AI Чат":     ("chat",      10),
-    "✍️ Копирайтер": ("copywriter",20),
-    "💻 Код":        ("code",       25),
-    "🔍 SEO":        ("seo",        35),
-    "🌐 Перевод":    ("translate",  15),
-    "📝 Саммари":    ("summarize",  15),
-    "📧 Email":      ("email",      20),
-    "📄 Эссе":       ("essay",      25),
-    "✏️ Рерайт":     ("rewrite",    20),
-    "💡 Идеи":       ("idea",       15),
     "🧠 Психолог":      ("psy",        15),
     "🔮 Предназначение": ("coach",      20),
     "💕 Отношения":     ("relations",  15),

@@ -1479,12 +1479,29 @@ _PSY_INTRO_PROMPTS = {
 async def _gen_intro(tool_id: str) -> str:
     """Генерирует уникальное приветствие через Claude."""
     if anthropic_client is None:
+        import random
         defaults = {
-            "psy":        "Привет, я Аура 💛 Я здесь — просто рядом. Расскажи, что на душе.",
-            "relations":  "Привет, я Аура 💕 Отношения — это живое и иногда очень больное. Я слушаю.",
-            "health_psy": "Привет, я Аура 🌿 Тело помнит всё. Расскажи, что сейчас происходит.",
+            "psy": [
+                "Привет, я Аура 💛 Я здесь — просто рядом. Расскажи, что на душе.",
+                "Иногда просто нужно место, где можно выдохнуть. Ты здесь — это уже важно 💛",
+                "Сегодня было непросто? Или что-то накопилось? Я слушаю.",
+                "Я Аура. Здесь можно говорить как есть — без фильтров и осуждения 🌿",
+            ],
+            "relations": [
+                "Привет, я Аура 💕 Отношения — это живое и иногда очень больное. Я слушаю.",
+                "Близость с другим человеком — это и самое тёплое, и самое сложное. Расскажи, что происходит 💕",
+                "Иногда слова застревают внутри, когда говорить не с кем. Я здесь — расскажи.",
+                "Я Аура. Без осуждения и готовых советов — только пространство для тебя 💕",
+            ],
+            "health_psy": [
+                "Привет, я Аура 🌿 Тело помнит всё. Расскажи, что сейчас происходит.",
+                "Когда внутри неспокойно — тело это знает первым. Что сейчас чувствуешь? 🌿",
+                "Я Аура. Здесь можно говорить о теле, об усталости, о том, что уже давно копится.",
+                "Тело и душа — одно. Расскажи, что тебя тревожит — начнём разбираться вместе 🌿",
+            ],
         }
-        return defaults.get(tool_id, "Привет, я Аура. Расскажи, что тебя привело сюда.")
+        options = defaults.get(tool_id, ["Привет, я Аура. Расскажи, что тебя привело сюда."])
+        return random.choice(options)
     try:
         resp = await anthropic_client.messages.create(
             model="claude-sonnet-4-6",
@@ -1873,12 +1890,14 @@ async def tool_selected(message: Message, state: FSMContext):
         user_model[message.from_user.id] = "claude"
         await state.update_data(tool="coach", model="claude", cost=total_cost)
         await state.set_state(State_.numerology)
+        b = ReplyKeyboardBuilder()
+        b.row(KeyboardButton(text="🏠 В главное меню"))
         await message.answer(
             "🔮 *Коуч по предназначению*\n\n"
             "Напиши своё полное имя и дату рождения в одном сообщении.\n\n"
             "Пример:\n`Иванова Мария Сергеевна 15.03.1992`",
             parse_mode="Markdown",
-            reply_markup=ReplyKeyboardRemove()
+            reply_markup=b.as_markup(resize_keyboard=True)
         )
         return
 
@@ -1968,6 +1987,86 @@ async def mood_checkin(callback: CallbackQuery):
         pass
     await callback.answer("Записал 💛")
 
+async def _transcribe_voice(bot, voice_obj) -> str:
+    """Скачиваем голосовое и транскрибируем через OpenAI Whisper."""
+    if not openai_client:
+        raise Exception("OpenAI ключ не настроен")
+    file = await bot.get_file(voice_obj.file_id)
+    url = f"https://api.telegram.org/file/bot{bot.token}/{file.file_path}"
+    async with httpx.AsyncClient(timeout=30) as client:
+        r = await client.get(url)
+        r.raise_for_status()
+        audio_bytes = r.content
+    import io
+    audio_io = io.BytesIO(audio_bytes)
+    audio_io.name = "voice.ogg"
+    resp = await openai_client.audio.transcriptions.create(
+        model="whisper-1",
+        file=audio_io,
+        language="ru",
+    )
+    return resp.text.strip()
+
+
+@router.message(State_.waiting_text, F.voice)
+async def process_voice_message(message: Message, state: FSMContext):
+    """Голосовые сообщения в диалоге с психолог-агентами."""
+    data = await state.get_data()
+    tool_id = data.get("tool", "chat")
+    PSY_TOOLS_IDS = ("psy", "relations", "health_psy", "coach")
+
+    note = await message.answer("🎙 Слушаю...", reply_markup=ReplyKeyboardRemove())
+    try:
+        text = await _transcribe_voice(message.bot, message.voice)
+    except Exception as e:
+        await note.edit_text(f"Не смог распознать голос: {str(e)[:80]}")
+        return
+    await note.delete()
+
+    # Показываем что распознали
+    await message.answer(f"_{text}_", parse_mode="Markdown")
+
+    # Дальше — как обычный текст
+    model_id = data.get("model", "claude")
+    cost = data.get("cost", 10)
+    is_psy = tool_id in PSY_TOOLS_IDS
+
+    ok = await use_credits(message.from_user.id, tool_id, cost)
+    if not ok:
+        await message.answer("❌ Недостаточно кредитов.", reply_markup=profile_kb())
+        await state.clear(); return
+
+    thinking = await message.answer("💭")
+    try:
+        system = SYSTEM_PROMPTS.get(tool_id, SYSTEM_PROMPTS["chat"])
+        use_history = tool_id in ("chat",) + PSY_TOOLS_IDS
+        result = await call_text_ai(text, system, "claude", uid=message.from_user.id, use_history=use_history)
+        await log_request(message.from_user.id, tool_id, model_id, cost)
+
+        try:
+            await thinking.edit_text(result)
+        except Exception:
+            await message.answer(result)
+
+        # Остаёмся в диалоге
+        await state.set_state(State_.waiting_text)
+        await state.update_data(tool=tool_id, model=model_id, cost=cost)
+        import random
+        continuations = ["Я здесь 💛", "Слушаю тебя.", "Продолжай — я рядом.", "Говори — я слушаю.", "Рядом с тобой 💕"]
+        if is_psy:
+            await message.answer(random.choice(continuations), reply_markup=psy_kb())
+        else:
+            await message.answer("💬 Продолжай:", reply_markup=cancel_kb())
+
+    except Exception as e:
+        logging.error(f"Voice process error: {e}")
+        try:
+            await thinking.edit_text("Что-то пошло не так. Попробуй ещё раз.")
+        except Exception:
+            await message.answer("Что-то пошло не так.")
+        await state.clear()
+
+
 @router.message(State_.waiting_text)
 async def process_text(message: Message, state: FSMContext):
     if message.text == "❌ Отмена":
@@ -2022,7 +2121,7 @@ async def process_text(message: Message, state: FSMContext):
     await state.clear()
     PSY_TOOLS_IDS = ("psy", "relations", "health_psy", "coach")
     is_psy = tool_id in PSY_TOOLS_IDS
-    thinking = await message.answer("···", reply_markup=ReplyKeyboardRemove())
+    thinking = await message.answer("💭", reply_markup=ReplyKeyboardRemove())
 
     try:
         system = SYSTEM_PROMPTS.get(tool_id, SYSTEM_PROMPTS["chat"])
@@ -6835,7 +6934,7 @@ async def numerology_receive(message: Message, state: FSMContext):
         await message.answer("❌ Недостаточно кредитов.", reply_markup=profile_kb())
         await state.clear(); return
 
-    thinking = await message.answer("···", reply_markup=ReplyKeyboardRemove())
+    thinking = await message.answer("💭", reply_markup=ReplyKeyboardRemove())
 
     try:
         profile = full_profile(full_name, birth_date)

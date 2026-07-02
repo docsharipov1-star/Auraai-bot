@@ -1,3 +1,4 @@
+
 """
 ╔══════════════════════════════════════════════════════╗
 ║          AuraAI Bot v3.0 — Syntx AI Style            ║
@@ -132,17 +133,25 @@ SYSTEM_PROMPTS = {
     "rewrite":    "Ты редактор. Переписывай тексты улучшая стиль, грамматику и читаемость.",
     "idea":       "Ты креативный директор. Генерируй свежие идеи, концепции и решения.",
     "psy": (
-        "Ты — Аура, тёплый и заботливый ИИ-помощник по эмоциональному благополучию. "
-        "Ты НЕ психотерапевт и не врач — ты дружелюбный спутник, который помогает человеку разобраться в чувствах "
-        "и освоить простые техники самопомощи.\n\n"
+        "Ты — Аура, тёплый ИИ-коуч и чуткий собеседник по эмоциональному состоянию. "
+        "Ты НЕ психотерапевт и не врач, но ты умный и внимательный помощник, который быстро понимает, "
+        "что человеку нужно, и помогает как коуч.\n\n"
         "СТИЛЬ ОБЩЕНИЯ (это важно):\n"
         "— Пиши коротко и по-человечески, как в мессенджере. Не вываливай простыни текста: 2–5 коротких фраз за раз.\n"
         "— Обращайся на «ты», будь мягким, тёплым и совершенно безоценочным. Иногда уместен лёгкий эмодзи.\n"
-        "— Сначала отрази и назови чувство человека («Звучит так, будто ты сильно вымотался»), дай ему почувствовать, что его услышали.\n"
-        "— Потом задай ОДИН открытый вопрос ИЛИ предложи одну маленькую технику. Не делай и то и другое сразу.\n\n"
-        "МЕТОД: опирайся на проверенные подходы — КПТ (разбор автоматических мыслей, переформулирование), "
-        "осознанность (дыхание, заземление 5-4-3-2-1), дробление задач, ведение дневника, маленькие выполнимые шаги. "
-        "Подавай их не как лекцию, а как мягкое предложение: «Хочешь, попробуем одно короткое упражнение?»\n\n"
+        "— СНАЧАЛА пойми, что человеку нужно прямо сейчас: чтобы его выслушали, чтобы разобраться в себе, или чтобы получить конкретный шаг. И дай именно это.\n"
+        "— НЕ засыпай вопросами. В большинстве ответов вопрос не нужен вовсе — вместо него дай тёплое отражение, понимание сути или маленький конкретный шаг.\n"
+        "— Задавай вопрос ТОЛЬКО если без него правда нельзя помочь, и не больше одного. Никаких дежурных вопросов ради галочки вроде «а что ты при этом чувствуешь?».\n"
+        "— Если человек уже назвал проблему — не переспрашивай по три раза, а помогай: лучше точно предположи и попади в суть, чем уточняй.\n\n"
+        "ЛЁГКОСТЬ И ЮМОР: где это уместно, добавляй тёплый, мягкий юмор и живость — это снимает напряжение "
+        "и делает разговор человечным. Серьёзные и тяжёлые темы помогай разбирать по-доброму и без давления: "
+        "дроби их на маленькие понятные кусочки, используй простые образы и метафоры, чтобы было не так страшно. "
+        "Но НИКОГДА не шути и не «облегчай», когда человеку по-настоящему больно, тревожно или он в кризисе — "
+        "там только бережность и серьёзность.\n\n"
+        "МЕТОД: работай как коуч и отчасти в духе гештальт-подхода Игоря Погодина — через живое переживание здесь-и-сейчас, а не через анализ и ярлыки. "
+        "Замечай и называй то, что происходит с человеком прямо сейчас; мягко возвращай к настоящему чувству, а не к абстрактным рассуждениям; "
+        "помогай увидеть, чего он на самом деле хочет и что в его силах, поддерживай его выбор и ответственность; где уместно — предложи маленький эксперимент или шаг на сегодня. "
+        "Можно использовать и простые техники (дыхание, заземление, разбор мысли, дневник), но подавай их как предложение, а не лекцию.\n\n"
         "ТЕМЫ: тревога и переживания, стресс и выгорание; деньги и финансовая тревога "
         "(только психология отношения к деньгам, без инвест-советов); отношения и конфликты; "
         "интимность у взрослых (тактично); концентрация, прокрастинация и фокус внимания.\n\n"
@@ -153,6 +162,9 @@ SYSTEM_PROMPTS = {
         "а тепло поддержи и предложи связаться с теми, кто поможет: телефон доверия 8-800-2000-122 "
         "(круглосуточно, бесплатно, анонимно), или близкий человек, которому он доверяет.\n"
         "— Ничего сексуального или романтического при малейшем признаке, что собеседник несовершеннолетний.\n\n"
+        "РЕСУРС: если человек хочет копнуть глубже или просит, что почитать или посмотреть, можешь порекомендовать "
+        "гештальт-терапевта Игоря Погодина — у него есть YouTube-канал (youtube.com/@pogodinigor) с разборами подхода и книг, "
+        "и собственные книги по гештальт-терапии. Рекомендуй к месту и по-доброму, без навязывания.\n\n"
         "ИНТЕРНЕТ: при необходимости ты можешь искать свежую и фактическую информацию в сети — "
         "например, как устроена та или иная техника, где найти очную психологическую помощь, актуальные телефоны служб. "
         "Опирайся только на надёжные источники и коротко указывай, откуда информация. "
@@ -1267,7 +1279,6 @@ class State_(StatesGroup):
     biz_menu  = State()  # финансы бизнеса: меню
     biz_input = State()  # финансы бизнеса: ввод отчёта
     biz_date  = State()  # финансы бизнеса: отчёт за конкретную дату
-    calllist  = State()  # список для обзвона Алиной
 
 user_tool:  dict[int, str] = {}
 user_model: dict[int, str] = {}
@@ -1300,6 +1311,34 @@ MOOD_LABELS = {1: "😟 Очень плохо", 2: "😕 Так себе", 3: "�
 async def log_mood(uid: int, score: int):
     await db_run("INSERT INTO mood_log (user_id, score) VALUES (?, ?)", (uid, score))
 
+async def get_mood_stats(uid: int):
+    """Возвращает (всего_дней_с_чек-ином, текущий_стрик_подряд)."""
+    rows = await db_all(
+        "SELECT DISTINCT date(created_at) AS d FROM mood_log WHERE user_id=? ORDER BY d DESC", (uid,)
+    )
+    days = {r["d"] for r in rows}
+    total = len(days)
+    today = datetime.now().date()
+    cur = today
+    if str(today) not in days and str(today - timedelta(days=1)) in days:
+        cur = today - timedelta(days=1)
+    streak = 0
+    while str(cur) in days:
+        streak += 1
+        cur = cur - timedelta(days=1)
+    return total, streak
+
+def streak_line(total: int, streak: int) -> str:
+    if streak >= 7:
+        return f"🏆 {streak} дней подряд заботишься о себе — это сильно!"
+    if streak >= 3:
+        return f"🔥 {streak} дня подряд на связи с собой. Так держать!"
+    if streak == 2:
+        return "✨ Уже второй день подряд — отличная привычка формируется!"
+    if total == 1:
+        return "🌱 Первый чек-ин — маленький, но важный шаг."
+    return "🌿 Хорошо, что заглянул."
+
 async def get_mood_summary(uid: int) -> str:
     rows = await db_all(
         "SELECT score, created_at FROM mood_log WHERE user_id=? ORDER BY created_at DESC LIMIT 7", (uid,)
@@ -1312,6 +1351,8 @@ async def get_mood_summary(uid: int) -> str:
         lines.append(f"`{r['created_at'][:10]}` — {label}")
     avg = sum(r["score"] for r in rows) / len(rows)
     lines.append(f"\nСредняя оценка: *{avg:.1f}* из 5")
+    total, streak = await get_mood_stats(uid)
+    lines.append(streak_line(total, streak))
     return "\n".join(lines)
 
 TOOL_MAP = {
@@ -1827,8 +1868,9 @@ async def mood_checkin(callback: CallbackQuery):
         await callback.answer(); return
     await log_mood(callback.from_user.id, score)
     label = MOOD_LABELS.get(score, "")
+    total, streak = await get_mood_stats(callback.from_user.id)
     try:
-        await callback.message.edit_text(f"Спасибо, что поделился. Отметил: {label}")
+        await callback.message.edit_text(f"Спасибо, что поделился. Отметил: {label}\n\n{streak_line(total, streak)}")
     except Exception:
         pass
     await callback.answer("Записал 💛")
@@ -1885,7 +1927,10 @@ async def process_text(message: Message, state: FSMContext):
         await state.clear(); return
 
     await state.clear()
-    thinking = await message.answer("⏳ Генерирую...", reply_markup=ReplyKeyboardRemove())
+    thinking = await message.answer(
+        ("💭 Думаю..." if tool_id == "psy" else "⏳ Генерирую..."),
+        reply_markup=ReplyKeyboardRemove()
+    )
 
     try:
         system = SYSTEM_PROMPTS.get(tool_id, SYSTEM_PROMPTS["chat"])
@@ -1922,7 +1967,7 @@ async def process_text(message: Message, state: FSMContext):
             await state.set_state(State_.waiting_text)
             await state.update_data(tool=tool_id, model=model_id, cost=cost)
             await message.answer(
-                "💬 Продолжай писать или нажми кнопку ниже:",
+                ("Я рядом 💛" if tool_id == "psy" else "💬 Продолжай писать или нажми кнопку ниже:"),
                 reply_markup=(psy_kb() if tool_id == "psy" else cancel_kb())
             )
         else:
@@ -4824,8 +4869,9 @@ async def _biz_agg(days):
         vp = await db_all("SELECT doctor, revenue FROM visits WHERE src='shift' AND day >= date('now', ?) AND day < date('now', ?)",
                           (f"-{2 * days - 1} day", f"-{days - 1} day"))
         label = f"{days} дней"
-    # Расходы всегда из biz_finance
-    exp = sum(r["expenses"] or 0 for r in rows)
+    pat = sum(r["patients"] for r in rows)
+    rev = sum(r["revenue"] for r in rows)
+    exp = sum(r["expenses"] for r in rows)
     cats = {}
     for r in rows:
         try:
@@ -4833,37 +4879,21 @@ async def _biz_agg(days):
                 cats[k] = cats.get(k, 0) + float(val)
         except Exception:
             pass
-
-    vrev = sum(r["revenue"] or 0 for r in v)
+    vrev = sum(r["revenue"] for r in v)
     vpat = len(v)
+    pat += vpat
+    rev += vrev
     aliases = await _get_aliases()
     pct_map = await _get_doctor_percents()
-
-    if vpat > 0:
-        # Есть данные смен — используем ТОЛЬКО их для выручки и пациентов
-        rev = vrev
-        pat = vpat
-    else:
-        # Нет данных смен — берём из biz_finance
-        rev = sum(r["revenue"] or 0 for r in rows)
-        pat = sum(r["patients"] or 0 for r in rows)
-
-    vsalary = sum((r["revenue"] or 0) * pct_map.get(_canon_with(r["doctor"] or "", aliases), 0) / 100 for r in v)
+    vsalary = sum((r["revenue"] or 0) * pct_map.get(_canon_with(r["doctor"], aliases), 0) / 100 for r in v)
     if vsalary > 0:
         exp += vsalary
         cats["ФОТ врачей"] = cats.get("ФОТ врачей", 0) + vsalary
-
-    # Предыдущий период
-    vprev_rev = sum(r["revenue"] or 0 for r in vp)
-    if vp:
-        prev_rev = vprev_rev
-        prev_exp = sum((r["revenue"] or 0) * pct_map.get(_canon_with(r["doctor"], aliases), 0) / 100 for r in vp)
-    else:
-        prev_rev = sum(r["revenue"] or 0 for r in prev)
-        prev_exp = sum(r["expenses"] or 0 for r in prev)
-
-    return {"label": label, "n": vpat or len(rows), "patients": pat, "revenue": rev, "expenses": exp,
-            "fot": vsalary, "profit": rev - exp, "check": (rev / pat) if pat else 0, "categories": cats,
+    prev_rev = sum(r["revenue"] for r in prev) + sum(r["revenue"] for r in vp)
+    prev_exp = (sum(r["expenses"] for r in prev)
+                + sum((r["revenue"] or 0) * pct_map.get(_canon_with(r["doctor"], aliases), 0) / 100 for r in vp))
+    return {"label": label, "n": len(rows) + vpat, "patients": pat, "revenue": rev, "expenses": exp,
+            "profit": rev - exp, "check": (rev / pat) if pat else 0, "categories": cats,
             "prev_revenue": prev_rev, "prev_profit": prev_rev - prev_exp, "from_shift": vpat > 0}
 
 def biz_kb():
@@ -4994,9 +5024,9 @@ async def _send_biz_report_date(message, date_iso):
     v = await db_all("SELECT doctor, revenue FROM visits WHERE src='shift' AND day = ?", (date_iso,))
     if not rows and not v:
         await message.answer(f"За {date_iso} данных нет.", reply_markup=biz_kb()); return
-    pat = sum(r["patients"] or 0 for r in rows) + len(v)
-    rev = sum(r["revenue"] or 0 for r in rows) + sum((r["revenue"] or 0) for r in v)
-    exp = sum(r["expenses"] or 0 for r in rows)
+    pat = sum(r["patients"] for r in rows) + len(v)
+    rev = sum(r["revenue"] for r in rows) + sum((r["revenue"] or 0) for r in v)
+    exp = sum(r["expenses"] for r in rows)
     cats = {}
     for r in rows:
         try:
@@ -5021,41 +5051,24 @@ async def _send_biz_report_date(message, date_iso):
     await message.answer(f"💰 *Финансы бизнеса · {date_iso}*\n\n{summary}", parse_mode="Markdown", reply_markup=biz_kb())
 
 async def _send_biz_report(message, days):
-    await _sync_visits()
     agg = await _biz_agg(days)
     if agg["n"] == 0:
         await message.answer("За этот период данных нет. Внеси отчёт 👇", reply_markup=biz_kb()); return
-    revenue = agg["revenue"]
-    fot     = agg.get("fot", 0)
-    exp_other = agg["expenses"] - fot
-    total_exp = agg["expenses"]
-    profit  = revenue - total_exp
-    margin  = (profit / revenue * 100) if revenue else 0
-    # Показываем рост только если у обоих периодов есть реальные данные
+    margin = (agg["profit"] / agg["revenue"] * 100) if agg["revenue"] else 0
     growth = ""
-    prev_rev = agg.get("prev_revenue") or 0
-    if prev_rev > 0 and revenue > 0:
-        dr = (revenue - prev_rev) / prev_rev * 100
-        # Убираем аномальные значения (>200% скорее всего нет данных за прошлый период)
-        if abs(dr) <= 200:
-            growth = f"\nДинамика выручки: {dr:+.0f}% к пред. периоду"
+    if agg.get("prev_revenue"):
+        dr = (agg["revenue"] - agg["prev_revenue"]) / agg["prev_revenue"] * 100
+        growth = f"\nВыручка к пред. периоду: {dr:+.0f}%"
     cats = agg.get("categories") or {}
-    cat_lines = ""
+    cat_str = ""
     if cats:
         top = sorted(cats.items(), key=lambda x: -x[1])[:5]
-        cat_lines = "\nРасходы по статьям:\n" + "\n".join(f"  • {k}: {_money(v)}" for k, v in top)
-    src_note = "\n\n📋 Выручка из таблиц «день/ночь». Прочие расходы — ручной ввод («📥 Внести отчёт»)." if agg.get("from_shift") else ""
-    fot_line = f"\nФОТ врачей: {_money(fot)}" if fot > 0 else "\nФОТ врачей: не задан (/setpercent)"
-    summary = (f"Период: {agg['label']} ({agg['n']} приёмов)\n"
-               f"Пациентов: {agg['patients']}\n"
-               f"Выручка: {_money(revenue)}\n"
-               f"{fot_line}\n"
-               f"Прочие расходы: {_money(exp_other)}\n"
-               f"Итого расходы: {_money(total_exp)}\n"
-               f"Чистая прибыль: {_money(profit)}\n"
-               f"Рентабельность: {margin:.0f}%\n"
-               f"Средний чек: {_money(agg['check'])}"
-               f"{growth}{cat_lines}{src_note}")
+        cat_str = "\nРасходы по статьям: " + ", ".join(f"{k} {_money(v)}" for k, v in top)
+    src_note = "\n\n📋 Выручка и пациенты взяты из таблиц «день/ночь». Расходы вносятся вручную (кнопка «📥 Внести отчёт»)." if agg.get("from_shift") else ""
+    summary = (f"Период: {agg['label']} ({agg['n']} записей)\nПациентов/приёмов: {agg['patients']}\n"
+               f"Выручка: {_money(agg['revenue'])}\nРасходы: {_money(agg['expenses'])}\n"
+               f"Чистая прибыль: {_money(agg['profit'])}\nРентабельность: {margin:.0f}%\n"
+               f"Средний чек: {_money(agg['check'])}{growth}{cat_str}{src_note}")
     thinking = await message.answer("💰 Готовлю отчёт...")
     narrative = None
     for mid in ("claude", "gpt4o", "deepseek"):
@@ -5082,15 +5095,7 @@ async def _biz_period_map():
     aliases = await _get_aliases()
     pct = await _get_doctor_percents()
     per = {}
-
-    # Основной источник выручки — shift; clean только для периодов без shift
-    v = await db_all("""
-        SELECT period, day, doctor, revenue FROM visits WHERE src='shift'
-        UNION ALL
-        SELECT period, day, doctor, revenue FROM visits WHERE src='clean'
-          AND period NOT IN (SELECT DISTINCT period FROM visits WHERE src='shift' AND period IS NOT NULL)
-    """)
-    days_with_shift = set()
+    v = await db_all("SELECT period, day, doctor, revenue FROM visits WHERE src IN ('shift','clean')")
     for r in v:
         p = r["period"] or ((r["day"] or "")[:7]) or "—"
         s = per.setdefault(p, {"rev": 0.0, "fot": 0.0, "exp": 0.0, "n": 0})
@@ -5098,23 +5103,13 @@ async def _biz_period_map():
         s["rev"] += rev
         s["n"] += 1
         s["fot"] += rev * pct.get(_canon_with(r["doctor"] or "", aliases), 0) / 100
-        if r["day"]:
-            days_with_shift.add(r["day"])
-
-    # Из biz_finance берём только РАСХОДЫ (не выручку — она уже в visits)
-    # Выручку из sheet берём только за дни без данных смен
     bf = await db_all("SELECT day, revenue, expenses, src FROM biz_finance")
     for r in bf:
-        src = r["src"] or ""
-        if src == "salary":
+        if (r["src"] or "") == "salary":
             continue
-        day = r["day"] or ""
-        p = day[:7] or "—"
+        p = (r["day"] or "")[:7] or "—"
         s = per.setdefault(p, {"rev": 0.0, "fot": 0.0, "exp": 0.0, "n": 0})
-        # Выручку добавляем из sheet ТОЛЬКО если нет данных смен за этот день
-        if src == "sheet" and day not in days_with_shift:
-            s["rev"] += r["revenue"] or 0
-        # Расходы берём всегда
+        s["rev"] += r["revenue"] or 0
         s["exp"] += r["expenses"] or 0
     return per
 
@@ -5876,10 +5871,8 @@ async def _iter_shift_sheets(shift):
         data = await _fetch_xlsx(sid)
         parsed = _parse_xlsx(data) if data else None
         names_from_book = [nm for nm, _ in parsed if nm] if parsed else []
-        # Подбираем вкладки у которых название СОДЕРЖИТ "месяц год"
-        # Это позволяет читать "Июнь 2026 ночь", "Июнь 2026 день", "июнь 2026" и т.д.
-        targets = [nm for nm in names_from_book
-                   if any(key in nm.strip().lower() for key in recent)]
+        # реальные названия свежих месяцев из этой книги
+        targets = [nm for nm in names_from_book if nm.strip().lower() in recent]
         if targets:
             seen_nm = set()
             for nm in targets:
@@ -5891,7 +5884,7 @@ async def _iter_shift_sheets(shift):
                 if rows:
                     sheets[nm] = rows
         else:
-            # имена не получили — пробуем сгенерированные варианты
+            # имена не получили — пробуем сгенерированные варианты, по месяцу до первого успеха
             for m, y in _recent_month_names(15):
                 for nm in (f"{m.capitalize()} {y}", f"{m} {y}", f"{m.upper()} {y}"):
                     rows = await _gviz_sheet(sid, nm)
@@ -6206,7 +6199,7 @@ async def _get_doctor_percents():
     except Exception:
         stored = {}
     # заданные вручную проценты (приоритетные) поверх извлечённых из таблиц
-    return {**DEFAULT_PERCENTS, **stored}
+    return {**stored, **DEFAULT_PERCENTS}
 
 @router.message(Command("setpercent"))
 async def setpercent_cmd(message: Message):
@@ -6288,6 +6281,7 @@ async def diag_cmd(message: Message):
     lines.append("\n\nℹ️ Бот сам читает все вкладки по уже добавленным ссылкам. Если какой-то вкладки нет в списке выше или врач не распознан — пришли мне пару строк из неё.")
     await message.answer("\n".join(lines)[:3900])
 
+@router.message(Command("doctors"))
 async def _doctor_periods():
     rows = await db_all("SELECT DISTINCT period FROM visits WHERE period IS NOT NULL AND period != '' AND src IN ('shift','clean')")
     return sorted([r["period"] for r in rows if r["period"]], reverse=True)
@@ -6336,18 +6330,10 @@ async def cb_dmon(cq: CallbackQuery):
         return
     period = cq.data.split("_", 1)[1]
     await cq.answer("Готовлю отчёт...")
-    DFILTER = "AND doctor IS NOT NULL AND doctor != '' AND doctor != '—' AND LOWER(doctor) NOT LIKE '%не указан%'"
-    # shift — основной источник, clean — резерв (если shift нет), zp — крайний резерв
-    rows = await db_all(f"SELECT doctor,service,kind,ref_from,revenue,percent,pay,src,patient FROM visits WHERE period=? AND src='shift' {DFILTER}", (period,))
-    if not rows:
-        rows = await db_all(f"SELECT doctor,service,kind,ref_from,revenue,percent,pay,src,patient FROM visits WHERE period=? AND src='clean' {DFILTER}", (period,))
-    if not rows:
-        rows = await db_all(f"SELECT doctor,service,kind,ref_from,revenue,percent,pay,src,patient FROM visits WHERE period=? AND src='zp' {DFILTER}", (period,))
+    rows = await db_all("SELECT doctor,service,kind,ref_from,revenue,percent,pay,src,patient FROM visits WHERE period = ?", (period,))
     if not rows:
         await cq.message.answer(f"За {_period_label(period)} данных нет.")
         return
-    zp_pct = {(r["doctor"] or "").lower(): r["percent"] for r in await db_all("SELECT doctor, percent FROM visits WHERE period=? AND src='zp' AND percent>0", (period,))}
-    rows = [{**dict(r), "percent": r["percent"] or zp_pct.get((r["doctor"] or "").lower(), 0)} for r in rows]
     await _render_doctor_detail(cq.message, rows, _period_label(period))
 
 
@@ -6431,19 +6417,13 @@ async def _render_doctor_detail(message, rows, period_label):
     await _send_block(message, f"📊 *Отчёт по врачам · {period_label}*", body)
 
 
-@router.message(Command("doctors"))
 async def doctors_cmd(message: Message):
     if message.from_user.id != ADMIN_ID:
         return
-    raw = message.text or ""
-    parts = raw.split() if raw.startswith("/") else []
+    parts = (message.text or "").split()
     arg = " ".join(parts[1:]).strip()
-    try:
-        synced, sync_err = await _sync_visits()
-        await _ensure_visits_table()
-    except Exception as e:
-        await message.answer(f"⚠️ Ошибка загрузки данных: {e}\n\nПроверь /visits и /setshift")
-        return
+    synced, sync_err = await _sync_visits()
+    await _ensure_visits_table()
 
     on_date = None
     days = None
@@ -6456,25 +6436,19 @@ async def doctors_cmd(message: Message):
         else:
             on_date = _norm_date(arg)
 
-    # ── По умолчанию (кнопка «Доктора») — только сводка по месяцам ──
+    # ── По умолчанию (кнопка «Доктора») — сводка ПО МЕСЯЦАМ ──
     if not arg:
-        aliases = await _get_aliases()
-        pct_map = await _get_doctor_percents()
-
-        allv = await db_all("""
-            SELECT period, day, doctor, revenue FROM visits WHERE src='shift'
-            UNION ALL
-            SELECT period, day, doctor, revenue FROM visits v2 WHERE src='clean'
-              AND period NOT IN (SELECT DISTINCT period FROM visits WHERE src='shift' AND period IS NOT NULL)
-        """)
+        allv = await db_all("SELECT period, day, doctor, revenue FROM visits WHERE src IN ('shift','clean')")
         if not allv:
             msg = "📊 По врачам пока нет данных.\n\n"
             if sync_err:
                 msg += f"⚠️ Таблица: {sync_err}\n\n"
-            msg += "Проверь:\n• /visits — что подключено\n• /setshift — таблицы смен\n• /diag — диагностика"
+            msg += ("Проверь:\n• таблица открыта «по ссылке: Читатель»\n"
+                    "• /visits — что подключено, /diag — диагностика")
             await message.answer(msg)
             return
-
+        aliases = await _get_aliases()
+        pct_map = await _get_doctor_percents()
         per_map = {}
         for r in allv:
             p = r["period"] or ((r["day"] or "")[:7]) or "—"
@@ -6482,233 +6456,57 @@ async def doctors_cmd(message: Message):
             x = per_map.setdefault(p, {}).setdefault(d, {"n": 0, "rev": 0.0})
             x["n"] += 1
             x["rev"] += r["revenue"] or 0
-
         ordered = sorted(per_map.keys(), reverse=True)
+        recent = ordered[:6]
         out = []
-        for p in ordered[:6]:
+        for p in recent:
             docs = per_map[p]
             totn = sum(v["n"] for v in docs.values())
             totr = sum(v["rev"] for v in docs.values())
-            lines = [f"📅 *{_period_label(p)}* — {totn} приёмов, {_money(totr)}"]
+            lines = [f"📅 *{_period_label(p)}* · {totn} приёмов · {_money(totr)}"]
             for d, v in sorted(docs.items(), key=lambda kv: -kv[1]["rev"]):
                 pct = pct_map.get(d)
-                zp = f" (ЗП {_money(v['rev'] * pct / 100)})" if pct else ""
-                lines.append(f"  • {d}: {v['n']} приёмов, {_money(v['rev'])}{zp}")
+                zp = f" · ЗП {pct}%: {_money(v['rev'] * pct / 100)}" if pct else ""
+                lines.append(f"• {d} — {v['n']} приёмов, {_money(v['rev'])}{zp}")
             out.append("\n".join(lines))
-
-        tail = "\n\n👇 Выбери месяц для полного отчёта (день + ночь)"
+        tail = ""
+        more = [p for p in ordered if p not in recent]
+        if more:
+            tail += "\n\n📂 Ещё есть месяцы: " + ", ".join(_period_label(p) for p in more[:12])
+        tail += "\n\nПодробно за месяц: напиши «/doctors Июнь 2026» — врачи, направления, оплаты."
         await _send_block(message, "📊 *Врачи по месяцам*", "\n\n".join(out) + tail)
         ps = await _doctor_periods()
         if ps:
-            await message.answer("📅 Выбери месяц:", reply_markup=_doctor_year_kb(ps))
+            await message.answer("📅 Открыть конкретный месяц — выбери год:", reply_markup=_doctor_year_kb(ps))
         return
 
     # ── Подробный отчёт: за конкретный месяц / дату / N дней ──
-    DFILTER = "AND doctor IS NOT NULL AND doctor != '' AND doctor != '—' AND LOWER(doctor) NOT LIKE '%не указан%'"
-    try:
-        if period:
-            # shift — основной. clean — только если shift для этого периода нет. zp — только резерв.
-            rows = await db_all(f"SELECT doctor,service,kind,ref_from,revenue,percent,pay,src,patient FROM visits WHERE period = ? AND src='shift' {DFILTER}", (period,))
-            if not rows:
-                rows = await db_all(f"SELECT doctor,service,kind,ref_from,revenue,percent,pay,src,patient FROM visits WHERE period = ? AND src='clean' {DFILTER}", (period,))
-            if not rows:
-                rows = await db_all(f"SELECT doctor,service,kind,ref_from,revenue,percent,pay,src,patient FROM visits WHERE period = ? AND src='zp' {DFILTER}", (period,))
-            if rows:
-                zp_pct = {(r["doctor"] or "").lower(): r["percent"] for r in await db_all("SELECT doctor, percent FROM visits WHERE period=? AND src='zp' AND percent>0", (period,))}
-                rows = [{**dict(r), "percent": r["percent"] or zp_pct.get((r["doctor"] or "").lower(), 0)} for r in rows]
-            period_label = _period_label(period)
-        elif on_date:
-            rows = await db_all(f"SELECT doctor,service,kind,ref_from,revenue,percent,pay,src,patient FROM visits WHERE day = ? AND src='shift' {DFILTER}", (on_date,))
-            if not rows:
-                rows = await db_all(f"SELECT doctor,service,kind,ref_from,revenue,percent,pay,src,patient FROM visits WHERE day = ? {DFILTER}", (on_date,))
-            period_label = on_date
-        else:
-            rows = await db_all(f"SELECT doctor,service,kind,ref_from,revenue,percent,pay,src,patient FROM visits WHERE day >= date('now', ?) AND day <= date('now') AND src='shift' {DFILTER}", (f"-{days - 1} day",))
-            if not rows:
-                rows = await db_all(f"SELECT doctor,service,kind,ref_from,revenue,percent,pay,src,patient FROM visits WHERE day >= date('now', ?) AND day <= date('now') {DFILTER}", (f"-{days - 1} day",))
-            period_label = f"{days} дн."
-        if not rows:
-            await message.answer(f"📊 За {period_label or 'этот период'} данных нет.\n\nПроверь:\n• таблица смен подключена: /setshift")
+    if period:
+        rows = await db_all("SELECT doctor,service,kind,ref_from,revenue,percent,pay,src,patient FROM visits WHERE period = ?", (period,))
+        period_label = _period_label(period)
+    elif on_date:
+        rows = await db_all("SELECT doctor,service,kind,ref_from,revenue,percent,pay,src,patient FROM visits WHERE day = ?", (on_date,))
+        period_label = on_date
+    else:
+        rows = await db_all("SELECT doctor,service,kind,ref_from,revenue,percent,pay,src,patient FROM visits WHERE day >= date('now', ?)",
+                            (f"-{days - 1} day",))
+        period_label = f"{days} дн."
+    if not rows:
+        allrows = await db_all("SELECT doctor,service,kind,ref_from,revenue,percent,pay,src,patient FROM visits")
+        if not allrows:
+            msg = "📊 По врачам пока нет данных.\n\n"
+            if sync_err:
+                msg += f"⚠️ Таблица: {sync_err}\n\n"
+            msg += ("Проверь:\n"
+                    "• таблица открыта «по ссылке: Читатель»\n"
+                    "• ссылка ведёт на нужную вкладку (день/ночь)\n"
+                    "• /visits — что подключено, /diag — диагностика")
+            await message.answer(msg)
             return
-        await _render_doctor_detail(message, rows, period_label)
-    except Exception as e:
-        await message.answer(f"⚠️ Ошибка при формировании отчёта: {e}")
-
-
-@router.message(Command("calllist"))
-async def calllist_cmd(message: Message, state: FSMContext):
-    """
-    /calllist — запустить обзвон по списку.
-    После команды отправь список в любом формате:
-
-      +79991234567 Иванова Мария — болит зуб
-      89991234568, Петров Иван, подтвердить запись
-      Кузнецова Анна +7 999 111-22-33
-
-    Алина позвонит каждому. Результаты придут сюда.
-    """
-    if message.from_user.id != ADMIN_ID:
-        return
-    await state.set_state(State_.calllist)
-    await message.answer(
-        "📋 *Обзвон — Алина позвонит по списку*\n\n"
-        "Пришли список в любом формате, каждый человек с новой строки:\n\n"
-        "`+79991234567 Иванова Мария — болит зуб`\n"
-        "`89991234568 Петров Иван — подтвердить запись`\n"
-        "`Кузнецова Анна +7 999 111-22-33`\n\n"
-        "Тип звонка определяется автоматически по заметке:\n"
-        "• *подтвердить / запись* → звонок-подтверждение\n"
-        "• *отзыв / как прошло* → звонок за отзывом\n"
-        "• *ничего* → продажный сценарий\n\n"
-        "/cancel — отменить",
-        parse_mode="Markdown"
-    )
-
-
-@router.message(State_.calllist, Command("cancel"))
-async def calllist_cancel(message: Message, state: FSMContext):
-    if message.from_user.id != ADMIN_ID:
-        return
-    await state.clear()
-    await message.answer("❌ Отменено.", reply_markup=main_kb())
-
-
-@router.message(State_.calllist)
-async def calllist_receive(message: Message, state: FSMContext):
-    """Получаем список, показываем превью, кнопки Запустить / Отмена."""
-    if message.from_user.id != ADMIN_ID:
-        return
-
-    from call_queue import parse_call_list
-    text = message.text or ""
-    tasks = parse_call_list(text)
-
-    if not tasks:
-        await message.answer(
-            "⚠️ Не нашёл ни одного номера. Убедись что в каждой строке есть телефон:\n"
-            "`+79991234567 Имя Фамилия`",
-            parse_mode="Markdown"
-        )
-        return
-
-    # Сохраняем список в FSM
-    raw_tasks = [{"phone": t.phone, "name": t.name, "note": t.note, "call_type": t.call_type}
-                 for t in tasks]
-    await state.update_data(tasks=raw_tasks)
-
-    # Превью
-    lines = [f"📋 *Список для обзвона — {len(tasks)} чел.*\n"]
-    type_emoji = {"confirm": "✅", "review": "⭐", "return": "🔄", "inbound": "📞"}
-    for i, t in enumerate(tasks[:20], 1):
-        em = type_emoji.get(t.call_type, "📞")
-        lines.append(f"{i}. {em} {t.name} — {t.phone}" + (f"\n    _{t.note}_" if t.note else ""))
-    if len(tasks) > 20:
-        lines.append(f"...и ещё {len(tasks) - 20}")
-
-    lines.append("\n_Алина позвонит по очереди с паузой 45 сек._")
-
-    kb = InlineKeyboardBuilder()
-    kb.row(
-        InlineKeyboardButton(text="🚀 Запустить", callback_data="callqueue_start"),
-        InlineKeyboardButton(text="❌ Отмена",    callback_data="callqueue_cancel"),
-    )
-    await message.answer("\n".join(lines), parse_mode="Markdown", reply_markup=kb.as_markup())
-
-
-@router.callback_query(F.data == "callqueue_start")
-async def callqueue_start(cq: CallbackQuery, state: FSMContext):
-    if cq.from_user.id != ADMIN_ID:
-        return
-    data = await state.get_data()
-    raw_tasks = data.get("tasks", [])
-    await state.clear()
-
-    if not raw_tasks:
-        await cq.answer("Список пуст")
-        return
-
-    from call_queue import CallTask, load_queue, start_queue, _notify
-    tasks = [CallTask(**t) for t in raw_tasks]
-    load_queue(tasks)
-
-    await cq.message.edit_reply_markup(reply_markup=None)
-    await cq.message.answer(
-        f"🚀 Запускаю обзвон — {len(tasks)} человек.\n"
-        f"Результаты буду присылать по мере звонков.",
-    )
-    await cq.answer()
-
-    # Запускаем в фоне чтобы не блокировать бот
-    asyncio.create_task(start_queue())
-
-
-@router.callback_query(F.data == "callqueue_cancel")
-async def callqueue_cancel_cb(cq: CallbackQuery, state: FSMContext):
-    if cq.from_user.id != ADMIN_ID:
-        return
-    await state.clear()
-    await cq.message.edit_reply_markup(reply_markup=None)
-    await cq.message.answer("❌ Обзвон отменён.")
-    await cq.answer()
-
-
-@router.message(Command("alina"))
-async def alina_cmd(message: Message):
-    """
-    /alina [текст] — тест голосового агента.
-    Без текста — начинает новый разговор.
-    С текстом — продолжает разговор (как пациент).
-
-    Примеры:
-      /alina                      ← приветствие Алины
-      /alina Хочу записаться      ← ответ на фразу
-      /alina reset                ← сбросить разговор
-    """
-    if message.from_user.id != ADMIN_ID:
-        return
-    parts = (message.text or "").split(maxsplit=1)
-    user_text = parts[1].strip() if len(parts) > 1 else ""
-
-    call_id = f"tg_{message.from_user.id}"
-    base = os.getenv("BASE_URL", "http://localhost:8000")
-
-    try:
-        async with __import__("httpx").AsyncClient(timeout=30) as client:
-            if user_text.lower() in ("reset", "сброс", "новый"):
-                # Сбрасываем разговор
-                await client.post(f"{base}/admin/call/end", json={"call_id": call_id})
-                await message.answer("🔄 Разговор сброшен. Напиши /alina чтобы начать заново.")
-                return
-
-            r = await client.post(
-                f"{base}/admin/call/test",
-                json={
-                    "call_id":      call_id,
-                    "message":      user_text or "",
-                    "call_type":    "inbound",
-                    "patient_name": "",
-                }
-            )
-            data = r.json()
-
-        reply   = data.get("alina", "")
-        booked  = data.get("booked", False)
-        end     = data.get("end_call", False)
-
-        prefix = "🦷 *Алина:*\n"
-        suffix = ""
-        if booked:
-            b = data.get("booking") or {}
-            suffix = (f"\n\n✅ *Записала пациента*\n"
-                      f"👤 {b.get('name','?')} | 📞 {b.get('phone','?')}\n"
-                      f"🕐 {b.get('time_pref','?')} | 🔖 {b.get('issue','?')}")
-        if end:
-            suffix += "\n\n_(разговор завершён — /alina reset для нового)_"
-
-        await message.answer(f"{prefix}{reply}{suffix}", parse_mode="Markdown")
-
-    except Exception as e:
-        await message.answer(f"⚠️ Агент недоступен: {e}\n\nАгент работает только если запущен FastAPI сервер.")
+        rng = await db_get("SELECT MIN(day) a, MAX(day) b FROM visits")
+        rows = allrows
+        period_label = f"все данные ({rng['a']} — {rng['b']})"
+    await _render_doctor_detail(message, rows, period_label)
 
 
 @router.message(Command("fix"))

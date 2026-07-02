@@ -1984,9 +1984,9 @@ async def process_text(message: Message, state: FSMContext):
                 "Используй именно эту дату, когда считаешь возраст по дате рождения или рассуждаешь о времени — не выдумывай год."
             )
         use_history = tool_id in ("chat", "psy")
-        # Агент «Аура» ходит в интернет через веб-поиск Claude (если есть ключ Anthropic)
-        psy_web = (tool_id == "psy" and anthropic_client is not None)
-        gen_model = "claude" if psy_web else model_id
+        # Веб-поиск для психолога временно ВЫКЛЮЧЕН: он платный и нестабилен. Психолог работает на обычном Claude.
+        psy_web = False
+        gen_model = "claude" if tool_id == "psy" else model_id
         result = await call_text_ai(user_text, system, gen_model, uid=message.from_user.id, use_history=use_history, image_url=image_url, web=psy_web)
         bal    = await get_balance(message.from_user.id)
         model_info = TEXT_MODELS.get(model_id, TEXT_MODELS["claude"])
@@ -2045,14 +2045,16 @@ async def process_text(message: Message, state: FSMContext):
 
     except Exception as e:
         await add_credits(message.from_user.id, cost, "bonus", "Возврат: ошибка AI")
+        logging.error(f"Text AI error [{tool_id}/{model_id}]: {e}")
+        err = str(e)[:350] or type(e).__name__
         try:
-            await thinking.edit_text(f"⚠️ Ошибка AI. Токены возвращены.\n\n{str(e)[:100]}")
+            await thinking.edit_text(f"⚠️ Ошибка AI. Токены возвращены.\n\nПричина: {err}")
         except Exception:
-            await message.answer("⚠️ Ошибка AI. Токены возвращены.")
-        if tool_id == "chat":
+            await message.answer(f"⚠️ Ошибка AI. Токены возвращены.\n\nПричина: {err}")
+        if tool_id in ("chat", "psy"):
             await state.set_state(State_.waiting_text)
             await state.update_data(tool=tool_id, model=model_id, cost=cost)
-            await message.answer("Попробуй ещё раз:", reply_markup=cancel_kb())
+            await message.answer("Попробуй ещё раз:", reply_markup=(psy_kb() if tool_id == "psy" else cancel_kb()))
         else:
             await message.answer("Попробуй ещё раз:", reply_markup=text_tools_kb())
         logging.error(f"Text AI error [{tool_id}/{model_id}]: {e}")

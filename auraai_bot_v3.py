@@ -1426,7 +1426,6 @@ def psy_kb() -> ReplyKeyboardMarkup:
     b = ReplyKeyboardBuilder()
     b.row(KeyboardButton(text="🧠 Психолог"), KeyboardButton(text="🔮 Предназначение"))
     b.row(KeyboardButton(text="💕 Отношения"), KeyboardButton(text="🌿 Здоровье"))
-    b.row(KeyboardButton(text="🫁 Подышать"), KeyboardButton(text="🌍 Заземлиться"))
     b.row(KeyboardButton(text="🔁 Разобрать мысль"), KeyboardButton(text="📓 Дневник"))
     b.row(KeyboardButton(text="🗑 Очистить историю чата"))
     b.row(KeyboardButton(text="🏠 В главное меню"))

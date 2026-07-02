@@ -439,9 +439,11 @@ async def _analyze_callibri_call(
     phone: str, name: str, recording_url: str,
     duration: str, call_status: str, is_lid: str, source: str
 ):
-    """Скачивает запись звонка, транскрибирует и анализирует через AI."""
+    """
+    Скачивает запись, транскрибирует через Whisper,
+    Алина анализирует и даёт конкретную рекомендацию что делать дальше.
+    """
     try:
-        # Скачиваем аудио запись
         async with httpx.AsyncClient(timeout=60) as client:
             r = await client.get(recording_url)
             if r.status_code != 200:
@@ -449,42 +451,54 @@ async def _analyze_callibri_call(
                 return
             audio_bytes = r.content
 
-        # Транскрибируем через Whisper
         transcript = await speech_to_text(audio_bytes, "mp3")
         if not transcript:
+            await notify_admin(f"🎙 Запись {name} ({phone}) — не удалось распознать речь")
             return
 
         log.info(f"Транскрипция ({phone}): {transcript[:200]}")
 
-        # Анализируем через Claude
-        analysis_prompt = f"""Проанализируй звонок в стоматологию:
+        # Алина анализирует звонок как умный администратор
+        prompt = f"""Ты — Алина, старший администратор стоматологии «Аура».
+Прослушала запись звонка и анализируешь её для владельца клиники.
 
-Пациент: {name} ({phone})
-Статус: {call_status}, Длительность: {duration} сек
-Источник: {source}
-Это лид: {is_lid}
+Данные звонка:
+• Пациент: {name or 'неизвестен'} ({phone})
+• Источник: {source or 'прямой звонок'}
+• Длительность: {duration} сек
+• Статус: {call_status}
+• Это новый лид: {'да' if str(is_lid) in ('1','true','True') else 'нет'}
 
-Транскрипция:
+Транскрипция разговора:
 {transcript}
 
-Ответь кратко:
-1. О чём был звонок?
-2. Что хотел пациент?
-3. Итог / нужен ли перезвон?"""
+Дай анализ строго по пунктам (коротко, по-деловому):
+
+1. 🎯 Цель звонка (1 строка)
+2. 💬 Итог разговора (записался / не записался / перезвонит / другое)
+3. ⚡ Действие (что сделать ПРЯМО СЕЙЧАС — перезвонить / записать / ничего)
+4. 💡 Что сказать если перезванивать (готовая фраза для администратора, 1-2 предложения)
+5. ⭐ Потенциал (горячий лид / тёплый / холодный / уже клиент)"""
 
         response = await anthropic.messages.create(
             model="claude-sonnet-4-6",
-            max_tokens=300,
-            messages=[{"role": "user", "content": analysis_prompt}]
+            max_tokens=400,
+            messages=[{"role": "user", "content": prompt}]
         )
         analysis = response.content[0].text
 
-        # Отправляем полный анализ в Telegram
+        lid_emoji = "🎯 *ЛИД*" if str(is_lid) in ("1", "true", "True") else ""
+        dur_sec = int(duration or 0)
+        dur_str = f"{dur_sec // 60}:{dur_sec % 60:02d}" if dur_sec else "—"
+
         await notify_admin(
-            f"🧠 Анализ звонка {name} ({phone})\n\n"
-            f"📝 Транскрипция:\n{transcript[:500]}\n\n"
-            f"💡 Итог:\n{analysis}"
+            f"📞 *Разбор звонка* {lid_emoji}\n"
+            f"👤 {name or 'Пациент'} · {phone}\n"
+            f"⏱ {dur_str} · {source or 'прямой звонок'}\n\n"
+            f"{analysis}\n\n"
+            f"📝 *Транскрипция:*\n_{transcript[:600]}_"
         )
 
     except Exception as e:
         log.error(f"Ошибка анализа звонка: {e}")
+        await notify_admin(f"⚠️ Не удалось проанализировать звонок {phone}: {e}")

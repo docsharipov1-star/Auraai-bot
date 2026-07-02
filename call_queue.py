@@ -1,20 +1,23 @@
 """
 Менеджер исходящих и входящих звонков для Алины.
+Телефония: Callibri (callibri.ru) — работает в России.
 
 ИСХОДЯЩИЕ (список от администратора):
-  1. Админ присылает список в Telegram (имя + телефон)
-  2. Заdarma инициирует звонок каждому
-  3. Когда пациент берёт трубку → Zadarma отдаёт запись
-  4. Алина анализирует запись → следующий ход → новый звонок с ответом
+  1. Админ присылает список в Telegram
+  2. Callibri инициирует «Обратный звонок» каждому
+  3. После звонка Callibri присылает запись на webhook
+  4. Алина транскрибирует → анализирует → итог в Telegram
 
 ВХОДЯЩИЕ:
-  Zadarma перенаправляет входящий → webhook → Алина отвечает через IVR.
+  Пациент звонит → Callibri записывает → webhook /callibri/webhook →
+  Алина транскрибирует запись → даёт рекомендацию что делать дальше
 
-Настройка Zadarma (один раз в личном кабинете):
-  Настройки → Переадресация → Webhook → https://ВАШ_ДОМЕН/alina/event
+Настройка Callibri (один раз в личном кабинете callibri.ru):
+  Настройки → Интеграции → Webhook → https://ВАШ_ДОМЕН/callibri/webhook
 
 Переменные Railway:
-  ZADARMA_KEY, ZADARMA_SECRET, ZADARMA_NUMBER
+  CALLIBRI_KEY   — API-ключ (Настройки → API)
+  CALLIBRI_WIDGET_ID — ID виджета для обратного звонка (опционально)
 """
 
 import os
@@ -33,13 +36,12 @@ from fastapi.responses import Response
 
 log = logging.getLogger("call_queue")
 
-ZADARMA_KEY    = os.getenv("ZADARMA_KEY", "")
-ZADARMA_SECRET = os.getenv("ZADARMA_SECRET", "")
-ZADARMA_NUMBER = os.getenv("ZADARMA_NUMBER", "")
-BASE_URL       = os.getenv("BASE_URL", "https://auraai-bot-production.up.railway.app")
-ADMIN_TG_ID    = os.getenv("ADMIN_ID", "6766016614")
-BOT_TOKEN      = os.getenv("BOT_TOKEN", "")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+CALLIBRI_KEY       = os.getenv("CALLIBRI_KEY", "")
+CALLIBRI_WIDGET_ID = os.getenv("CALLIBRI_WIDGET_ID", "")
+BASE_URL           = os.getenv("BASE_URL", "https://auraai-bot-production.up.railway.app")
+ADMIN_TG_ID        = os.getenv("ADMIN_ID", "6766016614")
+BOT_TOKEN          = os.getenv("BOT_TOKEN", "")
+OPENAI_API_KEY     = os.getenv("OPENAI_API_KEY", "")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -48,13 +50,13 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 
 @dataclass
 class CallTask:
-    phone:      str
-    name:       str
-    note:       str = ""           # причина звонка
-    call_type:  str = "inbound"   # inbound / confirm / review / return
-    status:     str = "pending"   # pending / calling / done / failed / no_answer
-    zadarma_id: str = ""
-    result:     str = ""          # кратко что решили
+    phone:       str
+    name:        str
+    note:        str = ""           # причина звонка
+    call_type:   str = "inbound"   # inbound / confirm / review / return
+    status:      str = "pending"   # pending / calling / done / failed / no_answer
+    callibri_id: str = ""
+    result:      str = ""          # кратко что решили
 
 
 @dataclass
@@ -133,44 +135,42 @@ def _norm_phone(p: str) -> str:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Zadarma API
+# Callibri API
 # ─────────────────────────────────────────────────────────────────────────────
 
-import hmac, hashlib
+async def callibri_call(phone: str, name: str = "") -> dict:
+    """
+    Инициирует «Обратный звонок» через Callibri.
+    Callibri позвонит пациенту, соединит с менеджером (или IVR).
 
-def _zd_sign(method: str, params: dict) -> str:
-    param_str = "&".join(f"{k}={v}" for k, v in sorted(params.items()))
-    data = method + param_str + hashlib.md5(param_str.encode()).hexdigest()
-    return base64.b64encode(
-        hmac.new(ZADARMA_SECRET.encode(), data.encode(), hashlib.sha1).digest()
-    ).decode()
+    Документация: https://api.callibri.ru/
+    Раздел: POST /api/v3/callback
+    """
+    if not CALLIBRI_KEY:
+        return {"success": False, "error": "CALLIBRI_KEY не задан в Railway"}
 
+    payload = {
+        "api_key":   CALLIBRI_KEY,
+        "phone":     phone,
+        "name":      name or "Пациент",
+        "source":    "bot_calllist",
+    }
+    if CALLIBRI_WIDGET_ID:
+        payload["widget_id"] = CALLIBRI_WIDGET_ID
 
-async def _zd_request(method: str, params: dict = None, http_method: str = "POST") -> dict:
-    if not ZADARMA_KEY:
-        return {"status": "error", "message": "ZADARMA_KEY не задан"}
-    params = params or {}
-    sign = _zd_sign(method, params)
-    headers = {"Authorization": f"{ZADARMA_KEY}:{sign}"}
-    async with httpx.AsyncClient(timeout=20) as client:
-        if http_method == "GET":
-            r = await client.get(f"https://api.zadarma.com{method}", params=params, headers=headers)
-        else:
-            r = await client.post(f"https://api.zadarma.com{method}", data=params, headers=headers)
     try:
-        return r.json()
-    except Exception:
-        return {"status": "error", "raw": r.text[:200]}
-
-
-async def zadarma_call(phone: str, call_id: str) -> dict:
-    """Инициирует исходящий звонок через Zadarma callback API."""
-    return await _zd_request("/v1/request/callback/", {
-        "from":     ZADARMA_NUMBER,
-        "to":       phone,
-        "sip":      ZADARMA_NUMBER,
-        "callBack": f"{BASE_URL}/alina/event",
-    })
+        async with httpx.AsyncClient(timeout=20) as client:
+            r = await client.post(
+                "https://api.callibri.ru/api/v3/callback",
+                json=payload,
+                headers={"Content-Type": "application/json"},
+            )
+            data = r.json()
+            log.info(f"Callibri call {phone}: {data}")
+            return data
+    except Exception as e:
+        log.error(f"Callibri API error: {e}")
+        return {"success": False, "error": str(e)}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -249,14 +249,13 @@ async def start_queue():
             "turn": 0,
         }
 
-        if ZADARMA_KEY:
-            result = await zadarma_call(task.phone, call_id)
-            ok = result.get("status") == "success"
+        if CALLIBRI_KEY:
+            result = await callibri_call(task.phone, task.name)
+            ok = result.get("success", False) or result.get("status") == "ok"
         else:
-            # Нет телефонии — симулируем
             ok = False
             task.status = "failed"
-            task.result = "нет ZADARMA_KEY"
+            task.result = "нет CALLIBRI_KEY (добавь в Railway)"
 
         if ok:
             await _notify(f"📞 [{i}/{total}] Звоню {task.name} ({task.phone})...")

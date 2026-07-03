@@ -2163,18 +2163,21 @@ async def process_text(message: Message, state: FSMContext):
         logging.error(f"Text AI timeout [{tool_id}/{model_id}]")
 
     except Exception as e:
+        err_text = str(e)
+        logging.error(f"Text AI error [{tool_id}/{model_id}]: {err_text}")
         await add_credits(message.from_user.id, cost, "bonus", "Возврат: ошибка AI")
         try:
-            await thinking.edit_text(f"⚠️ Ошибка AI. Токены возвращены.\n\n{str(e)[:100]}")
+            await thinking.edit_text(f"⚠️ {err_text[:200]}")
         except Exception:
-            await message.answer("⚠️ Ошибка AI. Токены возвращены.")
-        if tool_id == "chat":
+            pass
+        await message.answer(f"Что-то пошло не так. Попробуй ещё раз.\n\nДеталь: {err_text[:200]}")
+        PSY_TOOLS_IDS = ("psy", "relations", "health_psy", "coach")
+        if tool_id in ("chat",) + PSY_TOOLS_IDS:
             await state.set_state(State_.waiting_text)
             await state.update_data(tool=tool_id, model=model_id, cost=cost)
-            await message.answer("Попробуй ещё раз:", reply_markup=cancel_kb())
+            await message.answer("Напиши ещё раз:", reply_markup=psy_kb() if tool_id in PSY_TOOLS_IDS else cancel_kb())
         else:
-            await message.answer("Попробуй ещё раз:", reply_markup=text_tools_kb())
-        logging.error(f"Text AI error [{tool_id}/{model_id}]: {e}")
+            await message.answer("Выбери инструмент:", reply_markup=text_tools_kb())
 
 # ══════════════════════════════════════════════════════
 #  ГЕНЕРАЦИЯ КАРТИНОК

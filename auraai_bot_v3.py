@@ -1998,7 +1998,7 @@ async def process_voice_message(message: Message, state: FSMContext):
     await note.delete()
 
     # Показываем что распознали
-    await message.answer(f"_{text}_", parse_mode="Markdown")
+    await message.answer(f"🎙 «{text}»")
 
     # Дальше — как обычный текст
     model_id = data.get("model", "claude")
@@ -2071,7 +2071,7 @@ async def process_text(message: Message, state: FSMContext):
         if user_text == "📊 Моё настроение":
             await message.answer(
                 await get_mood_summary(message.from_user.id),
-                parse_mode="Markdown", reply_markup=psy_kb()
+                reply_markup=psy_kb()
             )
             await state.set_state(State_.waiting_text)
             await state.update_data(tool=tool_id, model=model_id, cost=cost)
@@ -2111,23 +2111,21 @@ async def process_text(message: Message, state: FSMContext):
         for i, chunk in enumerate(chunks):
             if i == 0:
                 if is_psy:
-                    # Для психолог-агентов — чистый текст, без заголовка модели
+                    # Для психолог-агентов — без parse_mode, чтобы Markdown от Claude не ломал Telegram
                     try:
-                        await thinking.edit_text(chunk, parse_mode="Markdown")
-                    except Exception:
                         await thinking.edit_text(chunk)
+                    except Exception:
+                        await message.answer(chunk)
                 else:
                     try:
                         await thinking.edit_text(
-                            f"{model_info['emoji']} *{model_info['name']}*\n\n{chunk}\n\n"
-                            f"💎 Потрачено: *{cost} тк.* · Остаток: *{bal} тк.*",
-                            parse_mode="Markdown"
+                            f"{model_info['emoji']} {model_info['name']}\n\n{chunk}\n\n"
+                            f"Потрачено: {cost} тк. · Остаток: {bal} тк.",
                         )
                     except Exception:
                         await message.answer(
-                            f"{model_info['emoji']} *{model_info['name']}*\n\n{chunk}\n\n"
-                            f"💎 Потрачено: *{cost} тк.* · Остаток: *{bal} тк.*",
-                            parse_mode="Markdown"
+                            f"{model_info['emoji']} {model_info['name']}\n\n{chunk}\n\n"
+                            f"Потрачено: {cost} тк. · Остаток: {bal} тк.",
                         )
             else:
                 await message.answer(chunk)

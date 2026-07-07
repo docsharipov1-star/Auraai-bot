@@ -9,3 +9,4 @@ uvicorn>=0.32.0
 pydantic>=2.0.0
 telethon>=1.36.0
 gtts>=2.5.0
+aiosmtplib>=3.0.0

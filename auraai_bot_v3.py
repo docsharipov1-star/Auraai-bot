@@ -7287,17 +7287,6 @@ async def server_cmd(message: Message):
     await message.answer(f"<pre>{output}</pre>", parse_mode="HTML")
 
 
-# Catch-all: пользователь без состояния (после перезапуска Railway/бота)
-@router.message(StateFilter(None), F.text, ~F.from_user.is_bot)
-async def catch_no_state(message: Message):
-    bal = await get_balance(message.from_user.id)
-    is_admin = message.from_user.id == ADMIN_ID
-    await message.answer(
-        f"👋 Привет! Нажми /start чтобы начать.\n\n💎 Токены: {bal}",
-        reply_markup=main_kb(is_admin)
-    )
-
-
 async def main():
     global anthropic_client, openai_client, deepseek_client
 

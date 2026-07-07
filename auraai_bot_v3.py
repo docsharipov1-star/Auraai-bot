@@ -303,7 +303,10 @@ async def init_db():
                 stars_balance       INTEGER DEFAULT 0,
                 stars_earned_total  INTEGER DEFAULT 0,
                 referrals_count     INTEGER DEFAULT 0,
-                registered_at       TEXT    DEFAULT CURRENT_TIMESTAMP
+                registered_at       TEXT    DEFAULT CURRENT_TIMESTAMP,
+                real_name           TEXT,
+                birth_date          TEXT,
+                numerology_profile  TEXT
             );
             CREATE TABLE IF NOT EXISTS transactions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1384,6 +1387,32 @@ async def clear_history(uid: int, tool: str = None):
 # ── Настроение (для агента «Аура») ────────────────────
 MOOD_LABELS = {1: "😟 Очень плохо", 2: "😕 Так себе", 3: "😐 Нормально", 4: "🙂 Хорошо", 5: "😄 Отлично"}
 
+async def save_user_profile(uid: int, real_name: str, birth_date: str, numerology_profile: str):
+    await db_run(
+        "UPDATE users SET real_name=?, birth_date=?, numerology_profile=? WHERE id=?",
+        (real_name, birth_date, numerology_profile, uid)
+    )
+
+async def get_user_profile(uid: int) -> dict:
+    row = await db_get("SELECT real_name, birth_date, numerology_profile FROM users WHERE id=?", (uid,))
+    if row:
+        return {"real_name": row["real_name"], "birth_date": row["birth_date"], "numerology_profile": row["numerology_profile"]}
+    return {}
+
+async def build_context_prefix(uid: int) -> str:
+    """Добавляет в начало системного промпта что мы знаем о пользователе."""
+    p = await get_user_profile(uid)
+    parts = []
+    if p.get("real_name"):
+        parts.append(f"Имя пользователя: {p['real_name']}")
+    if p.get("birth_date"):
+        parts.append(f"Дата рождения: {p['birth_date']}")
+    if p.get("numerology_profile"):
+        parts.append(f"Нумерологический профиль:\n{p['numerology_profile']}")
+    if parts:
+        return "О ПОЛЬЗОВАТЕЛЕ (используй если уместно):\n" + "\n".join(parts) + "\n\n"
+    return ""
+
 async def log_mood(uid: int, score: int):
     await db_run("INSERT INTO mood_log (user_id, score) VALUES (?, ?)", (uid, score))
 
@@ -2105,8 +2134,9 @@ async def process_text(message: Message, state: FSMContext):
         await message.answer("Введи текст или отправь фото:")
         return
 
-    # Агент «Аура»: показать историю настроения / превратить кнопку-инструмент в запрос
-    if tool_id == "psy":
+    # Кнопки-инструменты работают во всех psy-агентах
+    PSY_TOOLS_ALL = ("psy", "relations", "health_psy", "coach")
+    if tool_id in PSY_TOOLS_ALL:
         if user_text == "📊 Моё настроение":
             await message.answer(
                 await get_mood_summary(message.from_user.id),
@@ -2138,6 +2168,11 @@ async def process_text(message: Message, state: FSMContext):
 
     try:
         system = SYSTEM_PROMPTS.get(tool_id, SYSTEM_PROMPTS["chat"])
+        # Для psy-агентов добавляем что знаем о пользователе (имя, дата, нумерология)
+        if is_psy:
+            ctx = await build_context_prefix(message.from_user.id)
+            if ctx:
+                system = ctx + system
         use_history = tool_id in ("chat", "psy", "relations", "health_psy", "coach")
         gen_model = "claude" if is_psy else model_id
         result = await call_text_ai(user_text, system, gen_model, uid=message.from_user.id, use_history=use_history, image_url=image_url, tool=tool_id)
@@ -6970,6 +7005,9 @@ async def numerology_receive(message: Message, state: FSMContext):
             "4. Что личный год говорит про сейчас\n"
             "Завершь одним глубоким коучинговым вопросом."
         )
+
+        # Сохраняем профиль чтобы все агенты знали имя и дату рождения
+        await save_user_profile(message.from_user.id, full_name, birth_date, profile_text)
 
         result = await call_text_ai(prompt, system, "claude", uid=message.from_user.id, tool="coach")
         bal = await get_balance(message.from_user.id)

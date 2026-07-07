@@ -365,20 +365,6 @@ async def init_db():
                 key TEXT PRIMARY KEY,
                 value TEXT
             );
-            CREATE TABLE IF NOT EXISTS psy_memory (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER NOT NULL,
-                summary TEXT NOT NULL,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP
-            );
-            CREATE INDEX IF NOT EXISTS idx_psy_memory_user ON psy_memory(user_id);
-            CREATE TABLE IF NOT EXISTS psy_monthly_report (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER NOT NULL,
-                report TEXT NOT NULL,
-                period TEXT NOT NULL,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP
-            );
         """)
         await db.commit()
 
@@ -1427,76 +1413,6 @@ async def build_context_prefix(uid: int) -> str:
         return "О ПОЛЬЗОВАТЕЛЕ (используй если уместно):\n" + "\n".join(parts) + "\n\n"
     return ""
 
-async def save_psy_memory(uid: int, summary: str):
-    """Сохраняем краткое резюме сессии в долгосрочную память."""
-    await db_run(
-        "INSERT INTO psy_memory (user_id, summary) VALUES (?, ?)",
-        (uid, summary)
-    )
-    # Держим только последние 30 резюме
-    await db_run(
-        "DELETE FROM psy_memory WHERE user_id=? AND id NOT IN "
-        "(SELECT id FROM psy_memory WHERE user_id=? ORDER BY created_at DESC LIMIT 30)",
-        (uid, uid)
-    )
-
-async def get_psy_memory(uid: int) -> str:
-    """Загружаем ключевые темы из прошлых сессий."""
-    rows = await db_all(
-        "SELECT summary, created_at FROM psy_memory WHERE user_id=? ORDER BY created_at DESC LIMIT 10",
-        (uid,)
-    )
-    if not rows:
-        return ""
-    lines = [f"- {r['summary']}" for r in rows]
-    return "ПАМЯТЬ О ПОЛЬЗОВАТЕЛЕ (из прошлых разговоров):\n" + "\n".join(lines) + "\n\n"
-
-async def extract_session_memory(uid: int, conversation: list) -> str:
-    """Claude извлекает ключевые инсайты из разговора для сохранения."""
-    if not anthropic_client or len(conversation) < 4:
-        return ""
-    try:
-        msgs = [{"role": m["role"], "content": m["content"]} for m in conversation[-20:]]
-        resp = await anthropic_client.messages.create(
-            model="claude-sonnet-4-6",
-            max_tokens=200,
-            system=(
-                "Ты анализируешь разговор пользователя с психологом. "
-                "Выдели 1-3 ключевых факта о человеке которые важно помнить в будущем. "
-                "Пиши кратко, от третьего лица: «Переживает из-за...», «Боится...», «Работает над...». "
-                "Только факты, без интерпретаций. Если ничего важного — верни пустую строку."
-            ),
-            messages=msgs + [{"role": "user", "content": "Что важно запомнить об этом человеке?"}],
-        )
-        return resp.content[0].text.strip()
-    except Exception:
-        return ""
-
-async def generate_monthly_report(uid: int) -> str:
-    """Ежемесячный отчёт на основе всей истории и памяти."""
-    if not anthropic_client:
-        return "Отчёт недоступен — нет API ключа."
-    memory_rows = await db_all(
-        "SELECT summary, created_at FROM psy_memory WHERE user_id=? ORDER BY created_at ASC",
-        (uid,)
-    )
-    if not memory_rows:
-        return "Пока недостаточно данных для отчёта. Продолжай общаться с психологом 💛"
-    memory_text = "\n".join([f"[{r['created_at'][:10]}] {r['summary']}" for r in memory_rows])
-    try:
-        resp = await anthropic_client.messages.create(
-            model="claude-sonnet-4-6",
-            max_tokens=800,
-            system="Ты — Аура, психолог. Составь тёплый, честный месячный отчёт о прогрессе человека.",
-            messages=[{"role": "user", "content":
-                f"Вот заметки о разговорах за последнее время:\n{memory_text}\n\n"
-                "Составь отчёт: главные темы, что изменилось, что осталось, на что обратить внимание дальше. "
-                "Тепло, без оценок, как письмо от психолога пациенту."}],
-        )
-        return resp.content[0].text.strip()
-    except Exception as e:
-        return f"Ошибка генерации отчёта: {e}"
-
 async def log_mood(uid: int, score: int):
     await db_run("INSERT INTO mood_log (user_id, score) VALUES (?, ?)", (uid, score))
 
@@ -1561,11 +1477,6 @@ PSY_TOOLS = {
     "📓 Дневник": (
         "Предложи мне 2–3 мягких вопроса для дневника, чтобы я выгрузил мысли и чувства за сегодня."
     ),
-    "🧘 Практика сейчас": (
-        "Посмотри на наш разговор и подбери мне технику которая подойдёт именно сейчас. "
-        "Если разговора ещё не было — предложи простое 5-минутное упражнение для снятия напряжения. "
-        "Проведи пошагово, жди моей реакции после каждого шага."
-    ),
 }
 
 def psy_kb() -> ReplyKeyboardMarkup:
@@ -1573,7 +1484,6 @@ def psy_kb() -> ReplyKeyboardMarkup:
     b.row(KeyboardButton(text="🧠 Психолог"), KeyboardButton(text="🔮 Предназначение"))
     b.row(KeyboardButton(text="💕 Отношения"), KeyboardButton(text="🌿 Здоровье"))
     b.row(KeyboardButton(text="🔁 Разобрать мысль"), KeyboardButton(text="📓 Дневник"))
-    b.row(KeyboardButton(text="🧘 Практика сейчас"), KeyboardButton(text="📊 Мой отчёт"))
     b.row(KeyboardButton(text="🗑 Очистить историю чата"))
     b.row(KeyboardButton(text="🏠 В главное меню"))
     return b.as_markup(resize_keyboard=True)
@@ -1811,15 +1721,6 @@ async def cmd_set_course_link(message: Message):
     await setting_set("course_link", parts[1].strip())
     await message.answer("✅ Ссылка на курс сохранена. После оплаты бот будет присылать её покупателю.")
 
-@router.message(Command("report"))
-async def cmd_report(message: Message):
-    thinking = await message.answer("💭 Анализирую наши разговоры...")
-    report = await generate_monthly_report(message.from_user.id)
-    try:
-        await thinking.edit_text(f"📊 Твой отчёт от психолога:\n\n{report}")
-    except Exception:
-        await message.answer(f"📊 Твой отчёт от психолога:\n\n{report}")
-
 @router.message(F.text == "🏠 В главное меню")
 async def to_main(message: Message, state: FSMContext):
     await state.clear()
@@ -1857,18 +1758,8 @@ async def cancel(message: Message, state: FSMContext):
     await message.answer("Отменено.", reply_markup=main_kb())
 
 @router.message(F.text == "🗑 Очистить историю чата")
-async def clear_chat_history(message: Message, state: FSMContext):
-    uid = message.from_user.id
-    # Сохраняем резюме текущей psy-сессии в долгосрочную память перед удалением
-    data = await state.get_data()
-    current_tool = data.get("tool", "chat")
-    if current_tool in ("psy", "relations", "health_psy", "coach"):
-        conv = await get_history(uid, tool=current_tool)
-        if conv:
-            summary = await extract_session_memory(uid, conv)
-            if summary:
-                await save_psy_memory(uid, summary)
-    await clear_history(uid)
+async def clear_chat_history(message: Message):
+    await clear_history(message.from_user.id)
     await message.answer("🗑 История чата очищена!", reply_markup=text_tools_kb())
 
 @router.message(F.text == "💡 GPTs/Claude/Gemini")
@@ -2138,19 +2029,6 @@ async def mood_checkin(callback: CallbackQuery):
         pass
     await callback.answer("Записал 💛")
 
-async def _text_to_voice(text: str) -> bytes:
-    """OpenAI TTS → OGG аудио байты для Telegram send_voice."""
-    if not openai_client:
-        raise Exception("OpenAI ключ не настроен")
-    clean = text[:4000].replace("**", "").replace("*", "").replace("_", "").replace("#", "")
-    resp = await openai_client.audio.speech.create(
-        model="tts-1",
-        voice="nova",
-        input=clean,
-        response_format="opus",
-    )
-    return await resp.aread()
-
 async def _transcribe_voice(bot, voice_obj) -> str:
     """Скачиваем голосовое и транскрибируем через OpenAI Whisper."""
     if not openai_client:
@@ -2207,23 +2085,10 @@ async def process_voice_message(message: Message, state: FSMContext):
         result = await call_text_ai(text, system, "claude", uid=message.from_user.id, use_history=use_history, tool=tool_id)
         await log_request(message.from_user.id, tool_id, model_id, cost)
 
-        # Отправляем текстовый ответ
         try:
             await thinking.edit_text(result)
         except Exception:
             await message.answer(result)
-
-        # Голосовой ответ (только для psy-агентов когда пришло голосовое)
-        if is_psy and openai_client:
-            try:
-                import io as _io
-                audio_bytes = await _text_to_voice(result)
-                voice_io = _io.BytesIO(audio_bytes)
-                voice_io.name = "response.ogg"
-                from aiogram.types import BufferedInputFile
-                await message.answer_voice(BufferedInputFile(audio_bytes, filename="response.ogg"))
-            except Exception as e:
-                logging.warning(f"TTS ошибка: {e}")
 
         # Остаёмся в диалоге
         await state.set_state(State_.waiting_text)
@@ -2280,17 +2145,6 @@ async def process_text(message: Message, state: FSMContext):
             await state.set_state(State_.waiting_text)
             await state.update_data(tool=tool_id, model=model_id, cost=cost)
             return
-        if user_text == "📊 Мой отчёт":
-            thinking = await message.answer("💭 Анализирую наши разговоры...")
-            report = await generate_monthly_report(message.from_user.id)
-            try:
-                await thinking.edit_text(f"📊 Твой отчёт:\n\n{report}")
-            except Exception:
-                await message.answer(f"📊 Твой отчёт:\n\n{report}")
-            await state.set_state(State_.waiting_text)
-            await state.update_data(tool=tool_id, model=model_id, cost=cost)
-            await message.answer("Я здесь 💛", reply_markup=psy_kb())
-            return
         if user_text in PSY_TOOLS:
             user_text = PSY_TOOLS[user_text]
 
@@ -2317,10 +2171,8 @@ async def process_text(message: Message, state: FSMContext):
         # Для psy-агентов добавляем что знаем о пользователе (имя, дата, нумерология)
         if is_psy:
             ctx = await build_context_prefix(message.from_user.id)
-            mem = await get_psy_memory(message.from_user.id)
-            prefix = (mem + ctx) if (mem or ctx) else ""
-            if prefix:
-                system = prefix + system
+            if ctx:
+                system = ctx + system
         use_history = tool_id in ("chat", "psy", "relations", "health_psy", "coach")
         gen_model = "claude" if is_psy else model_id
         result = await call_text_ai(user_text, system, gen_model, uid=message.from_user.id, use_history=use_history, image_url=image_url, tool=tool_id)
@@ -2357,24 +2209,12 @@ async def process_text(message: Message, state: FSMContext):
             await state.update_data(tool=tool_id, model=model_id, cost=cost)
             if is_psy:
                 import random
-                # Умное продолжение: если психолог ведёт через шаги — особый prompt
-                step_keywords = ("шаг 1", "шаг 2", "1.", "2.", "попробуй сейчас", "сделай это", "закрой глаза")
-                is_technique = any(kw in result.lower() for kw in step_keywords)
-                if is_technique:
-                    technique_continuations = [
-                        "Как ощущения? Напиши что чувствуешь 💛",
-                        "Готово? Расскажи что заметил(а) в себе.",
-                        "Я жду. Напиши что происходит внутри.",
-                        "Не торопись. Когда будешь готов(а) — напиши.",
-                    ]
-                    await message.answer(random.choice(technique_continuations), reply_markup=psy_kb())
-                else:
-                    continuations = [
-                        "Я здесь 💛", "Слушаю тебя.", "Продолжай — я рядом.",
-                        "Я никуда не ухожу 🌿", "Говори — я слушаю.",
-                        "Ты в безопасности здесь.", "Рядом с тобой 💕",
-                    ]
-                    await message.answer(random.choice(continuations), reply_markup=psy_kb())
+                continuations = [
+                    "Я здесь 💛", "Слушаю тебя.", "Продолжай — я рядом.",
+                    "Я никуда не ухожу 🌿", "Говори — я слушаю.",
+                    "Ты в безопасности здесь.", "Рядом с тобой 💕",
+                ]
+                await message.answer(random.choice(continuations), reply_markup=psy_kb())
             else:
                 await message.answer("💬 Продолжай:", reply_markup=cancel_kb())
         else:
@@ -5948,38 +5788,6 @@ async def bizsync_cmd(message: Message):
     imported, err = await _biz_sync_from_sheet()
     await message.answer(f"⚠️ {err}" if err else f"✅ Обновлено строк: {imported}. Отчёт: /biz")
 
-def start_psy_checkins(bot):
-    """Раз в день отправляем пользователям психолога тёплый чек-ин."""
-    async def loop():
-        await asyncio.sleep(300)  # старт через 5 минут
-        while True:
-            try:
-                # Ищем пользователей у кого есть история psy за последние 7 дней
-                rows = await db_all(
-                    "SELECT DISTINCT user_id FROM chat_history "
-                    "WHERE tool IN ('psy','relations','health_psy') "
-                    "AND created_at >= datetime('now', '-7 days')"
-                )
-                checkin_msgs = [
-                    "Привет 💛 Как ты сегодня? Я здесь, если хочешь поговорить.",
-                    "Думаю о тебе. Как прошёл день? Можем поговорить, если есть что на душе 🌿",
-                    "Просто хотела проверить — как ты? Иногда важно остановиться и спросить себя об этом.",
-                    "Привет. Как твоё внутреннее состояние сегодня? Я рядом 💛",
-                    "Иногда важно просто напомнить: ты не один(а). Как ты сейчас?",
-                ]
-                import random
-                for row in rows:
-                    try:
-                        msg = random.choice(checkin_msgs)
-                        await bot.send_message(row["user_id"], msg)
-                        await asyncio.sleep(0.5)  # антифлуд
-                    except Exception:
-                        pass
-            except Exception as e:
-                logging.error(f"psy_checkin loop: {e}")
-            await asyncio.sleep(24 * 3600)  # раз в 24 часа
-    asyncio.create_task(loop())
-
 def start_biz_sync(bot):
     async def loop():
         await asyncio.sleep(120)
@@ -7519,7 +7327,6 @@ async def main():
     dp.include_router(router)
     start_autoposter(bot)
     start_biz_sync(bot)
-    start_psy_checkins(bot)
 
     logging.info(f"🚀 AuraAI Bot v3.44 FIX-отчётность запущен | @{BOT_USERNAME}")
     logging.info("✅ ВЕРСИЯ С ВЫБОРОМ ФОРМАТА 9:16 16:9 — если видишь это, новый код работает")

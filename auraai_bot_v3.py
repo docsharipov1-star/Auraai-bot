@@ -290,6 +290,20 @@ pathlib.Path("/app/data").mkdir(parents=True, exist_ok=True)
 
 async def init_db():
     async with aiosqlite.connect(DB_PATH) as db:
+        # Миграции: добавляем новые колонки к существующим таблицам
+        migrations = [
+            "ALTER TABLE chat_history ADD COLUMN tool TEXT NOT NULL DEFAULT 'chat'",
+            "ALTER TABLE users ADD COLUMN real_name TEXT",
+            "ALTER TABLE users ADD COLUMN birth_date TEXT",
+            "ALTER TABLE users ADD COLUMN numerology_profile TEXT",
+        ]
+        for sql in migrations:
+            try:
+                await db.execute(sql)
+                await db.commit()
+            except Exception:
+                pass  # Колонка уже существует — игнорируем
+
         await db.executescript("""
             CREATE TABLE IF NOT EXISTS users (
                 id                  INTEGER PRIMARY KEY,

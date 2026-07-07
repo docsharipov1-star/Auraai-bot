@@ -344,11 +344,13 @@ async def init_db():
             CREATE TABLE IF NOT EXISTS chat_history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
+                tool TEXT NOT NULL DEFAULT 'chat',
                 role TEXT NOT NULL,
                 content TEXT NOT NULL,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             );
             CREATE INDEX IF NOT EXISTS idx_chat_history_user ON chat_history(user_id);
+            CREATE INDEX IF NOT EXISTS idx_chat_history_tool ON chat_history(user_id, tool);
             CREATE TABLE IF NOT EXISTS mood_log (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
@@ -663,7 +665,7 @@ async def admin_stats():
 #  AI ФУНКЦИИ
 # ══════════════════════════════════════════════════════
 
-async def call_text_ai(prompt: str, system: str, model_id: str, uid: int = 0, use_history: bool = False, image_url: str = None, history_msgs: list = None, timeout_s: int = 45, web: bool = False) -> str:
+async def call_text_ai(prompt: str, system: str, model_id: str, uid: int = 0, use_history: bool = False, image_url: str = None, history_msgs: list = None, timeout_s: int = 45, web: bool = False, tool: str = "chat") -> str:
     model_info = TEXT_MODELS.get(model_id, TEXT_MODELS["claude"])
     provider = model_info["provider"]
 
@@ -690,7 +692,7 @@ async def call_text_ai(prompt: str, system: str, model_id: str, uid: int = 0, us
     if history_msgs is not None:
         messages = history_msgs + [{"role": "user", "content": user_content}]
     elif use_history and uid:
-        history = await get_history(uid)
+        history = await get_history(uid, tool)
         messages = history + [{"role": "user", "content": user_content}]
     else:
         messages = [{"role": "user", "content": user_content}]
@@ -746,8 +748,8 @@ async def call_text_ai(prompt: str, system: str, model_id: str, uid: int = 0, us
             return "❌ Модель недоступна. Проверь API ключи."
 
         if history_msgs is None and use_history and uid:
-            await add_to_history(uid, "user", prompt)
-            await add_to_history(uid, "assistant", result)
+            await add_to_history(uid, "user", prompt, tool)
+            await add_to_history(uid, "assistant", result, tool)
 
         return result
 
@@ -1354,27 +1356,30 @@ class State_(StatesGroup):
 user_tool:  dict[int, str] = {}
 user_model: dict[int, str] = {}
 user_image_model: dict[int, str] = {}
-async def get_history(uid: int) -> list:
+async def get_history(uid: int, tool: str = "chat") -> list:
     rows = await db_all(
-        "SELECT role, content FROM chat_history WHERE user_id=? ORDER BY created_at ASC",
-        (uid,)
+        "SELECT role, content FROM chat_history WHERE user_id=? AND tool=? ORDER BY created_at ASC",
+        (uid, tool)
     )
     return [{"role": r["role"], "content": r["content"]} for r in rows]
 
-async def add_to_history(uid: int, role: str, content: str):
+async def add_to_history(uid: int, role: str, content: str, tool: str = "chat"):
     await db_run(
-        "INSERT INTO chat_history (user_id, role, content) VALUES (?, ?, ?)",
-        (uid, role, content)
+        "INSERT INTO chat_history (user_id, tool, role, content) VALUES (?, ?, ?, ?)",
+        (uid, tool, role, content)
     )
-    # Держать только последние 30 сообщений
+    # Держать только последние 20 сообщений на каждый агент
     await db_run(
-        "DELETE FROM chat_history WHERE user_id=? AND id NOT IN ("
-        "SELECT id FROM chat_history WHERE user_id=? ORDER BY created_at DESC LIMIT 30)",
-        (uid, uid)
+        "DELETE FROM chat_history WHERE user_id=? AND tool=? AND id NOT IN ("
+        "SELECT id FROM chat_history WHERE user_id=? AND tool=? ORDER BY created_at DESC LIMIT 20)",
+        (uid, tool, uid, tool)
     )
 
-async def clear_history(uid: int):
-    await db_run("DELETE FROM chat_history WHERE user_id=?", (uid,))
+async def clear_history(uid: int, tool: str = None):
+    if tool:
+        await db_run("DELETE FROM chat_history WHERE user_id=? AND tool=?", (uid, tool))
+    else:
+        await db_run("DELETE FROM chat_history WHERE user_id=?", (uid,))
 
 # ── Настроение (для агента «Аура») ────────────────────
 MOOD_LABELS = {1: "😟 Очень плохо", 2: "😕 Так себе", 3: "😐 Нормально", 4: "🙂 Хорошо", 5: "😄 Отлично"}
@@ -2048,7 +2053,7 @@ async def process_voice_message(message: Message, state: FSMContext):
     try:
         system = SYSTEM_PROMPTS.get(tool_id, SYSTEM_PROMPTS["chat"])
         use_history = tool_id in ("chat",) + PSY_TOOLS_IDS
-        result = await call_text_ai(text, system, "claude", uid=message.from_user.id, use_history=use_history)
+        result = await call_text_ai(text, system, "claude", uid=message.from_user.id, use_history=use_history, tool=tool_id)
         await log_request(message.from_user.id, tool_id, model_id, cost)
 
         try:
@@ -2135,7 +2140,7 @@ async def process_text(message: Message, state: FSMContext):
         system = SYSTEM_PROMPTS.get(tool_id, SYSTEM_PROMPTS["chat"])
         use_history = tool_id in ("chat", "psy", "relations", "health_psy", "coach")
         gen_model = "claude" if is_psy else model_id
-        result = await call_text_ai(user_text, system, gen_model, uid=message.from_user.id, use_history=use_history, image_url=image_url)
+        result = await call_text_ai(user_text, system, gen_model, uid=message.from_user.id, use_history=use_history, image_url=image_url, tool=tool_id)
         bal    = await get_balance(message.from_user.id)
         model_info = TEXT_MODELS.get(model_id, TEXT_MODELS["claude"])
 
@@ -6966,7 +6971,7 @@ async def numerology_receive(message: Message, state: FSMContext):
             "Завершь одним глубоким коучинговым вопросом."
         )
 
-        result = await call_text_ai(prompt, system, "claude", uid=message.from_user.id)
+        result = await call_text_ai(prompt, system, "claude", uid=message.from_user.id, tool="coach")
         bal = await get_balance(message.from_user.id)
 
         header = (

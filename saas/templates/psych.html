@@ -3,667 +3,606 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Аура — AI психологическая поддержка</title>
-<meta name="description" content="Поговори с Аурой — AI-психологом. Тревога, стресс, отношения, выгорание. Анонимно, 24/7.">
+<title>Аура — AI психолог и помощник</title>
+<meta name="description" content="AI-психолог, нумерология, бизнес-коуч, астрология. Голосовой чат, сессии по телефону. 24/7.">
 <style>
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --sans:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;
+  --serif:Georgia,'Times New Roman',serif;
+  --v:#7C6FF7;--v2:#5B52D6;
+  --g:#3EC89A;--g2:#2BA882;
+  --rose:#F06292;--amber:#F59E0B;--blue:#3B82F6;--orange:#F97316;
+  --bg:#F7F6FF;--white:#fff;
+  --text:#1A1535;--muted:#6B6880;--dim:#9B98B0;
+  --border:#E4E0F5;
+}
+html{scroll-behavior:smooth}
+body{font-family:var(--sans);background:var(--bg);color:var(--text);-webkit-font-smoothing:antialiased;overflow-x:hidden}
 
-:root {
-  --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-  --serif: Georgia, 'Times New Roman', serif;
-}
+/* NAV */
+.nav{position:fixed;top:0;left:0;right:0;z-index:50;padding:0 24px;height:60px;
+  display:flex;align-items:center;justify-content:space-between;
+  background:rgba(247,246,255,0.85);backdrop-filter:blur(12px);
+  border-bottom:1px solid var(--border)}
+.nav-logo{display:flex;align-items:center;gap:9px;text-decoration:none}
+.nav-ico{width:34px;height:34px;border-radius:10px;
+  background:linear-gradient(135deg,var(--v),var(--g));
+  display:flex;align-items:center;justify-content:center;
+  font-family:var(--serif);font-style:italic;font-size:16px;color:#fff}
+.nav-name{font-size:16px;font-weight:700;color:var(--text);letter-spacing:-.02em}
+.nav-actions{display:flex;gap:10px;align-items:center}
+.nav-tg{display:inline-flex;align-items:center;gap:6px;
+  background:linear-gradient(135deg,#2AABEE,#229ED9);
+  color:#fff;font-size:13px;font-weight:600;padding:7px 14px;
+  border-radius:100px;border:none;cursor:pointer;text-decoration:none;
+  transition:opacity .15s}
+.nav-tg:hover{opacity:.88}
+.nav-chat{display:inline-flex;align-items:center;gap:6px;
+  background:linear-gradient(135deg,var(--v),var(--g));
+  color:#fff;font-size:13px;font-weight:600;padding:7px 14px;
+  border-radius:100px;border:none;cursor:pointer;transition:opacity .15s}
+.nav-chat:hover{opacity:.88}
 
-html { scroll-behavior: smooth; }
-body {
-  font-family: var(--sans);
-  background: #F5F3FF;
-  color: #1A1535;
-  -webkit-font-smoothing: antialiased;
-  min-height: 100vh;
+/* HERO */
+.hero{
+  padding:120px 24px 80px;
+  background:linear-gradient(145deg,#6C63FF 0%,#48C6A8 100%);
+  position:relative;overflow:hidden;text-align:center;
 }
+.hero::before{content:'';position:absolute;top:-40%;left:-20%;width:70%;height:130%;
+  background:radial-gradient(ellipse,rgba(255,255,255,.14) 0%,transparent 65%);pointer-events:none}
+.hero::after{content:'';position:absolute;bottom:-30%;right:-10%;width:50%;height:80%;
+  background:radial-gradient(ellipse,rgba(255,220,100,.18) 0%,transparent 65%);pointer-events:none}
+.hero-inner{max-width:700px;margin:0 auto;position:relative;z-index:1}
+.hero-badge{display:inline-flex;align-items:center;gap:7px;
+  background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.25);
+  color:rgba(255,255,255,.9);font-size:12px;padding:5px 14px;border-radius:100px;margin-bottom:24px;letter-spacing:.03em}
+.hero-badge span{width:6px;height:6px;background:#7DFFC1;border-radius:50%}
+h1{font-size:clamp(30px,6vw,54px);font-weight:800;color:#fff;
+  letter-spacing:-.04em;line-height:1.05;margin-bottom:18px;text-wrap:balance}
+h1 em{font-style:normal;
+  background:linear-gradient(90deg,#FFE17D,#FFC1F3);
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.hero-sub{font-size:17px;color:rgba(255,255,255,.8);line-height:1.7;margin-bottom:36px;text-wrap:balance}
+.hero-btns{display:flex;gap:12px;justify-content:center;flex-wrap:wrap}
+.btn-white{display:inline-flex;align-items:center;gap:8px;
+  background:#fff;color:var(--v2);font-size:15px;font-weight:700;
+  padding:14px 28px;border-radius:100px;border:none;cursor:pointer;
+  box-shadow:0 4px 24px rgba(0,0,0,.15);transition:transform .2s,box-shadow .2s}
+.btn-white:hover{transform:translateY(-2px);box-shadow:0 8px 32px rgba(0,0,0,.2)}
+.btn-outline{display:inline-flex;align-items:center;gap:8px;
+  background:rgba(255,255,255,.12);color:#fff;
+  font-size:15px;font-weight:600;padding:14px 24px;border-radius:100px;
+  border:1px solid rgba(255,255,255,.3);cursor:pointer;transition:background .2s}
+.btn-outline:hover{background:rgba(255,255,255,.2)}
 
-/* ── HERO ── */
-.hero {
-  background: linear-gradient(135deg, #6C63FF 0%, #48C6A8 100%);
-  padding: 0 24px 72px;
-  position: relative;
-  overflow: hidden;
+/* VOICE DEMO */
+.voice-demo{
+  margin:32px auto 0;max-width:380px;
+  background:rgba(255,255,255,.12);backdrop-filter:blur(16px);
+  border:1px solid rgba(255,255,255,.2);border-radius:20px;padding:20px 24px;
+  display:flex;align-items:center;gap:14px;
 }
-.hero::before {
-  content: '';
-  position: absolute; top: -40%; left: -20%;
-  width: 70%; height: 120%;
-  background: radial-gradient(ellipse, rgba(255,255,255,0.15) 0%, transparent 65%);
-  pointer-events: none;
-}
-.hero::after {
-  content: '';
-  position: absolute; bottom: -30%; right: -10%;
-  width: 50%; height: 80%;
-  background: radial-gradient(ellipse, rgba(255,200,100,0.2) 0%, transparent 65%);
-  pointer-events: none;
-}
+.vd-mic{width:44px;height:44px;border-radius:14px;flex-shrink:0;
+  background:rgba(255,255,255,.2);border:none;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;
+  font-size:20px;transition:background .2s}
+.vd-mic:hover{background:rgba(255,255,255,.3)}
+.vd-text{text-align:left}
+.vd-title{font-size:14px;font-weight:600;color:#fff}
+.vd-sub{font-size:12px;color:rgba(255,255,255,.7);margin-top:2px}
 
-/* nav */
-.nav {
-  max-width: 1000px; margin: 0 auto;
-  padding: 20px 0;
-  display: flex; align-items: center; justify-content: space-between;
-  position: relative; z-index: 1;
-}
-.nav-logo {
-  display: flex; align-items: center; gap: 10px;
-  text-decoration: none;
-}
-.nav-icon {
-  width: 38px; height: 38px; border-radius: 12px;
-  background: rgba(255,255,255,0.2);
-  backdrop-filter: blur(8px);
-  border: 1px solid rgba(255,255,255,0.3);
-  display: flex; align-items: center; justify-content: center;
-  font-family: var(--serif); font-style: italic;
-  font-size: 18px; color: #fff;
-}
-.nav-name { font-size: 17px; font-weight: 600; color: #fff; letter-spacing: -0.02em; }
-.nav-badge {
-  background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.3);
-  color: rgba(255,255,255,0.9); font-size: 11px; padding: 4px 10px;
-  border-radius: 100px; letter-spacing: 0.03em;
-}
+/* SECTIONS */
+.section{max-width:1060px;margin:0 auto;padding:72px 24px}
+.s-label{font-size:11.5px;font-weight:700;letter-spacing:.08em;
+  text-transform:uppercase;color:var(--v);margin-bottom:10px}
+.s-title{font-size:clamp(22px,4vw,34px);font-weight:800;
+  color:var(--text);letter-spacing:-.03em;line-height:1.15;margin-bottom:10px;text-wrap:balance}
+.s-sub{font-size:15px;color:var(--muted);line-height:1.7;max-width:520px}
 
-/* hero content */
-.hero-body {
-  max-width: 1000px; margin: 0 auto;
-  padding-top: 56px;
-  position: relative; z-index: 1;
-  display: grid; grid-template-columns: 1fr 1fr; gap: 48px; align-items: center;
-}
-@media (max-width: 700px) {
-  .hero-body { grid-template-columns: 1fr; text-align: center; gap: 32px; }
-  .hero-ctas { justify-content: center; }
-}
+/* TOOL CARDS */
+.tools-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px;margin-top:40px}
+.tool-card{background:var(--white);border:1px solid var(--border);border-radius:20px;
+  padding:22px;cursor:pointer;transition:transform .2s,box-shadow .2s,border-color .2s;
+  text-align:left;position:relative;overflow:hidden}
+.tool-card:hover{transform:translateY(-3px);box-shadow:0 8px 32px rgba(108,99,255,.1);border-color:rgba(108,99,255,.2)}
+.tool-card:focus-visible{outline:2px solid var(--v);outline-offset:2px}
+.tc-icon{width:46px;height:46px;border-radius:14px;
+  display:flex;align-items:center;justify-content:center;font-size:21px;margin-bottom:14px}
+.tc-title{font-size:15px;font-weight:700;color:var(--text);margin-bottom:5px;letter-spacing:-.01em}
+.tc-desc{font-size:13px;color:var(--muted);line-height:1.6}
+.tc-tag{display:inline-block;font-size:11px;font-weight:600;padding:3px 9px;
+  border-radius:100px;margin-top:12px;letter-spacing:.02em}
 
-.hero-eyebrow {
-  display: inline-flex; align-items: center; gap: 7px;
-  background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.25);
-  color: rgba(255,255,255,0.9); font-size: 12.5px; padding: 5px 12px;
-  border-radius: 100px; margin-bottom: 20px; letter-spacing: 0.02em;
-}
-.eyebrow-dot { width: 6px; height: 6px; background: #7DFFC1; border-radius: 50%; }
+/* VOICE SECTION */
+.voice-section{background:linear-gradient(135deg,#EEF0FF 0%,#E8F8F2 100%);border-radius:28px;overflow:hidden}
+.voice-inner{display:grid;grid-template-columns:1fr 1fr;gap:48px;align-items:center;padding:56px}
+@media(max-width:700px){.voice-inner{grid-template-columns:1fr;padding:36px 24px;gap:32px}}
+.voice-features{display:flex;flex-direction:column;gap:18px;margin-top:32px}
+.vf{display:flex;gap:12px;align-items:flex-start}
+.vf-icon{width:36px;height:36px;border-radius:11px;flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;font-size:17px}
+.vf-title{font-size:14px;font-weight:600;color:var(--text)}
+.vf-desc{font-size:13px;color:var(--muted);margin-top:2px;line-height:1.5}
 
-.hero-h1 {
-  font-size: clamp(30px, 5vw, 46px);
-  font-weight: 700; color: #fff;
-  letter-spacing: -0.03em; line-height: 1.1;
-  margin-bottom: 16px; text-wrap: balance;
-}
-.hero-h1 span {
-  display: block;
-  background: linear-gradient(90deg, #FFE17D, #FFC1F3);
-  -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
-}
+/* fake voice UI */
+.voice-ui{background:#fff;border-radius:22px;padding:28px;
+  box-shadow:0 8px 48px rgba(108,99,255,.12)}
+.vu-waves{display:flex;align-items:center;justify-content:center;gap:4px;height:56px;margin-bottom:20px}
+.wave{width:4px;border-radius:2px;background:var(--v);animation:wave 1s ease-in-out infinite}
+.wave:nth-child(1){height:16px;animation-delay:0s}
+.wave:nth-child(2){height:32px;animation-delay:.1s}
+.wave:nth-child(3){height:48px;animation-delay:.2s}
+.wave:nth-child(4){height:36px;animation-delay:.3s}
+.wave:nth-child(5){height:24px;animation-delay:.4s}
+.wave:nth-child(6){height:40px;animation-delay:.5s}
+.wave:nth-child(7){height:20px;animation-delay:.6s}
+@keyframes wave{0%,100%{transform:scaleY(.5)}50%{transform:scaleY(1)}}
+.vu-text{font-size:14px;color:var(--muted);text-align:center;margin-bottom:20px}
+.vu-btn{width:100%;padding:13px;border-radius:14px;
+  background:linear-gradient(135deg,var(--v),var(--g));
+  color:#fff;font-size:14px;font-weight:700;border:none;cursor:pointer;
+  transition:opacity .15s}
+.vu-btn:hover{opacity:.88}
 
-.hero-p {
-  font-size: 16px; line-height: 1.7;
-  color: rgba(255,255,255,0.8); margin-bottom: 32px;
-  max-width: 400px; text-wrap: balance;
-}
+/* PHONE SECTION */
+.phone-section{background:var(--white);border:1px solid var(--border);border-radius:28px}
+.phone-inner{display:grid;grid-template-columns:1fr 1fr;gap:48px;align-items:center;padding:56px}
+@media(max-width:700px){.phone-inner{grid-template-columns:1fr;padding:36px 24px;gap:32px}}
+.phone-form{display:flex;flex-direction:column;gap:14px;margin-top:28px}
+.pf-field{display:flex;flex-direction:column;gap:6px}
+.pf-label{font-size:13px;font-weight:600;color:var(--text)}
+.pf-input{padding:12px 16px;border:1.5px solid var(--border);border-radius:12px;
+  font-size:14.5px;font-family:var(--sans);color:var(--text);outline:none;
+  transition:border-color .2s,box-shadow .2s;background:var(--bg)}
+.pf-input:focus{border-color:var(--v);box-shadow:0 0 0 3px rgba(124,111,247,.1)}
+.pf-select{padding:12px 16px;border:1.5px solid var(--border);border-radius:12px;
+  font-size:14.5px;font-family:var(--sans);color:var(--text);outline:none;
+  background:var(--bg);cursor:pointer}
+.pf-btn{padding:14px;border-radius:12px;
+  background:linear-gradient(135deg,var(--v),var(--g));
+  color:#fff;font-size:15px;font-weight:700;border:none;cursor:pointer;
+  transition:opacity .15s;box-shadow:0 4px 20px rgba(124,111,247,.3)}
+.pf-btn:hover{opacity:.9}
+.pf-note{font-size:12px;color:var(--dim);text-align:center}
+.phone-info{display:flex;flex-direction:column;gap:20px}
+.pi-item{display:flex;gap:14px;align-items:flex-start}
+.pi-ico{width:42px;height:42px;border-radius:13px;flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;font-size:19px}
+.pi-title{font-size:15px;font-weight:600;color:var(--text);margin-bottom:3px}
+.pi-desc{font-size:13px;color:var(--muted);line-height:1.5}
 
-.hero-ctas { display: flex; gap: 12px; flex-wrap: wrap; }
+/* TG SECTION */
+.tg-section{text-align:center;padding:64px 24px;
+  background:linear-gradient(135deg,#E8F4FD,#EEF0FF);border-radius:28px}
+.tg-icon{font-size:52px;margin-bottom:16px}
+.tg-title{font-size:26px;font-weight:800;color:var(--text);letter-spacing:-.02em;margin-bottom:10px}
+.tg-sub{font-size:15px;color:var(--muted);line-height:1.7;max-width:420px;margin:0 auto 28px}
+.btn-tg-big{display:inline-flex;align-items:center;gap:10px;
+  background:linear-gradient(135deg,#2AABEE,#229ED9);
+  color:#fff;font-size:16px;font-weight:700;padding:16px 32px;
+  border-radius:100px;border:none;cursor:pointer;
+  box-shadow:0 4px 24px rgba(42,171,238,.35);transition:transform .2s,box-shadow .2s}
+.btn-tg-big:hover{transform:translateY(-2px);box-shadow:0 8px 32px rgba(42,171,238,.45)}
 
-.btn-primary {
-  display: inline-flex; align-items: center; gap: 8px;
-  background: #fff; color: #4A3FD4;
-  font-size: 15px; font-weight: 600; font-family: var(--sans);
-  padding: 13px 24px; border-radius: 100px; border: none; cursor: pointer;
-  box-shadow: 0 4px 24px rgba(0,0,0,0.15);
-  transition: transform .2s, box-shadow .2s;
-  text-decoration: none;
-}
-.btn-primary:hover { transform: translateY(-2px); box-shadow: 0 8px 32px rgba(0,0,0,0.2); }
-.btn-primary:active { transform: translateY(0); }
+/* HOW */
+.how-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:20px;margin-top:40px}
+@media(max-width:600px){.how-grid{grid-template-columns:1fr}}
+.how-card{background:var(--white);border:1px solid var(--border);border-radius:20px;padding:24px;text-align:center}
+.how-num{width:40px;height:40px;border-radius:12px;
+  background:linear-gradient(135deg,var(--v),var(--g));
+  display:flex;align-items:center;justify-content:center;
+  font-size:17px;font-weight:800;color:#fff;margin:0 auto 14px}
+.how-title{font-size:15px;font-weight:700;color:var(--text);margin-bottom:6px}
+.how-desc{font-size:13px;color:var(--muted);line-height:1.6}
 
-.btn-ghost {
-  display: inline-flex; align-items: center; gap: 8px;
-  background: rgba(255,255,255,0.12); color: #fff;
-  font-size: 15px; font-weight: 500; font-family: var(--sans);
-  padding: 13px 24px; border-radius: 100px;
-  border: 1px solid rgba(255,255,255,0.25); cursor: pointer;
-  transition: background .2s; text-decoration: none;
-}
-.btn-ghost:hover { background: rgba(255,255,255,0.2); }
+/* FOOTER */
+footer{background:#1A1535;padding:36px 24px;text-align:center;color:rgba(255,255,255,.45);font-size:12.5px;line-height:1.8}
+footer strong{color:rgba(255,255,255,.75)}
 
-/* hero card */
-.hero-card {
-  background: rgba(255,255,255,0.12);
-  backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
-  border: 1px solid rgba(255,255,255,0.25);
-  border-radius: 20px; padding: 24px;
-  display: flex; flex-direction: column; gap: 16px;
-}
-.hc-msg {
-  display: flex; gap: 10px; align-items: flex-start;
-}
-.hc-avatar {
-  width: 32px; height: 32px; border-radius: 10px; flex-shrink: 0;
-  background: rgba(255,255,255,0.2);
-  display: flex; align-items: center; justify-content: center;
-  font-family: var(--serif); font-style: italic; font-size: 14px; color: #fff;
-}
-.hc-bubble {
-  background: rgba(255,255,255,0.18); border-radius: 4px 14px 14px 14px;
-  padding: 10px 14px; font-size: 13.5px; color: #fff; line-height: 1.6;
-}
-.hc-user .hc-bubble {
-  background: rgba(255,255,255,0.9); color: #1A1535;
-  border-radius: 14px 4px 14px 14px; margin-left: auto;
-}
-.hc-dots {
-  display: flex; gap: 5px; padding: 12px 14px;
-  background: rgba(255,255,255,0.18); border-radius: 4px 14px 14px 14px;
-  width: fit-content;
-}
-.hc-dot {
-  width: 5px; height: 5px; border-radius: 50%; background: rgba(255,255,255,0.7);
-  animation: blink 1.2s infinite;
-}
-.hc-dot:nth-child(2) { animation-delay: .2s; }
-.hc-dot:nth-child(3) { animation-delay: .4s; }
-@keyframes blink { 0%,80%{opacity:.4;transform:scale(1)} 40%{opacity:1;transform:scale(1.3)} }
+/* ═══════════════ CHAT SHEET ═══════════════ */
+#overlay{position:fixed;inset:0;z-index:200;
+  background:rgba(20,16,50,.6);backdrop-filter:blur(4px);
+  display:flex;align-items:flex-end;justify-content:center;
+  opacity:0;pointer-events:none;transition:opacity .3s}
+#overlay.open{opacity:1;pointer-events:all}
+.sheet{background:#F7F6FF;width:100%;max-width:660px;height:90dvh;
+  border-radius:24px 24px 0 0;display:flex;flex-direction:column;
+  transform:translateY(100%);transition:transform .35s cubic-bezier(.32,.72,0,1);
+  box-shadow:0 -8px 48px rgba(108,99,255,.18)}
+#overlay.open .sheet{transform:translateY(0)}
 
-.hc-tags { display: flex; flex-wrap: wrap; gap: 6px; }
-.hc-tag {
-  background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.2);
-  color: rgba(255,255,255,0.85); font-size: 12px; padding: 4px 10px; border-radius: 100px;
-}
+.sh-head{
+  display:flex;align-items:center;gap:12px;
+  padding:16px 18px 14px;background:#fff;
+  border-bottom:1px solid var(--border);flex-shrink:0;position:relative}
+.sh-drag{position:absolute;top:8px;left:50%;transform:translateX(-50%);
+  width:36px;height:4px;background:#D0CDE8;border-radius:2px}
+.sh-av{width:38px;height:38px;border-radius:12px;flex-shrink:0;
+  background:linear-gradient(135deg,var(--v),var(--g));
+  display:flex;align-items:center;justify-content:center;
+  font-family:var(--serif);font-style:italic;font-size:17px;color:#fff;position:relative}
+.sh-pulse{position:absolute;bottom:-1px;right:-1px;
+  width:10px;height:10px;background:#3EC89A;border-radius:50%;border:2px solid #fff;
+  box-shadow:0 0 6px rgba(62,200,154,.7)}
+.sh-info{flex:1}
+.sh-name{font-size:15px;font-weight:700;color:var(--text);letter-spacing:-.01em}
+.sh-status{font-size:11.5px;color:var(--dim);margin-top:1px}
+.sh-actions{display:flex;gap:8px}
+.sh-btn{width:32px;height:32px;border-radius:50%;background:#F0EEF8;
+  border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;
+  font-size:15px;transition:background .15s;color:var(--muted)}
+.sh-btn:hover{background:#E0DCF5;color:var(--text)}
+.sh-btn.active{background:linear-gradient(135deg,var(--v),var(--g));color:#fff}
 
-/* ── FEATURES ── */
-.section {
-  max-width: 1000px; margin: 0 auto; padding: 72px 24px;
-}
-.section-label {
-  font-size: 12px; font-weight: 600; letter-spacing: 0.08em;
-  text-transform: uppercase; color: #7B72E9; margin-bottom: 10px;
-}
-.section-title {
-  font-size: clamp(24px, 4vw, 36px); font-weight: 700;
-  color: #1A1535; letter-spacing: -0.03em; line-height: 1.2;
-  margin-bottom: 12px; text-wrap: balance;
-}
-.section-sub {
-  font-size: 16px; color: #6B6880; line-height: 1.7; max-width: 500px;
-}
+.msgs{flex:1;overflow-y:auto;padding:18px 16px;
+  display:flex;flex-direction:column;gap:12px;scroll-behavior:smooth}
+.msgs::-webkit-scrollbar{width:3px}
+.msgs::-webkit-scrollbar-thumb{background:#D0CDE8;border-radius:2px}
 
-.cards {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 16px; margin-top: 40px;
-}
+.empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  text-align:center;gap:12px;padding:28px 20px}
+.empty-ico{width:54px;height:54px;border-radius:17px;
+  background:linear-gradient(135deg,var(--v),var(--g));
+  display:flex;align-items:center;justify-content:center;
+  font-family:var(--serif);font-style:italic;font-size:23px;color:#fff;
+  box-shadow:0 8px 24px rgba(108,99,255,.3)}
+.empty-t{font-size:16px;font-weight:700;color:var(--text)}
+.empty-s{font-size:13.5px;color:var(--muted);line-height:1.6;max-width:250px}
+.chips{display:flex;flex-wrap:wrap;gap:7px;justify-content:center;margin-top:4px}
+.chip{background:#fff;border:1.5px solid var(--border);color:var(--v2);
+  padding:7px 14px;border-radius:100px;font-size:13px;cursor:pointer;
+  font-family:var(--sans);transition:background .15s,border-color .15s}
+.chip:hover{background:#EEF0FF;border-color:#A89EE8}
 
-.card {
-  background: #fff; border-radius: 20px; padding: 24px;
-  border: 1px solid #EAE8F5;
-  box-shadow: 0 2px 16px rgba(108,99,255,0.06);
-  cursor: pointer;
-  transition: transform .2s, box-shadow .2s, border-color .2s;
-  text-align: left;
-}
-.card:hover {
-  transform: translateY(-3px);
-  box-shadow: 0 8px 32px rgba(108,99,255,0.12);
-  border-color: rgba(108,99,255,0.2);
-}
+.msg-row{display:flex;flex-direction:column;gap:3px;max-width:82%;animation:up .2s ease both}
+@keyframes up{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+.msg-row.ai{align-self:flex-start}
+.msg-row.user{align-self:flex-end}
+.bubble{padding:10px 14px;font-size:14.5px;line-height:1.65;word-break:break-word;white-space:pre-wrap}
+.msg-row.ai .bubble{background:#fff;border:1px solid var(--border);color:var(--text);
+  border-radius:4px 16px 16px 16px;box-shadow:0 2px 8px rgba(108,99,255,.06)}
+.msg-row.user .bubble{background:linear-gradient(135deg,var(--v),#5557E8);
+  color:#fff;border-radius:16px 4px 16px 16px}
+.msg-time{font-size:11px;color:var(--dim);padding:0 4px}
+.msg-row.user .msg-time{text-align:right}
+.speak-btn{background:none;border:none;cursor:pointer;font-size:14px;
+  opacity:.5;margin-left:4px;padding:0;transition:opacity .15s}
+.speak-btn:hover{opacity:1}
 
-.card-icon {
-  width: 48px; height: 48px; border-radius: 14px;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 22px; margin-bottom: 16px;
-}
-.card-title {
-  font-size: 16px; font-weight: 600; color: #1A1535;
-  letter-spacing: -0.01em; margin-bottom: 6px;
-}
-.card-desc {
-  font-size: 13.5px; color: #6B6880; line-height: 1.65;
-}
-.card-arrow {
-  display: inline-flex; align-items: center; gap: 5px;
-  font-size: 13px; font-weight: 500; margin-top: 16px;
-  text-decoration: none;
-}
+.typing-row{align-self:flex-start;animation:up .2s ease both}
+.typing-bub{background:#fff;border:1px solid var(--border);
+  border-radius:4px 16px 16px 16px;padding:12px 16px;display:flex;gap:5px;align-items:center}
+.dot{width:5px;height:5px;border-radius:50%;background:#A89EE8;
+  animation:blink 1.2s ease-in-out infinite}
+.dot:nth-child(2){animation-delay:.2s}.dot:nth-child(3){animation-delay:.4s}
+@keyframes blink{0%,80%,100%{opacity:.4;transform:scale(1)}40%{opacity:1;transform:scale(1.35)}}
 
-/* card colors */
-.c1 .card-icon { background: #EEF0FF; }
-.c2 .card-icon { background: #FFF0F6; }
-.c3 .card-icon { background: #F0FFF8; }
-.c4 .card-icon { background: #FFF7E6; }
-.c5 .card-icon { background: #F0F6FF; }
-.c6 .card-icon { background: #FFF0E6; }
+.inp-area{padding:10px 14px 16px;border-top:1px solid var(--border);background:#fff;flex-shrink:0}
+.inp-row{display:flex;align-items:flex-end;gap:8px;
+  background:var(--bg);border:1.5px solid var(--border);
+  border-radius:14px;padding:8px 8px 8px 14px;transition:border-color .2s,box-shadow .2s}
+.inp-row:focus-within{border-color:var(--v);box-shadow:0 0 0 3px rgba(124,111,247,.1)}
+textarea{flex:1;background:none;border:none;outline:none;
+  color:var(--text);font-family:var(--sans);font-size:14.5px;
+  line-height:1.5;resize:none;min-height:22px;max-height:140px}
+textarea::placeholder{color:var(--dim)}
+.mic-btn{width:34px;height:34px;border-radius:10px;flex-shrink:0;
+  background:var(--bg);border:1.5px solid var(--border);cursor:pointer;
+  display:flex;align-items:center;justify-content:center;font-size:16px;
+  transition:background .15s,border-color .15s}
+.mic-btn:hover{background:#EEF0FF;border-color:var(--v)}
+.mic-btn.recording{background:linear-gradient(135deg,#F06292,#E53935);border-color:transparent;
+  animation:pulse 1s ease-in-out infinite}
+@keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(240,98,146,.4)}50%{box-shadow:0 0 0 8px rgba(240,98,146,0)}}
+.send-btn{width:34px;height:34px;border-radius:10px;flex-shrink:0;
+  background:linear-gradient(135deg,var(--v),var(--g));
+  border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;
+  color:#fff;box-shadow:0 3px 12px rgba(108,99,255,.4);transition:opacity .15s,transform .1s}
+.send-btn:hover{opacity:.9}
+.send-btn:active{transform:scale(.91)}
+.send-btn:disabled{opacity:.25;cursor:default;box-shadow:none}
+.inp-hint{font-size:11px;color:var(--dim);text-align:center;padding-top:6px;line-height:1.5}
 
-.c1 .card-arrow { color: #6C63FF; }
-.c2 .card-arrow { color: #E8528A; }
-.c3 .card-arrow { color: #3CBB8A; }
-.c4 .card-arrow { color: #E89B30; }
-.c5 .card-arrow { color: #3C7BE8; }
-.c6 .card-arrow { color: #E86730; }
+/* toast */
+.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(8px);
+  background:#1A1535;color:#fff;font-size:13px;padding:10px 18px;border-radius:100px;
+  opacity:0;transition:opacity .3s,transform .3s;pointer-events:none;z-index:300;white-space:nowrap}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
 
-/* ── HOW IT WORKS ── */
-.how { background: #fff; }
-.how .section { display: grid; grid-template-columns: 1fr 1fr; gap: 64px; align-items: center; }
-@media (max-width: 700px) { .how .section { grid-template-columns: 1fr; gap: 36px; } }
-
-.steps { display: flex; flex-direction: column; gap: 28px; margin-top: 36px; }
-.step { display: flex; gap: 16px; align-items: flex-start; }
-.step-num {
-  width: 32px; height: 32px; border-radius: 10px; flex-shrink: 0;
-  background: linear-gradient(135deg, #6C63FF, #48C6A8);
-  display: flex; align-items: center; justify-content: center;
-  font-size: 13px; font-weight: 700; color: #fff;
-}
-.step-body h4 { font-size: 15px; font-weight: 600; color: #1A1535; margin-bottom: 4px; }
-.step-body p { font-size: 13.5px; color: #6B6880; line-height: 1.6; }
-
-.how-visual {
-  background: linear-gradient(145deg, #F5F3FF, #E8F8F2);
-  border-radius: 24px; padding: 32px;
-  border: 1px solid rgba(108,99,255,0.1);
-}
-.stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-.stat-card {
-  background: #fff; border-radius: 16px; padding: 20px;
-  border: 1px solid #EAE8F5; text-align: center;
-}
-.stat-num {
-  font-size: 28px; font-weight: 700; color: #6C63FF;
-  letter-spacing: -0.03em; line-height: 1;
-}
-.stat-label { font-size: 12px; color: #6B6880; margin-top: 4px; line-height: 1.4; }
-
-/* ── FOOTER ── */
-footer {
-  background: #1A1535; padding: 40px 24px;
-  text-align: center; color: rgba(255,255,255,0.5);
-  font-size: 13px; line-height: 1.8;
-}
-footer strong { color: rgba(255,255,255,0.8); }
-footer a { color: rgba(255,255,255,0.5); text-decoration: underline; }
-
-/* ══════════════════════════════════════
-   CHAT OVERLAY
-══════════════════════════════════════ */
-#chatOverlay {
-  position: fixed; inset: 0; z-index: 100;
-  background: rgba(20,16,50,0.6);
-  backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
-  display: flex; align-items: flex-end; justify-content: center;
-  opacity: 0; pointer-events: none;
-  transition: opacity .3s ease;
-}
-#chatOverlay.open { opacity: 1; pointer-events: all; }
-
-.chat-sheet {
-  background: #F5F3FF;
-  width: 100%; max-width: 640px;
-  height: 88dvh;
-  border-radius: 24px 24px 0 0;
-  display: flex; flex-direction: column;
-  transform: translateY(100%);
-  transition: transform .35s cubic-bezier(.32,.72,0,1);
-  overflow: hidden;
-  box-shadow: 0 -8px 48px rgba(108,99,255,0.2);
-}
-#chatOverlay.open .chat-sheet { transform: translateY(0); }
-
-.sheet-header {
-  display: flex; align-items: center; gap: 12px;
-  padding: 16px 20px 14px;
-  background: #fff;
-  border-bottom: 1px solid #EAE8F5;
-  flex-shrink: 0;
-}
-.sh-drag {
-  position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
-  width: 36px; height: 4px; background: #D0CDE8; border-radius: 2px;
-}
-.sh-av {
-  width: 38px; height: 38px; border-radius: 12px; flex-shrink: 0;
-  background: linear-gradient(135deg, #6C63FF, #48C6A8);
-  display: flex; align-items: center; justify-content: center;
-  font-family: var(--serif); font-style: italic; font-size: 17px; color: #fff;
-  position: relative;
-}
-.sh-online {
-  position: absolute; bottom: -1px; right: -1px;
-  width: 10px; height: 10px; background: #3CBB8A;
-  border-radius: 50%; border: 2px solid #fff;
-  box-shadow: 0 0 6px rgba(60,187,138,0.6);
-}
-.sh-info { flex: 1; }
-.sh-name { font-size: 15px; font-weight: 600; color: #1A1535; letter-spacing: -0.01em; }
-.sh-status { font-size: 12px; color: #9B98B0; margin-top: 1px; }
-.sh-close {
-  background: #F0EEF8; border: none; color: #6B6880;
-  width: 32px; height: 32px; border-radius: 50%; cursor: pointer;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 16px; transition: background .15s;
-}
-.sh-close:hover { background: #E0DCF5; color: #1A1535; }
-
-.messages {
-  flex: 1; overflow-y: auto; padding: 20px 16px;
-  display: flex; flex-direction: column; gap: 12px;
-  scroll-behavior: smooth;
-}
-.messages::-webkit-scrollbar { width: 3px; }
-.messages::-webkit-scrollbar-thumb { background: #D0CDE8; border-radius: 2px; }
-
-.empty {
-  flex: 1; display: flex; flex-direction: column;
-  align-items: center; justify-content: center;
-  text-align: center; gap: 14px; padding: 32px 20px;
-}
-.empty-icon {
-  width: 56px; height: 56px; border-radius: 18px;
-  background: linear-gradient(135deg, #6C63FF, #48C6A8);
-  display: flex; align-items: center; justify-content: center;
-  font-family: var(--serif); font-style: italic; font-size: 24px; color: #fff;
-  box-shadow: 0 8px 24px rgba(108,99,255,0.3);
-}
-.empty-title { font-size: 17px; font-weight: 600; color: #1A1535; }
-.empty-desc { font-size: 13.5px; color: #6B6880; line-height: 1.6; max-width: 260px; }
-
-.chips { display: flex; flex-wrap: wrap; gap: 7px; justify-content: center; margin-top: 4px; }
-.chip {
-  background: #fff; border: 1px solid #D8D5EE; color: #4A3FD4;
-  padding: 7px 14px; border-radius: 100px; font-size: 13px;
-  cursor: pointer; font-family: var(--sans);
-  transition: background .15s, border-color .15s;
-}
-.chip:hover { background: #EEF0FF; border-color: #A89EE8; }
-
-.msg-row {
-  display: flex; flex-direction: column; gap: 3px;
-  max-width: 82%; animation: up .2s ease both;
-}
-@keyframes up { from { opacity:0; transform:translateY(6px) } to { opacity:1; transform:none } }
-
-.msg-row.ai   { align-self: flex-start; }
-.msg-row.user { align-self: flex-end; }
-
-.bubble { padding: 10px 14px; font-size: 14.5px; line-height: 1.65; word-break: break-word; white-space: pre-wrap; }
-.msg-row.ai .bubble {
-  background: #fff; border: 1px solid #EAE8F5; color: #1A1535;
-  border-radius: 4px 16px 16px 16px;
-  box-shadow: 0 2px 8px rgba(108,99,255,0.06);
-}
-.msg-row.user .bubble {
-  background: linear-gradient(135deg, #6C63FF, #5557E8);
-  color: #fff; border-radius: 16px 4px 16px 16px;
-}
-.msg-time { font-size: 11px; color: #9B98B0; padding: 0 4px; }
-.msg-row.user .msg-time { text-align: right; }
-
-.typing-row { align-self: flex-start; animation: up .2s ease both; }
-.typing-bubble {
-  background: #fff; border: 1px solid #EAE8F5; border-radius: 4px 16px 16px 16px;
-  padding: 12px 16px; display: flex; gap: 5px; align-items: center;
-}
-.dot {
-  width: 5px; height: 5px; border-radius: 50%; background: #A89EE8;
-  animation: blink 1.2s ease-in-out infinite;
-}
-.dot:nth-child(2) { animation-delay: .2s; }
-.dot:nth-child(3) { animation-delay: .4s; }
-
-.input-area {
-  padding: 10px 14px 16px;
-  border-top: 1px solid #EAE8F5;
-  background: #fff; flex-shrink: 0;
-}
-.input-row {
-  display: flex; align-items: flex-end; gap: 10px;
-  background: #F5F3FF; border: 1.5px solid #D0CDE8;
-  border-radius: 14px; padding: 10px 10px 10px 15px;
-  transition: border-color .2s, box-shadow .2s;
-}
-.input-row:focus-within {
-  border-color: #7B72E9;
-  box-shadow: 0 0 0 3px rgba(123,114,233,0.12);
-}
-textarea {
-  flex: 1; background: none; border: none; outline: none;
-  color: #1A1535; font-family: var(--sans); font-size: 14.5px;
-  line-height: 1.5; resize: none; min-height: 22px; max-height: 140px;
-}
-textarea::placeholder { color: #9B98B0; }
-.send-btn {
-  width: 34px; height: 34px; border-radius: 10px; flex-shrink: 0;
-  background: linear-gradient(135deg, #6C63FF, #48C6A8);
-  border: none; cursor: pointer;
-  display: flex; align-items: center; justify-content: center;
-  transition: opacity .15s, transform .1s;
-  color: #fff; box-shadow: 0 3px 12px rgba(108,99,255,0.4);
-}
-.send-btn:hover { opacity: .9; }
-.send-btn:active { transform: scale(.91); }
-.send-btn:disabled { opacity: .3; cursor: default; box-shadow: none; }
-.input-hint {
-  font-size: 11px; color: #9B98B0; text-align: center; padding-top: 7px; line-height: 1.5;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .msg-row, .typing-row { animation: none; }
-  .dot { animation: none; }
-  .card { transition: none; }
+@media(prefers-reduced-motion:reduce){
+  .msg-row,.typing-row,.wave{animation:none}
+  .dot{animation:none;opacity:.6}
 }
 </style>
 </head>
 <body>
 
-<!-- ════ HERO ════ -->
-<div class="hero">
-  <nav class="nav">
-    <a class="nav-logo" href="#">
-      <div class="nav-icon">А</div>
-      <span class="nav-name">Аура</span>
+<!-- NAV -->
+<nav class="nav">
+  <a class="nav-logo" href="#">
+    <div class="nav-ico">А</div>
+    <span class="nav-name">Аура</span>
+  </a>
+  <div class="nav-actions">
+    <a class="nav-tg" href="https://t.me/AuraAiAssistantBot" target="_blank">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12s5.37 12 12 12 12-5.37 12-12S18.63 0 12 0zm5.95 8.28l-2.02 9.53c-.14.65-.52.81-1.05.5l-2.9-2.14-1.4 1.35c-.16.16-.29.29-.59.29l.21-2.97 5.41-4.89c.24-.21-.05-.33-.36-.12L7.01 14.73l-2.85-.89c-.62-.19-.63-.62.13-.92l11.12-4.29c.52-.19.97.12.8.91l-.26-.26z"/></svg>
+      Telegram
     </a>
-    <span class="nav-badge">AI-психолог · 24/7</span>
-  </nav>
+    <button class="nav-chat" onclick="openChat('general')">Начать чат</button>
+  </div>
+</nav>
 
-  <div class="hero-body">
-    <div>
-      <div class="hero-eyebrow">
-        <span class="eyebrow-dot"></span>
-        Работает прямо сейчас
-      </div>
-      <h1 class="hero-h1">
-        Твой личный<br>
-        <span>психолог всегда рядом</span>
-      </h1>
-      <p class="hero-p">
-        Поговори с Аурой — AI-помощником по эмоциональному состоянию.
-        Тревога, стресс, отношения, выгорание. Анонимно, без ожидания.
-      </p>
-      <div class="hero-ctas">
-        <button class="btn-primary" onclick="openChat('general')">
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2 7h10M7 2l5 5-5 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          Начать разговор
-        </button>
-        <a class="btn-ghost" href="#features">Что умеет Аура</a>
-      </div>
+<!-- HERO -->
+<div class="hero">
+  <div class="hero-inner">
+    <div class="hero-badge"><span></span>Онлайн 24/7 · Анонимно · Бесплатно</div>
+    <h1>Поддержка когда<br><em>тебе это нужно</em></h1>
+    <p class="hero-sub">AI-психолог, нумерология, бизнес-коуч и астрология в одном месте.<br>Голосовой чат и сессии по телефону.</p>
+    <div class="hero-btns">
+      <button class="btn-white" onclick="openChat('general')">
+        <svg width="15" height="15" viewBox="0 0 15 15" fill="none"><path d="M13 7.5L1 2l2 5.5-2 5.5 12-5.5z" fill="currentColor"/></svg>
+        Начать разговор
+      </button>
+      <button class="btn-outline" onclick="startVoice()">🎤 Голосовой чат</button>
     </div>
-
-    <div class="hero-card">
-      <div class="hc-msg">
-        <div class="hc-avatar">А</div>
-        <div class="hc-bubble">Привет. Я здесь и никуда не тороплюсь. Расскажи, что тебя беспокоит?</div>
-      </div>
-      <div class="hc-msg hc-user">
-        <div class="hc-bubble">Я постоянно тревожусь и не могу расслабиться...</div>
-      </div>
-      <div class="hc-msg">
-        <div class="hc-avatar">А</div>
-        <div class="hc-bubble">Это звучит как хроническое фоновое напряжение — тело не успевает выйти из режима тревоги. Попробуем прямо сейчас: вдох на 4 счёта, задержка на 7, выдох на 8.</div>
-      </div>
-      <div class="hc-dots">
-        <div class="hc-dot"></div>
-        <div class="hc-dot"></div>
-        <div class="hc-dot"></div>
-      </div>
-      <div class="hc-tags">
-        <span class="hc-tag">Тревога</span>
-        <span class="hc-tag">Стресс</span>
-        <span class="hc-tag">Отношения</span>
-        <span class="hc-tag">Выгорание</span>
+    <div class="voice-demo">
+      <button class="vd-mic" onclick="startVoice()" aria-label="Начать голосовой чат">🎤</button>
+      <div class="vd-text">
+        <div class="vd-title">Говори — Аура слушает</div>
+        <div class="vd-sub">Нажми и скажи что тебя беспокоит</div>
       </div>
     </div>
   </div>
 </div>
 
-<!-- ════ FEATURES ════ -->
-<div id="features">
+<!-- TOOLS -->
 <div class="section">
-  <div class="section-label">Что умеет Аура</div>
-  <h2 class="section-title">Выбери с чего начать</h2>
-  <p class="section-sub">Нажми на карточку — Аура сразу начнёт разговор по этой теме</p>
+  <div class="s-label">Все инструменты</div>
+  <h2 class="s-title">Выбери с чего начать</h2>
+  <p class="s-sub">Нажми на карточку — Аура начнёт разговор по этой теме</p>
 
-  <div class="cards">
-    <div class="card c1" onclick="openChat('general')" tabindex="0" role="button" aria-label="Поговорить с психологом">
-      <div class="card-icon">🧠</div>
-      <div class="card-title">Поговорить с психологом</div>
-      <div class="card-desc">Просто расскажи что на душе — Аура выслушает, отразит и поможет разобраться.</div>
-      <span class="card-arrow">Начать разговор →</span>
+  <div class="tools-grid">
+    <div class="tool-card" onclick="openChat('psy')" tabindex="0">
+      <div class="tc-icon" style="background:#EEF0FF">🧠</div>
+      <div class="tc-title">AI-психолог</div>
+      <div class="tc-desc">Тревога, стресс, депрессия, отношения. Работает по CBT, ACT, DBT и гештальту.</div>
+      <span class="tc-tag" style="background:#EEF0FF;color:#5B52D6">Психология</span>
     </div>
-
-    <div class="card c2" onclick="openChat('anxiety')" tabindex="0" role="button" aria-label="Тревога и стресс">
-      <div class="card-icon">💭</div>
-      <div class="card-title">Тревога и стресс</div>
-      <div class="card-desc">Навязчивые мысли, напряжение, невозможность расслабиться. Работаем с техниками CBT и дыханием.</div>
-      <span class="card-arrow" style="color:#E8528A">Снять напряжение →</span>
+    <div class="tool-card" onclick="openChat('anxiety')" tabindex="0">
+      <div class="tc-icon" style="background:#FFF0F6">💭</div>
+      <div class="tc-title">Тревога и панические атаки</div>
+      <div class="tc-desc">Техники дыхания, заземления и работа с навязчивыми мыслями прямо сейчас.</div>
+      <span class="tc-tag" style="background:#FFF0F6;color:#C2185B">Срочная помощь</span>
     </div>
-
-    <div class="card c3" onclick="openChat('relations')" tabindex="0" role="button" aria-label="Отношения">
-      <div class="card-icon">💚</div>
-      <div class="card-title">Отношения</div>
-      <div class="card-desc">Конфликты, обиды, одиночество, непонимание. Разбираем паттерны привязанности и коммуникацию.</div>
-      <span class="card-arrow" style="color:#3CBB8A">Разобраться →</span>
+    <div class="tool-card" onclick="openChat('relations')" tabindex="0">
+      <div class="tc-icon" style="background:#F0FFF8">💚</div>
+      <div class="tc-title">Отношения</div>
+      <div class="tc-desc">Конфликты, измена, одиночество, разрыв. Паттерны привязанности и техники DBT.</div>
+      <span class="tc-tag" style="background:#F0FFF8;color:#1B8860">Отношения</span>
     </div>
-
-    <div class="card c4" onclick="openChat('burnout')" tabindex="0" role="button" aria-label="Выгорание">
-      <div class="card-icon">🔥</div>
-      <div class="card-title">Выгорание и усталость</div>
-      <div class="card-desc">Когда всё надоело и нет сил. Анализируем ценности, восстанавливаем ресурс.</div>
-      <span class="card-arrow" style="color:#E89B30">Восстановиться →</span>
+    <div class="tool-card" onclick="openChat('burnout')" tabindex="0">
+      <div class="tc-icon" style="background:#FFF7E6">🔥</div>
+      <div class="tc-title">Выгорание</div>
+      <div class="tc-desc">Усталость, потеря смысла, апатия. Анализ ценностей и восстановление ресурса.</div>
+      <span class="tc-tag" style="background:#FFF7E6;color:#B45309">Стресс</span>
     </div>
-
-    <div class="card c5" onclick="openChat('thoughts')" tabindex="0" role="button" aria-label="Разобрать мысли">
-      <div class="card-icon">📝</div>
-      <div class="card-title">Разобрать мысли</div>
-      <div class="card-desc">Выгрузи всё что накопилось — Аура поможет структурировать, найти суть и успокоиться.</div>
-      <span class="card-arrow" style="color:#3C7BE8">Выгрузить →</span>
+    <div class="tool-card" onclick="openChat('thoughts')" tabindex="0">
+      <div class="tc-icon" style="background:#F0F6FF">📝</div>
+      <div class="tc-title">Разобрать мысли</div>
+      <div class="tc-desc">Выгрузи всё что накопилось. Аура поможет найти суть и успокоиться.</div>
+      <span class="tc-tag" style="background:#F0F6FF;color:#1D4ED8">Мышление</span>
     </div>
-
-    <div class="card c6" onclick="openChat('selfesteem')" tabindex="0" role="button" aria-label="Самооценка">
-      <div class="card-icon">✨</div>
-      <div class="card-title">Самооценка и уверенность</div>
-      <div class="card-desc">Внутренний критик, перфекционизм, синдром самозванца. Работаем со схемами и убеждениями.</div>
-      <span class="card-arrow" style="color:#E86730">Укрепить себя →</span>
+    <div class="tool-card" onclick="openChat('coach')" tabindex="0">
+      <div class="tc-icon" style="background:#FFF0E6">🚀</div>
+      <div class="tc-title">Бизнес-коуч</div>
+      <div class="tc-desc">Цели, решения, прокрастинация, переговоры. Коучинг по методологии ICF.</div>
+      <span class="tc-tag" style="background:#FFF0E6;color:#C2410C">Бизнес</span>
     </div>
-  </div>
-</div>
-</div>
-
-<!-- ════ HOW IT WORKS ════ -->
-<div class="how">
-  <div class="section">
-    <div>
-      <div class="section-label">Как это работает</div>
-      <h2 class="section-title">Терапия без очереди и записи</h2>
-      <div class="steps">
-        <div class="step">
-          <div class="step-num">1</div>
-          <div class="step-body">
-            <h4>Выбери тему</h4>
-            <p>Нажми на любую карточку или просто напиши что беспокоит — Аура поймёт сама.</p>
-          </div>
-        </div>
-        <div class="step">
-          <div class="step-num">2</div>
-          <div class="step-body">
-            <h4>Расскажи как есть</h4>
-            <p>Без фильтров. Аура не осудит, не даст банальных советов, не будет задавать лишних вопросов.</p>
-          </div>
-        </div>
-        <div class="step">
-          <div class="step-num">3</div>
-          <div class="step-body">
-            <h4>Получи реальную помощь</h4>
-            <p>Техники CBT, ACT, DBT, гештальт — Аура применяет их в живом разговоре, а не цитирует учебник.</p>
-          </div>
-        </div>
-      </div>
+    <div class="tool-card" onclick="openChat('numerology')" tabindex="0">
+      <div class="tc-icon" style="background:#F5F0FF">🔢</div>
+      <div class="tc-title">Нумерология</div>
+      <div class="tc-desc">Число жизни, личный год, совместимость. Расчёт по дате рождения.</div>
+      <span class="tc-tag" style="background:#F5F0FF;color:#7E22CE">Нумерология</span>
     </div>
-    <div class="how-visual">
-      <div class="stat-grid">
-        <div class="stat-card">
-          <div class="stat-num">24/7</div>
-          <div class="stat-label">Всегда на связи</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-num">0 с</div>
-          <div class="stat-label">Время ожидания</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-num">100%</div>
-          <div class="stat-label">Анонимно</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-num">6+</div>
-          <div class="stat-label">Направлений помощи</div>
-        </div>
-      </div>
+    <div class="tool-card" onclick="openChat('astro')" tabindex="0">
+      <div class="tc-icon" style="background:#FFF8E6">⭐</div>
+      <div class="tc-title">Астрология</div>
+      <div class="tc-desc">Натальная карта, транзиты, совместимость знаков. Разбор по планетам.</div>
+      <span class="tc-tag" style="background:#FFF8E6;color:#B45309">Астрология</span>
+    </div>
+    <div class="tool-card" onclick="openChat('health')" tabindex="0">
+      <div class="tc-icon" style="background:#F0FFF8">🌿</div>
+      <div class="tc-title">Психосоматика и здоровье</div>
+      <div class="tc-desc">Связь эмоций и тела, психосоматические симптомы, работа с болью.</div>
+      <span class="tc-tag" style="background:#F0FFF8;color:#065F46">Здоровье</span>
     </div>
   </div>
 </div>
 
-<!-- ════ FOOTER ════ -->
+<!-- VOICE -->
+<div class="section" style="padding-top:0">
+  <div class="voice-section">
+    <div class="voice-inner">
+      <div>
+        <div class="s-label">Голосовой режим</div>
+        <h2 class="s-title">Говори — не печатай</h2>
+        <p class="s-sub">Просто нажми кнопку микрофона и расскажи что беспокоит. Аура ответит голосом.</p>
+        <div class="voice-features">
+          <div class="vf">
+            <div class="vf-icon" style="background:#EEF0FF">🎤</div>
+            <div>
+              <div class="vf-title">Распознавание речи</div>
+              <div class="vf-desc">Говори на русском, английском или другом языке — Аура поймёт</div>
+            </div>
+          </div>
+          <div class="vf">
+            <div class="vf-icon" style="background:#F0FFF8">🔊</div>
+            <div>
+              <div class="vf-title">Голосовые ответы</div>
+              <div class="vf-desc">Аура отвечает вслух — удобно когда руки заняты</div>
+            </div>
+          </div>
+          <div class="vf">
+            <div class="vf-icon" style="background:#FFF7E6">⚡</div>
+            <div>
+              <div class="vf-title">Без задержек</div>
+              <div class="vf-desc">Ответ приходит за 2-3 секунды</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="voice-ui">
+        <div class="vu-waves">
+          <div class="wave"></div><div class="wave"></div><div class="wave"></div>
+          <div class="wave"></div><div class="wave"></div><div class="wave"></div>
+          <div class="wave"></div>
+        </div>
+        <div class="vu-text">Аура готова выслушать тебя</div>
+        <button class="vu-btn" onclick="openChat('general');setTimeout(startVoice,500)">🎤 Начать голосовой чат</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- PHONE SESSION -->
+<div class="section" style="padding-top:0">
+  <div class="phone-section">
+    <div class="phone-inner">
+      <div>
+        <div class="s-label">Сессия по телефону</div>
+        <h2 class="s-title">Живой разговор с AI-психологом</h2>
+        <div class="phone-info" style="margin-top:24px">
+          <div class="pi-item">
+            <div class="pi-ico" style="background:#EEF0FF">📞</div>
+            <div>
+              <div class="pi-title">Мы перезваниваем тебе</div>
+              <div class="pi-desc">Оставь номер — Аура позвонит в удобное время. Никаких приложений.</div>
+            </div>
+          </div>
+          <div class="pi-item">
+            <div class="pi-ico" style="background:#F0FFF8">🕐</div>
+            <div>
+              <div class="pi-title">Сессия 30-60 минут</div>
+              <div class="pi-desc">Полноценная терапевтическая сессия по телефону в удобное время</div>
+            </div>
+          </div>
+          <div class="pi-item">
+            <div class="pi-ico" style="background:#FFF7E6">🔒</div>
+            <div>
+              <div class="pi-title">Конфиденциально</div>
+              <div class="pi-desc">Звонок не записывается без твоего согласия. Полная анонимность.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div>
+        <p style="font-size:15px;color:var(--muted);margin-bottom:4px">Запись на звонок</p>
+        <div class="phone-form">
+          <div class="pf-field">
+            <label class="pf-label">Твоё имя</label>
+            <input class="pf-input" type="text" id="pfName" placeholder="Как тебя зовут?">
+          </div>
+          <div class="pf-field">
+            <label class="pf-label">Номер телефона</label>
+            <input class="pf-input" type="tel" id="pfPhone" placeholder="+7 (___) ___-__-__">
+          </div>
+          <div class="pf-field">
+            <label class="pf-label">Тема разговора</label>
+            <select class="pf-select" id="pfTopic">
+              <option value="">Выбери тему</option>
+              <option value="psy">Психологическая поддержка</option>
+              <option value="anxiety">Тревога и стресс</option>
+              <option value="relations">Отношения</option>
+              <option value="burnout">Выгорание</option>
+              <option value="coach">Бизнес и цели</option>
+            </select>
+          </div>
+          <button class="pf-btn" onclick="submitPhone()">📞 Записаться на звонок</button>
+          <div class="pf-note">Перезвоним в течение 24 часов</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- HOW -->
+<div class="section">
+  <div class="s-label">Как это работает</div>
+  <h2 class="s-title">Просто и быстро</h2>
+  <div class="how-grid">
+    <div class="how-card">
+      <div class="how-num">1</div>
+      <div class="how-title">Выбери тему</div>
+      <div class="how-desc">Нажми на карточку или напиши / скажи что беспокоит — Аура поймёт</div>
+    </div>
+    <div class="how-card">
+      <div class="how-num">2</div>
+      <div class="how-title">Расскажи как есть</div>
+      <div class="how-desc">Без фильтров. Текстом или голосом. Аура не осудит и не даст банальных советов</div>
+    </div>
+    <div class="how-card">
+      <div class="how-num">3</div>
+      <div class="how-title">Получи помощь</div>
+      <div class="how-desc">Техники CBT, ACT, DBT прямо в разговоре. Или запишись на телефонную сессию</div>
+    </div>
+  </div>
+</div>
+
+<!-- TG -->
+<div class="section" style="padding-top:0">
+  <div class="tg-section">
+    <div class="tg-icon">✈️</div>
+    <div class="tg-title">Аура в Telegram</div>
+    <p class="tg-sub">Все функции доступны в боте. Голосовые сообщения, история разговоров, уведомления.</p>
+    <a class="btn-tg-big" href="https://t.me/AuraAiAssistantBot" target="_blank">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12s5.37 12 12 12 12-5.37 12-12S18.63 0 12 0zm5.95 8.28l-2.02 9.53c-.14.65-.52.81-1.05.5l-2.9-2.14-1.4 1.35c-.16.16-.29.29-.59.29l.21-2.97 5.41-4.89c.24-.21-.05-.33-.36-.12L7.01 14.73l-2.85-.89c-.62-.19-.63-.62.13-.92l11.12-4.29c.52-.19.97.12.8.91z"/></svg>
+      Открыть в Telegram
+    </a>
+  </div>
+</div>
+
+<!-- FOOTER -->
 <footer>
-  <p>Аура — AI-помощник по эмоциональному состоянию. <strong>Не является заменой врача или психотерапевта.</strong></p>
-  <p>При кризисе звони: <strong>8-800-2000-122</strong> (бесплатно, РФ) &nbsp;·&nbsp; <strong>0800-33-11</strong> (UA) &nbsp;·&nbsp; <strong>150</strong> (KZ)</p>
+  <p>Аура — AI-помощник. <strong>Не является заменой врача или психотерапевта.</strong></p>
+  <p>При кризисе: <strong>8-800-2000-122</strong> (РФ) · <strong>0800-33-11</strong> (UA) · <strong>150</strong> (KZ)</p>
 </footer>
 
-<!-- ════ CHAT SHEET ════ -->
-<div id="chatOverlay" onclick="handleOverlayClick(event)" role="dialog" aria-modal="true" aria-label="Чат с Аурой">
-  <div class="chat-sheet">
-    <div style="position:relative; flex-shrink:0;">
+<!-- CHAT SHEET -->
+<div id="overlay" onclick="handleBg(event)">
+  <div class="sheet">
+    <div class="sh-head">
       <div class="sh-drag"></div>
-    </div>
-    <div class="sheet-header">
-      <div class="sh-av">А<span class="sh-online"></span></div>
+      <div class="sh-av">А<span class="sh-pulse"></span></div>
       <div class="sh-info">
         <div class="sh-name">Аура</div>
-        <div class="sh-status" id="shStatus">психологическая поддержка · онлайн</div>
+        <div class="sh-status" id="shStatus">онлайн · отвечает за секунды</div>
       </div>
-      <button class="sh-close" onclick="closeChat()" aria-label="Закрыть">✕</button>
+      <div class="sh-actions">
+        <button class="sh-btn" id="voiceToggle" onclick="toggleVoiceReply()" title="Голосовые ответы">🔊</button>
+        <button class="sh-btn" onclick="closeChat()" title="Закрыть">✕</button>
+      </div>
     </div>
 
-    <div class="messages" id="messages" role="log" aria-live="polite">
+    <div class="msgs" id="msgs" role="log" aria-live="polite">
       <div class="empty" id="emptyState">
-        <div class="empty-icon">А</div>
-        <div class="empty-title">Здесь безопасно</div>
-        <div class="empty-desc">Всё что ты скажешь — останется между нами</div>
+        <div class="empty-ico">А</div>
+        <div class="empty-t">Здесь безопасно</div>
+        <div class="empty-s">Всё что скажешь — останется между нами</div>
         <div class="chips">
-          <button class="chip" onclick="useChip(this)">Чувствую тревогу</button>
-          <button class="chip" onclick="useChip(this)">Сложные отношения</button>
-          <button class="chip" onclick="useChip(this)">Стресс и выгорание</button>
+          <button class="chip" onclick="useChip(this)">Тревога</button>
+          <button class="chip" onclick="useChip(this)">Отношения</button>
+          <button class="chip" onclick="useChip(this)">Выгорание</button>
           <button class="chip" onclick="useChip(this)">Разобрать мысли</button>
         </div>
       </div>
     </div>
 
-    <div class="input-area">
-      <div class="input-row">
-        <textarea id="inp" placeholder="Напиши что тебя беспокоит…" rows="1"
+    <div class="inp-area">
+      <div class="inp-row">
+        <button class="mic-btn" id="micBtn" onclick="toggleMic()" title="Голосовой ввод" aria-label="Микрофон">🎤</button>
+        <textarea id="inp" placeholder="Напиши или нажми 🎤 чтобы говорить…" rows="1"
           aria-label="Сообщение" onkeydown="onKey(event)" oninput="resize(this)"></textarea>
         <button class="send-btn" id="sendBtn" onclick="send()" aria-label="Отправить" disabled>
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
@@ -671,134 +610,207 @@ textarea::placeholder { color: #9B98B0; }
           </svg>
         </button>
       </div>
-      <div class="input-hint">AI-помощник · не замена специалисту · при кризисе: <strong>8-800-2000-122</strong></div>
+      <div class="inp-hint">AI-помощник · не замена специалисту · кризис: <strong>8-800-2000-122</strong></div>
     </div>
   </div>
 </div>
 
+<div class="toast" id="toast"></div>
+
 <script>
-const TOPIC_PROMPTS = {
+const TOPICS = {
   general:    null,
-  anxiety:    'Меня беспокоит постоянная тревога и стресс. Помоги разобраться.',
-  relations:  'Хочу поговорить об отношениях — есть трудности и непонимание.',
-  burnout:    'Чувствую выгорание и полное отсутствие сил. Всё надоело.',
-  thoughts:   'Хочу выгрузить накопившиеся мысли и разобраться в них. Расскажи мне что-нибудь.',
-  selfesteem: 'Хочу поработать над самооценкой и уверенностью в себе.',
+  psy:        'Хочу поговорить с психологом о том что меня беспокоит.',
+  anxiety:    'Меня беспокоит сильная тревога. Помоги прямо сейчас.',
+  relations:  'Хочу разобраться в отношениях — есть сложности.',
+  burnout:    'Чувствую полное выгорание и нет сил ни на что.',
+  thoughts:   'Хочу выгрузить накопившиеся мысли и разобраться в них.',
+  coach:      'Нужна помощь бизнес-коуча: цели, решения, действия.',
+  numerology: 'Хочу узнать свою нумерологию. Назови дату рождения — расскажу.',
+  astro:      'Расскажи про мой знак зодиака и натальную карту.',
+  health:     'Хочу разобраться в психосоматике и связи эмоций с телом.',
 };
 
-let sid = 'web_' + Math.random().toString(36).slice(2, 9);
-let busy = false;
-let chatReady = false;
+let sid = 'web_' + Math.random().toString(36).slice(2,9);
+let busy = false, chatReady = false;
+let voiceReply = false;
+let recognition = null, isRecording = false;
 
-const overlay = document.getElementById('chatOverlay');
-const msgs    = document.getElementById('messages');
+const overlay = document.getElementById('overlay');
+const msgs    = document.getElementById('msgs');
 const inp     = document.getElementById('inp');
 const btn     = document.getElementById('sendBtn');
+const micBtn  = document.getElementById('micBtn');
+const voiceToggle = document.getElementById('voiceToggle');
 
 inp.addEventListener('input', () => { btn.disabled = !inp.value.trim(); });
 
+/* ── open/close ── */
 function openChat(topic) {
   overlay.classList.add('open');
   document.body.style.overflow = 'hidden';
-  if (!chatReady) {
-    chatReady = true;
-    loadGreeting(topic);
-  }
+  if (!chatReady) { chatReady = true; loadGreeting(topic); }
   setTimeout(() => inp.focus(), 400);
 }
-
 function closeChat() {
   overlay.classList.remove('open');
   document.body.style.overflow = '';
+  stopRecording();
 }
-
-function handleOverlayClick(e) {
-  if (e.target === overlay) closeChat();
-}
-
+function handleBg(e) { if (e.target === overlay) closeChat(); }
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeChat(); });
 
-function resize(el) {
-  el.style.height = 'auto';
-  el.style.height = Math.min(el.scrollHeight, 140) + 'px';
-}
-
-function onKey(e) {
-  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (!btn.disabled && !busy) send(); }
-}
-
-function ts() {
-  return new Date().toLocaleTimeString('ru', { hour: '2-digit', minute: '2-digit' });
-}
-
+/* ── helpers ── */
+function resize(el) { el.style.height='auto'; el.style.height=Math.min(el.scrollHeight,140)+'px'; }
+function onKey(e) { if (e.key==='Enter'&&!e.shiftKey){e.preventDefault();if(!btn.disabled&&!busy)send();} }
+function ts() { return new Date().toLocaleTimeString('ru',{hour:'2-digit',minute:'2-digit'}); }
 function removeEmpty() { document.getElementById('emptyState')?.remove(); }
 
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2800);
+}
+
+/* ── messages ── */
 function addMsg(text, role) {
   removeEmpty();
   const row = document.createElement('div');
   row.className = `msg-row ${role}`;
-  const b = document.createElement('div');
-  b.className = 'bubble'; b.textContent = text;
-  const t = document.createElement('div');
-  t.className = 'msg-time'; t.textContent = ts();
-  row.append(b, t);
-  msgs.appendChild(row);
+  const b = document.createElement('div'); b.className='bubble'; b.textContent=text;
+  const t = document.createElement('div'); t.className='msg-time'; t.textContent=ts();
+  if (role === 'ai') {
+    const sp = document.createElement('button');
+    sp.className='speak-btn'; sp.textContent='🔊'; sp.title='Прослушать';
+    sp.onclick = () => speakText(text);
+    t.appendChild(sp);
+  }
+  row.append(b, t); msgs.appendChild(row);
   msgs.scrollTop = msgs.scrollHeight;
+  if (role === 'ai' && voiceReply) speakText(text);
 }
 
 function showTyping() {
-  const r = document.createElement('div');
-  r.className = 'typing-row'; r.id = 'typing';
-  r.innerHTML = '<div class="typing-bubble"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>';
-  msgs.appendChild(r); msgs.scrollTop = msgs.scrollHeight;
+  const r = document.createElement('div'); r.className='typing-row'; r.id='typing';
+  r.innerHTML='<div class="typing-bub"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>';
+  msgs.appendChild(r); msgs.scrollTop=msgs.scrollHeight;
 }
 function hideTyping() { document.getElementById('typing')?.remove(); }
 
+/* ── send ── */
 async function send() {
   const text = inp.value.trim();
   if (!text || busy) return;
-  inp.value = ''; inp.style.height = 'auto'; btn.disabled = true;
-  addMsg(text, 'user');
-  busy = true; showTyping();
+  inp.value=''; inp.style.height='auto'; btn.disabled=true;
+  addMsg(text,'user'); busy=true; showTyping();
   try {
-    const r = await fetch('/api/psych/chat', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ session_id: sid, message: text })
+    const r = await fetch('/api/psych/chat',{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({session_id:sid, message:text})
     });
     const d = await r.json();
-    hideTyping(); addMsg(d.reply || 'Что-то пошло не так, попробуй ещё раз.', 'ai');
+    hideTyping(); addMsg(d.reply||'Попробуй ещё раз.','ai');
   } catch {
-    hideTyping(); addMsg('Нет соединения. Попробуй позже.', 'ai');
+    hideTyping(); addMsg('Нет соединения. Попробуй позже.','ai');
   }
-  busy = false; inp.focus();
+  busy=false; inp.focus();
 }
 
-function useChip(el) {
-  inp.value = el.textContent.trim(); resize(inp); btn.disabled = false; send();
-}
+function useChip(el) { inp.value=el.textContent.trim(); resize(inp); btn.disabled=false; send(); }
 
 async function loadGreeting(topic) {
   try {
-    const r = await fetch('/api/psych/start', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ session_id: sid })
+    const r = await fetch('/api/psych/start',{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({session_id:sid})
     });
     if (r.ok) {
-      const d = await r.json();
-      addMsg(d.greeting, 'ai');
-      const prompt = TOPIC_PROMPTS[topic];
-      if (prompt) {
-        await new Promise(res => setTimeout(res, 600));
-        inp.value = prompt; resize(inp); btn.disabled = false;
-        await send();
-      }
+      const d = await r.json(); addMsg(d.greeting,'ai');
+      const prompt = TOPICS[topic];
+      if (prompt) { await new Promise(res=>setTimeout(res,500)); inp.value=prompt; resize(inp); btn.disabled=false; await send(); }
     }
-  } catch { }
+  } catch {}
 }
 
-// keyboard support for cards
-document.querySelectorAll('.card[tabindex]').forEach(c => {
-  c.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') c.click(); });
+/* ── VOICE INPUT (STT) ── */
+function toggleMic() {
+  if (!isRecording) startRecording(); else stopRecording();
+}
+
+function startRecording() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) { showToast('Голосовой ввод не поддерживается в этом браузере'); return; }
+  recognition = new SR();
+  recognition.lang = 'ru-RU'; recognition.interimResults = false; recognition.maxAlternatives = 1;
+  recognition.onresult = e => {
+    const text = e.results[0][0].transcript;
+    inp.value = text; resize(inp); btn.disabled = false;
+    stopRecording(); send();
+  };
+  recognition.onerror = () => { stopRecording(); showToast('Не удалось распознать речь'); };
+  recognition.onend = () => stopRecording();
+  recognition.start();
+  isRecording = true;
+  micBtn.classList.add('recording'); micBtn.textContent = '⏹';
+  document.getElementById('shStatus').textContent = 'слушаю…';
+}
+
+function stopRecording() {
+  if (recognition) { try { recognition.stop(); } catch {} recognition = null; }
+  isRecording = false;
+  micBtn.classList.remove('recording'); micBtn.textContent = '🎤';
+  document.getElementById('shStatus').textContent = 'онлайн · отвечает за секунды';
+}
+
+function startVoice() { openChat('general'); setTimeout(startRecording, 500); }
+
+/* ── VOICE OUTPUT (TTS) ── */
+function toggleVoiceReply() {
+  voiceReply = !voiceReply;
+  voiceToggle.classList.toggle('active', voiceReply);
+  showToast(voiceReply ? '🔊 Голосовые ответы включены' : '🔇 Голосовые ответы выключены');
+}
+
+async function speakText(text) {
+  try {
+    const r = await fetch('/api/psych/tts',{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({text})
+    });
+    if (r.ok) {
+      const blob = await r.blob();
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      audio.play();
+      audio.onended = () => URL.revokeObjectURL(url);
+      return;
+    }
+  } catch {}
+  // fallback: browser TTS
+  const utt = new SpeechSynthesisUtterance(text);
+  utt.lang = 'ru-RU'; utt.rate = 0.92; utt.pitch = 1.05;
+  const voices = speechSynthesis.getVoices().filter(v => v.lang.startsWith('ru'));
+  if (voices.length) utt.voice = voices[0];
+  speechSynthesis.speak(utt);
+}
+
+/* ── PHONE FORM ── */
+function submitPhone() {
+  const name = document.getElementById('pfName').value.trim();
+  const phone = document.getElementById('pfPhone').value.trim();
+  const topic = document.getElementById('pfTopic').value;
+  if (!phone) { showToast('Введи номер телефона'); return; }
+  showToast('✅ Записано! Перезвоним в течение 24 часов');
+  // открываем чат с уведомлением
+  openChat('psy');
+  setTimeout(() => {
+    addMsg(`Запись на звонок оформлена!\nИмя: ${name||'Не указано'}\nТелефон: ${phone}\nТема: ${topic||'Не выбрана'}\n\nМы перезвоним в течение 24 часов. Хочешь пока поговорить текстом?`, 'ai');
+  }, 600);
+}
+
+// keyboard for tool cards
+document.querySelectorAll('.tool-card[tabindex]').forEach(c => {
+  c.addEventListener('keydown', e => { if(e.key==='Enter'||e.key===' ')c.click(); });
 });
 </script>
 </body>

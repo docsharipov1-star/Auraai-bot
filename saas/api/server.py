@@ -69,3 +69,21 @@ async def psych_start(request: Request):
 @app.get("/psych", response_class=HTMLResponse)
 async def psych_page():
     return FileResponse(TEMPLATES / "psych.html")
+
+@app.post("/api/psych/tts")
+async def psych_tts(request: Request):
+    import os
+    from fastapi.responses import Response as FastResponse
+    body = await request.json()
+    text = body.get("text", "").strip()[:600]
+    if not text:
+        return JSONResponse({"error": "empty"}, status_code=400)
+    try:
+        import openai
+        client = openai.AsyncOpenAI(api_key=os.getenv("OPENAI_KEY", ""))
+        response = await client.audio.speech.create(
+            model="tts-1", voice="nova", input=text
+        )
+        return FastResponse(content=response.content, media_type="audio/mpeg")
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)

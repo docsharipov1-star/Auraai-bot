@@ -1,27 +1,23 @@
 """
-Аналитика стоматологической клиники — Google Sheets + AI анализ.
+Аналитика стоматологической клиники — Google Sheets (CSV export) + AI анализ.
 
 Что умеет:
-- Читает 3 таблицы: дневная смена, ночная смена, зарплата
+- Читает 3 таблицы через публичный CSV-экспорт (без API-ключей)
 - Считает эффективность каждого врача
 - Отслеживает первичных пациентов (пришёл → остался → перенаправлен)
 - Генерирует AI-рекомендации через Claude
 - Отправляет отчёты в Telegram
 
-Установка:
-  pip install gspread google-auth pandas
-
 Настройка:
-  1. Создать Google Service Account: console.cloud.google.com
-  2. Скачать credentials.json
-  3. Поделиться таблицами с email сервисного аккаунта
-  4. Прописать GOOGLE_CREDENTIALS_JSON в Railway ENV
+  1. Таблицы открыть на просмотр: Поделиться → Все у кого есть ссылка → Просматривать
+  2. Прописать SHEET_DAY, SHEET_NIGHT, SHEET_SALARY в Railway ENV (или оставить дефолт)
 """
 
 import os
-import json
+import csv
 import asyncio
 import logging
+import io
 from datetime import datetime, timedelta, date
 from typing import Optional
 from collections import defaultdict
@@ -49,40 +45,28 @@ COL_MAP = {
 PRIMARY_VALUES = {"первичный", "первич", "новый", "new", "1", "primary", "перв"}
 
 
-def _get_gc():
+def _csv_url(sheet_id: str, gid: int = 0) -> str:
+    return f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid={gid}"
+
+
+def _fetch_sheet_csv(sheet_id: str) -> list[dict]:
+    """Скачивает лист как CSV и возвращает список словарей."""
+    import urllib.request
+    url = _csv_url(sheet_id)
     try:
-        import gspread
-        from google.oauth2.service_account import Credentials
-    except ImportError:
-        raise RuntimeError("Установи: pip install gspread google-auth")
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            content = resp.read().decode("utf-8")
+    except Exception as e:
+        raise RuntimeError(f"Не удалось скачать таблицу {sheet_id}: {e}")
 
-    creds_json = os.getenv("GOOGLE_CREDENTIALS_JSON", "")
-    creds_file = os.getenv("GOOGLE_CREDENTIALS_FILE", "google_credentials.json")
-
-    if creds_json:
-        info = json.loads(creds_json)
-    elif os.path.exists(creds_file):
-        with open(creds_file) as f:
-            info = json.load(f)
-    else:
-        raise RuntimeError(
-            "Нет Google credentials.\n"
-            "Добавь GOOGLE_CREDENTIALS_JSON в Railway ENV или положи google_credentials.json рядом."
-        )
-
-    scopes = [
-        "https://spreadsheets.google.com/feeds",
-        "https://www.googleapis.com/auth/drive",
-    ]
-    creds = Credentials.from_service_account_info(info, scopes=scopes)
-    return gspread.authorize(creds)
-
-
-def _sheet_to_dicts(sheet_id: str, worksheet_index: int = 0) -> list[dict]:
-    gc = _get_gc()
-    sh = gc.open_by_key(sheet_id)
-    ws = sh.get_worksheet(worksheet_index)
-    return ws.get_all_records(default_blank="")
+    reader = csv.DictReader(io.StringIO(content))
+    rows = []
+    for row in reader:
+        # убираем BOM и лишние пробелы в ключах
+        clean = {k.lstrip("﻿").strip(): v for k, v in row.items()}
+        rows.append(clean)
+    return rows
 
 
 def _normalize_cost(val) -> float:
@@ -126,7 +110,7 @@ def load_shift_data(days_back: int = 30) -> list[dict]:
     rows = []
     for sheet_id, shift in [(SHEET_DAY, "день"), (SHEET_NIGHT, "ночь")]:
         try:
-            raw = _sheet_to_dicts(sheet_id)
+            raw = _fetch_sheet_csv(sheet_id)
             for r in raw:
                 d = _normalize_date(_get_col(r, "date"))
                 if d and d >= cutoff:
@@ -149,7 +133,7 @@ def load_shift_data(days_back: int = 30) -> list[dict]:
 
 def load_salary_data() -> list[dict]:
     try:
-        return _sheet_to_dicts(SHEET_SALARY)
+        return _fetch_sheet_csv(SHEET_SALARY)
     except Exception as e:
         log.warning(f"Ошибка загрузки зарплат: {e}")
         return []
@@ -354,9 +338,9 @@ async def full_report(period_days: int = 30, with_ai: bool = True) -> dict:
         return {"error": (
             f"❌ Нет данных за {period_days} дней.\n\n"
             "Проверь:\n"
-            "1. Таблицы расшарены с email сервисного аккаунта\n"
-            "2. GOOGLE\\_CREDENTIALS\\_JSON добавлен в Railway ENV\n"
-            "3. Названия колонок совпадают с настройками"
+            "1. Таблицы открыты на просмотр (Поделиться → Все у кого есть ссылка)\n"
+            "2. Названия колонок совпадают с COL\\_MAP настройками\n"
+            "3. В таблице есть строки с датами за этот период"
         )}
     doctors = analyze_doctors(rows)
     flow    = analyze_patient_flow(rows)

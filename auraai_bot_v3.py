@@ -7409,6 +7409,70 @@ async def server_cmd(message: Message):
     await message.answer(f"<pre>{output}</pre>", parse_mode="HTML")
 
 
+# ══════════════════════════════════════════════════════════════════
+#  📊 Аналитика клиники
+# ══════════════════════════════════════════════════════════════════
+
+@router.message(Command("report"))
+async def cmd_report(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    await message.answer("⏳ Собираю отчёт по клинике…")
+    try:
+        from clinic_analytics import run_full_report
+        text = await run_full_report(days_revenue=7, days_leads=30)
+        # Telegram ограничение 4096 символов
+        for chunk in [text[i:i+4000] for i in range(0, len(text), 4000)]:
+            await message.answer(chunk, parse_mode="Markdown")
+    except Exception as e:
+        await message.answer(f"❌ Ошибка: {e}")
+
+
+@router.message(Command("doctor"))
+async def cmd_doctor(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    parts = (message.text or "").split(maxsplit=1)
+    if len(parts) < 2:
+        await message.answer("Укажи имя врача: /doctor Кристина")
+        return
+    doctor_name = parts[1].strip()
+    await message.answer(f"⏳ Собираю данные по {doctor_name}…")
+    try:
+        from clinic_analytics import doctor_report
+        text = await doctor_report(doctor_name, days=14)
+        await message.answer(text, parse_mode="Markdown")
+    except Exception as e:
+        await message.answer(f"❌ Ошибка: {e}")
+
+
+@router.message(Command("patients"))
+async def cmd_patients(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    await message.answer("⏳ Анализирую воронку первичных пациентов…")
+    try:
+        from clinic_analytics import primary_patients_report
+        text = await primary_patients_report()
+        for chunk in [text[i:i+4000] for i in range(0, len(text), 4000)]:
+            await message.answer(chunk, parse_mode="Markdown")
+    except Exception as e:
+        await message.answer(f"❌ Ошибка: {e}")
+
+
+@router.message(Command("today"))
+async def cmd_today(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    await message.answer("⏳ Данные за сегодня…")
+    try:
+        from clinic_analytics import run_full_report
+        text = await run_full_report(days_revenue=1, days_leads=7)
+        await message.answer(text, parse_mode="Markdown")
+    except Exception as e:
+        await message.answer(f"❌ Ошибка: {e}")
+
+
 async def main():
     global anthropic_client, openai_client, deepseek_client
 

@@ -71,6 +71,25 @@ def _normalize_pay(val: str) -> str:
     return v or "не указан"
 
 
+def _build_doctor_map(names: list[str]) -> dict[str, str]:
+    """
+    Объединяет варианты одного имени: 'Бибо' → 'Бибо Балаевич'.
+    Берёт первое слово как ключ — кто длиннее, тот канонический.
+    """
+    unique = sorted(set(names), key=len, reverse=True)
+    canonical: list[str] = []
+    mapping: dict[str, str] = {}
+    for name in unique:
+        first = name.lower().split()[0] if name.split() else name.lower()
+        matched = next((c for c in canonical if c.lower().split()[0] == first), None)
+        if matched:
+            mapping[name] = matched
+        else:
+            canonical.append(name)
+            mapping[name] = name
+    return mapping
+
+
 def _split_patient_service(text: str) -> tuple[str, str]:
     """'Некрасов.М.К. ИМП' → ('Некрасов.М.К.', 'ИМП')"""
     parts = text.strip().split()
@@ -165,17 +184,51 @@ def _parse_block_sheet(sheet_id: str, shift: str) -> list[dict]:
 #  ЗАГРУЗКА ДАННЫХ
 # ════════════════════════════════════════════════════════════════
 
-def load_shift_data(days_back: int = 30) -> list[dict]:
-    cutoff = date.today() - timedelta(days=days_back)
+def load_shift_data(
+    days_back: int = 30,
+    year: int = None,
+    month: int = None,
+    from_date: date = None,
+    to_date: date = None,
+) -> list[dict]:
+    """
+    Загружает записи за период. Приоритет: from_date/to_date > year+month > year > days_back.
+    Примеры:
+      load_shift_data(7)                         — последние 7 дней
+      load_shift_data(year=2026, month=7)        — июль 2026
+      load_shift_data(year=2026)                 — весь 2026 год
+      load_shift_data(from_date=d1, to_date=d2)  — произвольный диапазон
+    """
+    today = date.today()
+    if from_date and to_date:
+        d_from, d_to = from_date, to_date
+    elif year and month:
+        import calendar
+        d_from = date(year, month, 1)
+        d_to   = date(year, month, calendar.monthrange(year, month)[1])
+    elif year:
+        d_from = date(year, 1, 1)
+        d_to   = date(year, 12, 31)
+    else:
+        d_from = today - timedelta(days=days_back)
+        d_to   = today
+
     all_records = []
     for sheet_id, shift in [(SHEET_DAY, "день"), (SHEET_NIGHT, "ночь")]:
         try:
             recs = _parse_block_sheet(sheet_id, shift)
-            filtered = [r for r in recs if r["date"] and r["date"] >= cutoff]
+            filtered = [r for r in recs if r["date"] and d_from <= r["date"] <= d_to]
             all_records.extend(filtered)
             log.info(f"Смена '{shift}': загружено {len(filtered)} записей")
         except Exception as e:
             log.warning(f"Ошибка загрузки смены '{shift}': {e}")
+
+    # Нормализация имён врачей (Бибо = Бибо Балаевич)
+    if all_records:
+        doc_map = _build_doctor_map([r["doctor"] for r in all_records if r["doctor"]])
+        for r in all_records:
+            r["doctor"] = doc_map.get(r["doctor"], r["doctor"])
+
     return all_records
 
 
@@ -352,8 +405,20 @@ def format_retention_report(retention: dict, period_days: int = 30) -> str:
 #  ГЛАВНЫЙ МЕТОД
 # ════════════════════════════════════════════════════════════════
 
-async def full_report(period_days: int = 30, with_ai: bool = True) -> dict:
-    records = load_shift_data(period_days)
+async def full_report(
+    period_days: int = 30,
+    with_ai: bool = True,
+    days_back: int = None,
+    year: int = None,
+    month: int = None,
+    from_date: date = None,
+    to_date: date = None,
+) -> dict:
+    records = load_shift_data(
+        days_back=days_back or period_days,
+        year=year, month=month,
+        from_date=from_date, to_date=to_date,
+    )
     if not records:
         return {"error": (
             f"❌ Нет данных за {period_days} дней.\n\n"
@@ -363,9 +428,10 @@ async def full_report(period_days: int = 30, with_ai: bool = True) -> dict:
         )}
     doctors   = analyze_doctors(records)
     retention = analyze_patient_retention(records)
+    eff_days = days_back or period_days
     result = {
-        "doctor_report":    format_doctor_report(doctors, period_days),
-        "retention_report": format_retention_report(retention, period_days),
+        "doctor_report":    format_doctor_report(doctors, eff_days),
+        "retention_report": format_retention_report(retention, eff_days),
         "raw_doctors":      doctors,
         "raw_retention":    retention,
         "total_rows":       len(records),

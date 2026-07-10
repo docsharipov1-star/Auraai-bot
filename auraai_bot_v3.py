@@ -7419,27 +7419,120 @@ async def _send_chunks(message: Message, text: str):
         await message.answer(chunk, parse_mode="Markdown")
 
 
-@router.message(Command("report"))
-async def cmd_report(message: Message):
-    """Полный отчёт за 30 дней: врачи + воронка + AI-рекомендации."""
+def _finance_kb() -> InlineKeyboardBuilder:
+    """Клавиатура выбора периода для финансового отчёта."""
+    from datetime import date
+    import calendar
+    kb = InlineKeyboardBuilder()
+    kb.button(text="📅 Сегодня",       callback_data="fin:days:1")
+    kb.button(text="📆 Вчера",         callback_data="fin:days:2")
+    kb.button(text="📆 Неделя",        callback_data="fin:days:7")
+    kb.button(text="🗓 Месяц",         callback_data="fin:days:30")
+    kb.button(text="📊 Квартал",       callback_data="fin:days:90")
+    kb.button(text="🗓 Год",           callback_data="fin:days:365")
+    # Последние 3 месяца как отдельные кнопки
+    today = date.today()
+    for i in range(3):
+        m = today.month - i
+        y = today.year
+        if m <= 0:
+            m += 12; y -= 1
+        label = f"{calendar.month_abbr[m]} {y}"
+        kb.button(text=label, callback_data=f"fin:ym:{y}:{m}")
+    kb.adjust(2, 2, 2, 3)
+    return kb
+
+
+async def _send_finance(target, days: int = None, year: int = None, month: int = None, with_ai: bool = True):
+    """Загружает и отправляет финансовый отчёт."""
+    from clinic_analytics import full_report
+    kwargs = {}
+    if year and month:
+        kwargs = {"year": year, "month": month}
+        label = f"{year}-{month:02d}"
+    elif year:
+        kwargs = {"year": year}
+        label = str(year)
+    else:
+        kwargs = {"days_back": days or 30}
+        label = f"{days or 30} дней"
+
+    r = await full_report(with_ai=with_ai, **kwargs)
+    if "error" in r:
+        await target.answer(r["error"])
+        return
+    await _send_chunks(target, r["doctor_report"])
+    await _send_chunks(target, r["retention_report"])
+    if "ai_recs" in r:
+        await target.answer(f"🤖 *AI-рекомендации:*\n\n{r['ai_recs']}", parse_mode="Markdown")
+    await target.answer(f"📋 Всего записей: {r['total_rows']} · период: {label}")
+
+
+@router.message(Command("finance", "report", "week", "today"))
+async def cmd_finance(message: Message):
+    """Финансовый отчёт клиники с выбором периода."""
     if message.from_user.id != ADMIN_ID:
         return
-    parts = (message.text or "").split()
-    days = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 30
-    msg = await message.answer(f"⏳ Собираю отчёт за {days} дней…")
-    try:
-        from clinic_analytics import full_report
-        r = await full_report(period_days=days, with_ai=True)
-        if "error" in r:
-            await msg.edit_text(r["error"])
-            return
+    cmd = (message.text or "").split()[0].lstrip("/").split("@")[0]
+    # Быстрые команды
+    if cmd == "today":
+        msg = await message.answer("⏳ Данные за сегодня…")
+        try:
+            await _send_finance(message, days=1, with_ai=False)
+        except Exception as e:
+            await message.answer(f"❌ Ошибка: {e}")
         await msg.delete()
-        await _send_chunks(message, r["doctor_report"])
-        await _send_chunks(message, r["flow_report"])
-        if "ai_recs" in r:
-            await message.answer(f"🤖 *AI-рекомендации:*\n\n{r['ai_recs']}", parse_mode="Markdown")
+        return
+    if cmd == "week":
+        msg = await message.answer("⏳ Отчёт за неделю…")
+        try:
+            await _send_finance(message, days=7)
+        except Exception as e:
+            await message.answer(f"❌ Ошибка: {e}")
+        await msg.delete()
+        return
+    # /report [дней] — быстрый с числом
+    if cmd == "report":
+        parts = (message.text or "").split()
+        if len(parts) > 1 and parts[1].isdigit():
+            days = int(parts[1])
+            msg = await message.answer(f"⏳ Отчёт за {days} дней…")
+            try:
+                await _send_finance(message, days=days)
+            except Exception as e:
+                await message.answer(f"❌ Ошибка: {e}")
+            await msg.delete()
+            return
+    # /finance — показываем кнопки
+    await message.answer(
+        "📊 *Финансовый отчёт клиники*\n\nВыбери период:",
+        reply_markup=_finance_kb().as_markup(),
+        parse_mode="Markdown",
+    )
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith("fin:"))
+async def cb_finance(call: CallbackQuery):
+    if call.from_user.id != ADMIN_ID:
+        await call.answer("Нет доступа")
+        return
+    await call.answer()
+    parts = call.data.split(":")
+    mode = parts[1]
+    try:
+        if mode == "days":
+            days = int(parts[2])
+            msg = await call.message.answer(f"⏳ Собираю отчёт за {days} дней…")
+            await _send_finance(call.message, days=days, with_ai=days >= 7)
+        elif mode == "ym":
+            y, m = int(parts[2]), int(parts[3])
+            import calendar
+            label = f"{calendar.month_name[m]} {y}"
+            msg = await call.message.answer(f"⏳ Отчёт за {label}…")
+            await _send_finance(call.message, year=y, month=m)
+        await msg.delete()
     except Exception as e:
-        await message.answer(f"❌ Ошибка: {e}")
+        await call.message.answer(f"❌ Ошибка: {e}")
 
 
 @router.message(Command("doctor"))
@@ -7460,11 +7553,10 @@ async def cmd_doctor(message: Message):
     days = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 30
     await message.answer(f"⏳ Анализирую {doctor_name} за {days} дней…")
     try:
-        from clinic_analytics import load_shift_data, analyze_doctors, generate_recommendations, format_doctor_report
-        rows = load_shift_data(days)
-        doctors = analyze_doctors(rows)
+        from clinic_analytics import load_shift_data, analyze_doctors, generate_recommendations
+        records = load_shift_data(days_back=days)
+        doctors = analyze_doctors(records)
         if doctor_name not in doctors:
-            # Ищем по частичному совпадению
             matches = [d for d in doctors if doctor_name.lower() in d.lower()]
             if not matches:
                 names = "\n".join(f"• {d}" for d in sorted(doctors))
@@ -7474,79 +7566,22 @@ async def cmd_doctor(message: Message):
 
         d = doctors[doctor_name]
         top_svc = "\n".join(f"   • {s}: {c}" for s, c in d["top_services"]) or "   нет данных"
+        pay = ", ".join(f"{k}: {v}" for k, v in d["pay_types"].items()) or "не указано"
         text = (
             f"👨‍⚕️ *{doctor_name}* — {days} дней\n\n"
             f"💵 Выручка: *{d['revenue']:,} ₽*\n"
-            f"📊 Выручка в день: {d['revenue_per_day']:,} ₽\n"
+            f"📊 В день: {d['revenue_per_day']:,} ₽\n"
             f"👥 Пациентов: {d['unique_patients']} (визитов {d['visits']})\n"
             f"💳 Средний чек: {d['avg_check']:,} ₽\n"
-            f"🆕 Первичных: {d['primary']} ({d['primary_pct']}%)\n"
-            f"🔁 Повторных: {d['retention_pct']}%\n"
-            f"➡️ Перенаправил: {d['referred_out']} | Принял: {d['referred_in']}\n"
-            f"📅 Рабочих дней: {d['working_days']}\n\n"
+            f"📅 Рабочих дней: {d['working_days']}\n"
+            f"💳 Оплаты: {pay}\n\n"
             f"🔝 Топ услуги:\n{top_svc}"
         )
         await message.answer(text, parse_mode="Markdown")
-
-        # AI анализ одного врача
-        ai = await generate_recommendations({doctor_name: d}, {"total_primary": d["primary"], "stayed": 0, "stayed_pct": 0, "referred": d["referred_out"], "referred_pct": 0, "single_visit": 0, "lost_pct": 0, "top_sources": []}, days)
+        from clinic_analytics import analyze_patient_retention
+        ret = analyze_patient_retention(records)
+        ai = await generate_recommendations({doctor_name: d}, ret, days)
         await message.answer(f"🤖 *Рекомендации по {doctor_name}:*\n\n{ai}", parse_mode="Markdown")
-    except Exception as e:
-        await message.answer(f"❌ Ошибка: {e}")
-
-
-@router.message(Command("patients"))
-async def cmd_patients(message: Message):
-    """Воронка первичных пациентов за 30 дней."""
-    if message.from_user.id != ADMIN_ID:
-        return
-    parts = (message.text or "").split()
-    days = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 30
-    await message.answer(f"⏳ Анализирую первичных пациентов за {days} дней…")
-    try:
-        from clinic_analytics import load_shift_data, analyze_patient_flow, format_flow_report
-        rows = load_shift_data(days)
-        flow = analyze_patient_flow(rows)
-        await _send_chunks(message, format_flow_report(flow, days))
-    except Exception as e:
-        await message.answer(f"❌ Ошибка: {e}")
-
-
-@router.message(Command("today"))
-async def cmd_today(message: Message):
-    """Быстрый отчёт за сегодня без AI."""
-    if message.from_user.id != ADMIN_ID:
-        return
-    await message.answer("⏳ Данные за сегодня…")
-    try:
-        from clinic_analytics import full_report
-        r = await full_report(period_days=1, with_ai=False)
-        if "error" in r:
-            await message.answer(r["error"])
-            return
-        await _send_chunks(message, r["doctor_report"])
-        await _send_chunks(message, r["flow_report"])
-        await message.answer(f"📋 Записей за сегодня: {r['total_rows']}")
-    except Exception as e:
-        await message.answer(f"❌ Ошибка: {e}")
-
-
-@router.message(Command("week"))
-async def cmd_week(message: Message):
-    """Отчёт за 7 дней с AI-рекомендациями."""
-    if message.from_user.id != ADMIN_ID:
-        return
-    await message.answer("⏳ Отчёт за неделю…")
-    try:
-        from clinic_analytics import full_report
-        r = await full_report(period_days=7, with_ai=True)
-        if "error" in r:
-            await message.answer(r["error"])
-            return
-        await _send_chunks(message, r["doctor_report"])
-        await _send_chunks(message, r["flow_report"])
-        if "ai_recs" in r:
-            await message.answer(f"🤖 *AI-рекомендации:*\n\n{r['ai_recs']}", parse_mode="Markdown")
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
 

@@ -1,520 +1,388 @@
 """
-Аналитический модуль стоматологической клиники.
-Читает Google Sheets → считает KPI → даёт рекомендации через Claude.
+Аналитика стоматологической клиники — Google Sheets + AI анализ.
 
-Листы:
-  SHEET_REVENUE_MAIN   — основная клиника (Кристина, Давлат, Кисиев, Александров)
-  SHEET_REVENUE_MUTOL  — Мутолиб (Бега, БИБО)
-  SHEET_LEADS          — МИС: звонки/записи/визиты
+Что умеет:
+- Читает 3 таблицы: дневная смена, ночная смена, зарплата
+- Считает эффективность каждого врача
+- Отслеживает первичных пациентов (пришёл → остался → перенаправлен)
+- Генерирует AI-рекомендации через Claude
+- Отправляет отчёты в Telegram
 
-Env:
-  GOOGLE_CREDS_JSON    — JSON сервисного аккаунта (строка или путь)
-  ANTHROPIC_KEY        — ключ Claude
+Установка:
+  pip install gspread google-auth pandas
+
+Настройка:
+  1. Создать Google Service Account: console.cloud.google.com
+  2. Скачать credentials.json
+  3. Поделиться таблицами с email сервисного аккаунта
+  4. Прописать GOOGLE_CREDENTIALS_JSON в Railway ENV
 """
 
 import os
-import re
 import json
 import asyncio
-from datetime import datetime, timedelta
-from collections import defaultdict
+import logging
+from datetime import datetime, timedelta, date
 from typing import Optional
-import anthropic
+from collections import defaultdict
 
-# ── Google Sheets IDs ─────────────────────────────────────────────
-SHEET_REVENUE_MAIN  = "1RMlCNKvcW9YYc_S3nUyAR7Rrl9FiybhP4AFc5gUKim8"
-SHEET_REVENUE_MUTOL = "1IebXYtEpJWi9rpUHGmrQk-sPJkBPN-p_dsCkoz4IFko"
-SHEET_LEADS         = "1yDFRg3T50rkVgwjRd_xzPwbf62X-8eEwxayk_DaVV-o"
+log = logging.getLogger("clinic_analytics")
 
-MODEL = "claude-sonnet-4-6"
+# ── Google Sheets ID ─────────────────────────────────────────────
+SHEET_DAY    = os.getenv("SHEET_DAY",    "1RMlCNKvcW9YYc_S3nUyAR7Rrl9FiybhP4AFc5gUKim8")
+SHEET_NIGHT  = os.getenv("SHEET_NIGHT",  "1IebXYtEpJWi9rpUHGmrQk-sPJkBPN-p_dsCkoz4IFko")
+SHEET_SALARY = os.getenv("SHEET_SALARY", "10GAbXPUtOvx0tvMSlL_PzFBuxUaI-kWkoCL7k84k-A8")
 
-client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_KEY", ""))
+# ── Маппинг колонок (настрой под свои таблицы) ──────────────────
+COL_MAP = {
+    "date":     os.getenv("COL_DATE",     "Дата"),
+    "doctor":   os.getenv("COL_DOCTOR",   "Врач"),
+    "patient":  os.getenv("COL_PATIENT",  "ФИО пациента"),
+    "service":  os.getenv("COL_SERVICE",  "Услуга"),
+    "cost":     os.getenv("COL_COST",     "Стоимость"),
+    "paid":     os.getenv("COL_PAID",     "Оплачено"),
+    "status":   os.getenv("COL_STATUS",   "Статус"),
+    "referred": os.getenv("COL_REFERRED", "Перенаправлен"),
+    "source":   os.getenv("COL_SOURCE",   "Источник"),
+}
 
+PRIMARY_VALUES = {"первичный", "первич", "новый", "new", "1", "primary", "перв"}
 
-# ══════════════════════════════════════════════════════════════════
-#  Google Sheets reader
-# ══════════════════════════════════════════════════════════════════
 
 def _get_gc():
-    """Возвращает авторизованный gspread клиент."""
     try:
         import gspread
         from google.oauth2.service_account import Credentials
     except ImportError:
         raise RuntimeError("Установи: pip install gspread google-auth")
 
-    creds_raw = os.getenv("GOOGLE_CREDS_JSON", "")
-    if not creds_raw:
-        raise RuntimeError("Нет GOOGLE_CREDS_JSON в переменных окружения")
+    creds_json = os.getenv("GOOGLE_CREDENTIALS_JSON", "")
+    creds_file = os.getenv("GOOGLE_CREDENTIALS_FILE", "google_credentials.json")
 
-    if creds_raw.strip().startswith("{"):
-        info = json.loads(creds_raw)
-    else:
-        with open(creds_raw) as f:
+    if creds_json:
+        info = json.loads(creds_json)
+    elif os.path.exists(creds_file):
+        with open(creds_file) as f:
             info = json.load(f)
+    else:
+        raise RuntimeError(
+            "Нет Google credentials.\n"
+            "Добавь GOOGLE_CREDENTIALS_JSON в Railway ENV или положи google_credentials.json рядом."
+        )
 
     scopes = [
-        "https://www.googleapis.com/auth/spreadsheets.readonly",
-        "https://www.googleapis.com/auth/drive.readonly",
+        "https://spreadsheets.google.com/feeds",
+        "https://www.googleapis.com/auth/drive",
     ]
     creds = Credentials.from_service_account_info(info, scopes=scopes)
     return gspread.authorize(creds)
 
 
-def read_sheet_values(sheet_id: str, sheet_index: int = 0) -> list[list]:
-    """Читает все значения листа."""
+def _sheet_to_dicts(sheet_id: str, worksheet_index: int = 0) -> list[dict]:
     gc = _get_gc()
     sh = gc.open_by_key(sheet_id)
-    ws = sh.get_worksheet(sheet_index)
-    return ws.get_all_values()
+    ws = sh.get_worksheet(worksheet_index)
+    return ws.get_all_records(default_blank="")
 
 
-# ══════════════════════════════════════════════════════════════════
-#  Парсер листов выручки (формат: дата → врач → пациенты)
-# ══════════════════════════════════════════════════════════════════
+def _normalize_cost(val) -> float:
+    if not val:
+        return 0.0
+    s = str(val).replace(" ", "").replace("₽", "").replace(",", ".").replace("\xa0", "").strip()
+    try:
+        return float(s)
+    except ValueError:
+        return 0.0
 
-DATE_RE   = re.compile(r'\b(\d{2}\.\d{2}\.\d{4})\b')
-DOCTOR_RE = re.compile(r'врач\s+(.+)', re.IGNORECASE)
-RENT_RE   = re.compile(r'аренда', re.IGNORECASE)
 
-
-def parse_revenue_sheet(rows: list[list], location: str = "") -> list[dict]:
-    """
-    Парсит лист выручки в список записей:
-    {date, doctor, patient, amount, anesthesia, payment_type, is_rent, location}
-    """
-    records = []
-    current_date   = None
-    current_doctor = None
-
-    for row in rows:
-        cells = [str(c).strip() for c in row]
-        line  = " ".join(cells).strip()
-        if not line:
+def _normalize_date(val) -> Optional[date]:
+    if not val:
+        return None
+    for fmt in ("%d.%m.%Y", "%Y-%m-%d", "%d/%m/%Y", "%d.%m.%y", "%d-%m-%Y"):
+        try:
+            return datetime.strptime(str(val).strip(), fmt).date()
+        except ValueError:
             continue
-
-        # ── поиск даты ──────────────────────────────────────────
-        dm = DATE_RE.search(line)
-        if dm:
-            current_date = dm.group(1)
-
-        # ── поиск врача ─────────────────────────────────────────
-        doc_m = DOCTOR_RE.search(line)
-        if doc_m:
-            current_doctor = doc_m.group(1).strip().title()
-            continue
-
-        # ── строка аренды ────────────────────────────────────────
-        if RENT_RE.search(line):
-            amount = _extract_amount(cells)
-            if amount and current_date:
-                renter = cells[0] if cells else "аренда"
-                records.append({
-                    "date":         current_date,
-                    "doctor":       current_doctor or "—",
-                    "patient":      renter,
-                    "amount":       amount,
-                    "anesthesia":   0,
-                    "payment_type": _find_payment(cells),
-                    "is_rent":      True,
-                    "location":     location,
-                })
-            continue
-
-        # ── строка пациента (первая ячейка — номер) ──────────────
-        if cells and cells[0].isdigit() and current_date and current_doctor:
-            amount = _extract_amount(cells)
-            if amount:
-                try:
-                    anesthesia = int(cells[3]) if len(cells) > 3 and cells[3].isdigit() else 0
-                except (ValueError, IndexError):
-                    anesthesia = 0
-                patient = cells[1] if len(cells) > 1 else "—"
-                records.append({
-                    "date":         current_date,
-                    "doctor":       current_doctor,
-                    "patient":      patient,
-                    "amount":       amount,
-                    "anesthesia":   anesthesia,
-                    "payment_type": _find_payment(cells),
-                    "is_rent":      False,
-                    "location":     location,
-                })
-
-    return records
-
-
-def _extract_amount(cells: list[str]) -> Optional[int]:
-    for c in cells:
-        c = c.replace(" ", "").replace("\xa0", "")
-        if re.fullmatch(r'\d{3,6}', c):
-            return int(c)
     return None
 
 
-def _find_payment(cells: list[str]) -> str:
-    keywords = {
-        "нал": "наличные", "cash": "наличные",
-        "терминал": "терминал", "terminal": "терминал",
-        "перевод": "перевод", "сбер": "перевод", "альфа": "перевод",
-        "карта": "перевод",
-        "биглион": "биглион",
-        "без оплат": "без оплаты",
-    }
-    joined = " ".join(cells).lower()
-    for kw, label in keywords.items():
-        if kw in joined:
-            return label
-    return "другое"
+def _get_col(row: dict, field: str) -> str:
+    col_name = COL_MAP.get(field, field)
+    if col_name in row:
+        return str(row[col_name]).strip()
+    for key in row:
+        if key.lower() == col_name.lower():
+            return str(row[key]).strip()
+    return ""
 
 
-# ══════════════════════════════════════════════════════════════════
-#  Парсер листа МИС (первичные пациенты)
-# ══════════════════════════════════════════════════════════════════
+# ════════════════════════════════════════════════════════════════
+#  ЗАГРУЗКА ДАННЫХ
+# ════════════════════════════════════════════════════════════════
 
-def parse_leads_sheet(rows: list[list]) -> list[dict]:
-    """
-    Парсит лист МИС в список лидов.
-    Ожидает заголовок: Дата|Время|Источник|Канал|Обращение|Номер|Имя|Запрос|
-                        Категория|Записался|Услуга|Пришел|Срочность|Причина|Вопрос|Комментарий
-    """
-    leads = []
-    header = None
-    for row in rows:
-        cells = [str(c).strip() for c in row]
-        if not header:
-            if "Дата" in cells and "Записался" in cells:
-                header = [c.lower() for c in cells]
-            continue
-
-        if len(cells) < len(header):
-            cells += [""] * (len(header) - len(cells))
-
-        def g(name: str) -> str:
-            for i, h in enumerate(header):
-                if name in h:
-                    return cells[i] if i < len(cells) else ""
-            return ""
-
-        date_str = g("дата")
-        if not date_str or date_str.lower() == "дата":
-            continue
-
-        leads.append({
-            "date":         date_str,
-            "source":       g("источник"),
-            "appeal_type":  g("обращение"),   # первичное / повторное
-            "phone":        g("номер"),
-            "name":         g("имя"),
-            "request":      g("запрос"),
-            "call_type":    g("категория"),   # целевой / нецелевой
-            "booked":       g("записался").lower() == "да",
-            "service":      g("услуга"),
-            "visited":      g("пришел").lower() == "да",
-            "urgency":      g("срочность"),
-            "no_book_reason": g("причина"),
-            "comment":      g("комментарий"),
-        })
-
-    return leads
+def load_shift_data(days_back: int = 30) -> list[dict]:
+    """Объединяет дневную и ночную смены за N дней."""
+    cutoff = date.today() - timedelta(days=days_back)
+    rows = []
+    for sheet_id, shift in [(SHEET_DAY, "день"), (SHEET_NIGHT, "ночь")]:
+        try:
+            raw = _sheet_to_dicts(sheet_id)
+            for r in raw:
+                d = _normalize_date(_get_col(r, "date"))
+                if d and d >= cutoff:
+                    rows.append({
+                        "shift":    shift,
+                        "date":     d,
+                        "doctor":   _get_col(r, "doctor"),
+                        "patient":  _get_col(r, "patient"),
+                        "service":  _get_col(r, "service"),
+                        "cost":     _normalize_cost(_get_col(r, "cost")),
+                        "paid":     _normalize_cost(_get_col(r, "paid")),
+                        "status":   _get_col(r, "status").lower(),
+                        "referred": _get_col(r, "referred"),
+                        "source":   _get_col(r, "source"),
+                    })
+        except Exception as e:
+            log.warning(f"Ошибка загрузки смены '{shift}': {e}")
+    return rows
 
 
-# ══════════════════════════════════════════════════════════════════
-#  KPI расчёт
-# ══════════════════════════════════════════════════════════════════
+def load_salary_data() -> list[dict]:
+    try:
+        return _sheet_to_dicts(SHEET_SALARY)
+    except Exception as e:
+        log.warning(f"Ошибка загрузки зарплат: {e}")
+        return []
 
-def calc_revenue_kpi(records: list[dict], days: int = 7) -> dict:
-    """Считает KPI выручки за последние N дней."""
-    cutoff = (datetime.now() - timedelta(days=days)).strftime("%d.%m.%Y")
 
-    doctors    = defaultdict(lambda: {"revenue": 0, "patients": 0, "checks": [], "anesthesia": 0})
-    rent_total = 0
-    by_payment = defaultdict(int)
-    daily      = defaultdict(int)
+# ════════════════════════════════════════════════════════════════
+#  АНАЛИТИКА ВРАЧЕЙ
+# ════════════════════════════════════════════════════════════════
 
-    for r in records:
-        if r["date"] < cutoff:
-            continue
-        amt = r["amount"]
+def analyze_doctors(rows: list[dict]) -> dict:
+    stats = defaultdict(lambda: {
+        "revenue": 0.0, "paid": 0.0, "visits": 0,
+        "primary": 0, "referred_out": 0, "referred_in": 0,
+        "patients": set(), "services": defaultdict(int), "days": set(),
+    })
 
-        if r["is_rent"]:
-            rent_total += amt
-            continue
-
+    for r in rows:
         doc = r["doctor"]
-        doctors[doc]["revenue"]    += amt
-        doctors[doc]["patients"]   += 1
-        doctors[doc]["checks"].append(amt)
-        doctors[doc]["anesthesia"] += r["anesthesia"]
-        by_payment[r["payment_type"]] += amt
-        daily[r["date"]] += amt
+        if not doc:
+            continue
+        s = stats[doc]
+        s["revenue"] += r["cost"]
+        s["paid"]    += r["paid"] if r["paid"] else r["cost"]
+        s["visits"]  += 1
+        s["patients"].add(r["patient"])
+        s["days"].add(r["date"])
+        if r["service"]:
+            s["services"][r["service"]] += 1
+        if r["status"] in PRIMARY_VALUES:
+            s["primary"] += 1
+        if r["referred"]:
+            s["referred_out"] += 1
+            ref_doc = r["referred"].strip()
+            if ref_doc in stats:
+                stats[ref_doc]["referred_in"] += 1
 
-    # средний чек
-    for doc, d in doctors.items():
-        d["avg_check"] = int(sum(d["checks"]) / len(d["checks"])) if d["checks"] else 0
+    result = {}
+    for doc, s in stats.items():
+        visits = s["visits"] or 1
+        working_days = len(s["days"]) or 1
+        result[doc] = {
+            "revenue":          round(s["revenue"]),
+            "paid":             round(s["paid"]),
+            "visits":           visits,
+            "unique_patients":  len(s["patients"]),
+            "avg_check":        round(s["revenue"] / visits),
+            "revenue_per_day":  round(s["revenue"] / working_days),
+            "primary":          s["primary"],
+            "primary_pct":      round(s["primary"] / visits * 100),
+            "referred_out":     s["referred_out"],
+            "referred_in":      s["referred_in"],
+            "retention_pct":    round((visits - s["primary"]) / visits * 100) if visits else 0,
+            "top_services":     sorted(s["services"].items(), key=lambda x: -x[1])[:3],
+            "working_days":     working_days,
+        }
+    return result
 
-    total_revenue = sum(d["revenue"] for d in doctors.values()) + rent_total
 
+# ════════════════════════════════════════════════════════════════
+#  ВОРОНКА ПЕРВИЧНЫХ ПАЦИЕНТОВ
+# ════════════════════════════════════════════════════════════════
+
+def analyze_patient_flow(rows: list[dict]) -> dict:
+    patient_visits = defaultdict(list)
+    for r in rows:
+        if r["patient"]:
+            patient_visits[r["patient"]].append(r)
+
+    total_primary = stayed = referred = single_visit = 0
+    sources = defaultdict(int)
+
+    for patient, visits in patient_visits.items():
+        is_primary = any(v["status"] in PRIMARY_VALUES for v in visits)
+        if not is_primary:
+            continue
+        total_primary += 1
+        src = visits[0]["source"]
+        if src:
+            sources[src] += 1
+        if len(visits) > 1:
+            stayed += 1
+        else:
+            single_visit += 1
+        if any(v["referred"] for v in visits):
+            referred += 1
+
+    tp = total_primary or 1
     return {
-        "total_revenue":  total_revenue,
-        "patient_revenue": total_revenue - rent_total,
-        "rent_income":    rent_total,
-        "doctors":        dict(doctors),
-        "by_payment":     dict(by_payment),
-        "daily":          dict(daily),
-        "days":           days,
+        "total_primary": total_primary,
+        "stayed":        stayed,
+        "stayed_pct":    round(stayed / tp * 100),
+        "referred":      referred,
+        "referred_pct":  round(referred / tp * 100),
+        "single_visit":  single_visit,
+        "lost_pct":      round(single_visit / tp * 100),
+        "top_sources":   sorted(sources.items(), key=lambda x: -x[1])[:5],
     }
 
 
-def calc_leads_kpi(leads: list[dict], days: int = 30) -> dict:
-    """Считает воронку первичных пациентов."""
-    cutoff_month = (datetime.now() - timedelta(days=days)).strftime("%m")
+# ════════════════════════════════════════════════════════════════
+#  AI РЕКОМЕНДАЦИИ
+# ════════════════════════════════════════════════════════════════
 
-    filtered = [
-        l for l in leads
-        if l["appeal_type"].lower() == "первичное"
-        and (cutoff_month in l["date"] or not l["date"])
-    ]
+async def generate_recommendations(doctors: dict, flow: dict, period_days: int = 30) -> str:
+    try:
+        import anthropic
+        client = anthropic.AsyncAnthropic(api_key=os.getenv("ANTHROPIC_KEY", ""))
+    except ImportError:
+        return "Установи anthropic для AI-рекомендаций."
 
-    total       = len(filtered)
-    targeted    = sum(1 for l in filtered if "целевой" in l["call_type"].lower())
-    booked      = sum(1 for l in filtered if l["booked"])
-    visited     = sum(1 for l in filtered if l["visited"])
+    docs_summary = []
+    for doc, d in sorted(doctors.items(), key=lambda x: -x[1]["revenue"])[:10]:
+        docs_summary.append(
+            f"• {doc}: выручка {d['revenue']:,}₽, пациентов {d['unique_patients']}, "
+            f"ср.чек {d['avg_check']:,}₽, первичных {d['primary_pct']}%, "
+            f"перенаправлений {d['referred_out']}, дней работы {d['working_days']}"
+        )
 
-    by_source: dict[str, dict] = defaultdict(lambda: {"calls": 0, "booked": 0, "visited": 0})
-    for l in filtered:
-        src = l["source"] or "Неизвестно"
-        by_source[src]["calls"]   += 1
-        by_source[src]["booked"]  += int(l["booked"])
-        by_source[src]["visited"] += int(l["visited"])
+    prompt = f"""Ты — аналитик стоматологической клиники. Проанализируй данные за {period_days} дней.
 
-    no_book_reasons = defaultdict(int)
-    for l in filtered:
-        if not l["booked"] and l["no_book_reason"]:
-            no_book_reasons[l["no_book_reason"]] += 1
+ВРАЧИ:
+{chr(10).join(docs_summary)}
 
-    return {
-        "total_calls":     total,
-        "targeted_calls":  targeted,
-        "booked":          booked,
-        "visited":         visited,
-        "book_rate":       round(booked / total * 100, 1) if total else 0,
-        "visit_rate":      round(visited / booked * 100, 1) if booked else 0,
-        "by_source":       dict(by_source),
-        "no_book_reasons": dict(no_book_reasons),
-        "days":            days,
-    }
+ПЕРВИЧНЫЕ ПАЦИЕНТЫ:
+- Всего первичных: {flow['total_primary']}
+- Остались на лечение: {flow['stayed']} ({flow['stayed_pct']}%)
+- Перенаправлены к другому врачу: {flow['referred']} ({flow['referred_pct']}%)
+- Ушли после 1 визита: {flow['single_visit']} ({flow['lost_pct']}%)
+
+Дай анализ:
+1. ТОП-3 проблемы которые видно в цифрах
+2. По каждому врачу с низкими показателями — что делать конкретно
+3. Как улучшить удержание первичных (сейчас теряем {flow['lost_pct']}%)
+4. 3 конкретных действия на эту неделю
+
+Пиши кратко и конкретно. Называй врачей по имени."""
+
+    msg = await client.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=900,
+        messages=[{"role": "user", "content": prompt}]
+    )
+    return msg.content[0].text.strip()
 
 
-# ══════════════════════════════════════════════════════════════════
-#  Генерация отчёта через Claude
-# ══════════════════════════════════════════════════════════════════
+# ════════════════════════════════════════════════════════════════
+#  ФОРМАТИРОВАНИЕ ДЛЯ TELEGRAM
+# ════════════════════════════════════════════════════════════════
 
-def generate_report_text(rev_kpi: dict, leads_kpi: dict) -> str:
-    """Строит текстовый дайджест для промпта."""
-    lines = []
-
-    # выручка
-    lines.append(f"=== ВЫРУЧКА ЗА {rev_kpi['days']} ДНЕЙ ===")
-    lines.append(f"Итого: {rev_kpi['total_revenue']:,} ₽  (пациенты: {rev_kpi['patient_revenue']:,} ₽ + аренда: {rev_kpi['rent_income']:,} ₽)")
-    lines.append("")
-    lines.append("По врачам:")
-    for doc, d in sorted(rev_kpi["doctors"].items(), key=lambda x: -x[1]["revenue"]):
-        lines.append(f"  {doc}: {d['revenue']:,} ₽ | {d['patients']} пац. | ср. чек {d['avg_check']:,} ₽ | анест. {d['anesthesia']} доз")
-
-    lines.append("")
-    lines.append("Способы оплаты:")
-    for pt, amt in sorted(rev_kpi["by_payment"].items(), key=lambda x: -x[1]):
-        lines.append(f"  {pt}: {amt:,} ₽")
-
-    # воронка
-    lines.append("")
-    lines.append(f"=== ПЕРВИЧНЫЕ ПАЦИЕНТЫ ЗА {leads_kpi['days']} ДНЕЙ ===")
-    lines.append(f"Звонков: {leads_kpi['total_calls']}  |  Целевых: {leads_kpi['targeted_calls']}")
-    lines.append(f"Записалось: {leads_kpi['booked']} ({leads_kpi['book_rate']}%)")
-    lines.append(f"Пришло: {leads_kpi['visited']} (конверсия из записи: {leads_kpi['visit_rate']}%)")
-    lines.append("")
-    lines.append("Источники:")
-    for src, s in sorted(leads_kpi["by_source"].items(), key=lambda x: -x[1]["calls"]):
-        br = round(s["booked"] / s["calls"] * 100, 1) if s["calls"] else 0
-        lines.append(f"  {src}: {s['calls']} звонков → {s['booked']} записей ({br}%) → {s['visited']} визитов")
-
-    if leads_kpi["no_book_reasons"]:
-        lines.append("")
-        lines.append("Причины отказа от записи:")
-        for reason, cnt in sorted(leads_kpi["no_book_reasons"].items(), key=lambda x: -x[1]):
-            lines.append(f"  {reason}: {cnt}")
-
+def format_doctor_report(doctors: dict, period_days: int = 30) -> str:
+    if not doctors:
+        return "❌ Нет данных по врачам."
+    lines = [f"👨‍⚕️ *Врачи за {period_days} дней*\n"]
+    total_rev = sum(d["revenue"] for d in doctors.values())
+    lines.append(f"💰 Общая выручка клиники: *{total_rev:,} ₽*\n")
+    medals = ["🥇", "🥈", "🥉"]
+    for i, (doc, d) in enumerate(sorted(doctors.items(), key=lambda x: -x[1]["revenue"]), 1):
+        m = medals[i-1] if i <= 3 else f"{i}\\."
+        share = round(d["revenue"] / total_rev * 100) if total_rev else 0
+        lines.append(
+            f"{m} *{doc}*\n"
+            f"   💵 {d['revenue']:,} ₽ ({share}% клиники) · чек {d['avg_check']:,} ₽\n"
+            f"   👥 {d['unique_patients']} пациентов · {d['working_days']} дн. работы\n"
+            f"   🆕 Первичных: {d['primary']} ({d['primary_pct']}%) "
+            f"· 🔁 Повторных: {d['retention_pct']}%\n"
+            f"   ➡️ Перенаправил: {d['referred_out']} · Принял: {d['referred_in']}\n"
+        )
     return "\n".join(lines)
 
 
-async def ai_recommendations(report_text: str) -> str:
-    """Просит Claude проанализировать данные и дать рекомендации."""
-    prompt = f"""Ты аналитик стоматологической клиники. Вот данные за период:
+def format_flow_report(flow: dict, period_days: int = 30) -> str:
+    if flow["total_primary"] == 0:
+        return "❌ Нет данных о первичных пациентах."
 
-{report_text}
+    def bar(pct):
+        filled = min(pct // 5, 20)
+        return "█" * filled + "░" * (20 - filled)
 
-Дай конкретные рекомендации:
-1. По каждому врачу — что делать чтобы увеличить выручку и средний чек
-2. По воронке первичных — где теряем пациентов и как исправить
-3. По источникам — куда вкладывать рекламный бюджет
-4. Топ-3 приоритета на следующую неделю
-
-Формат: коротко, по делу, конкретные цифры и действия. На русском."""
-
-    loop = asyncio.get_event_loop()
-    response = await loop.run_in_executor(None, lambda: client.messages.create(
-        model=MODEL,
-        max_tokens=1000,
-        messages=[{"role": "user", "content": prompt}],
-    ))
-    return response.content[0].text.strip()
-
-
-# ══════════════════════════════════════════════════════════════════
-#  Главная точка входа
-# ══════════════════════════════════════════════════════════════════
-
-async def run_full_report(days_revenue: int = 7, days_leads: int = 30) -> str:
-    """
-    Полный отчёт: читает обе таблицы → считает KPI → AI рекомендации.
-    Возвращает строку для отправки в Telegram.
-    """
-    try:
-        # читаем листы
-        rows_main  = read_sheet_values(SHEET_REVENUE_MAIN)
-        rows_mutol = read_sheet_values(SHEET_REVENUE_MUTOL)
-        rows_leads = read_sheet_values(SHEET_LEADS)
-    except RuntimeError as e:
-        return f"❌ Ошибка чтения Google Sheets: {e}"
-
-    # парсим
-    records = (
-        parse_revenue_sheet(rows_main,  location="Основная")
-        + parse_revenue_sheet(rows_mutol, location="Мутолиб")
-    )
-    leads = parse_leads_sheet(rows_leads)
-
-    # KPI
-    rev_kpi   = calc_revenue_kpi(records, days=days_revenue)
-    leads_kpi = calc_leads_kpi(leads, days=days_leads)
-
-    # текст
-    report_text = generate_report_text(rev_kpi, leads_kpi)
-
-    # AI
-    ai_text = await ai_recommendations(report_text)
-
-    # итоговый TG-отчёт
-    out = []
-    out.append("📊 *АНАЛИТИКА КЛИНИКИ*\n")
-
-    out.append(f"💰 *Выручка за {days_revenue} дн:* {rev_kpi['total_revenue']:,} ₽")
-    out.append(f"  └ пациенты: {rev_kpi['patient_revenue']:,} ₽")
-    out.append(f"  └ аренда кресел: {rev_kpi['rent_income']:,} ₽\n")
-
-    out.append("👨‍⚕️ *По врачам:*")
-    for doc, d in sorted(rev_kpi["doctors"].items(), key=lambda x: -x[1]["revenue"]):
-        out.append(f"  • {doc}: {d['revenue']:,} ₽ | {d['patients']} пац | ср.чек {d['avg_check']:,} ₽")
-
-    out.append(f"\n📞 *Первичные пациенты (30 дн):*")
-    out.append(f"  Звонков: {leads_kpi['total_calls']} → Записей: {leads_kpi['booked']} ({leads_kpi['book_rate']}%) → Визитов: {leads_kpi['visited']} ({leads_kpi['visit_rate']}%)")
-
-    out.append("\n📡 *Источники:*")
-    for src, s in sorted(leads_kpi["by_source"].items(), key=lambda x: -x[1]["calls"])[:5]:
-        out.append(f"  • {src}: {s['calls']} зв → {s['visited']} визитов")
-
-    out.append(f"\n🤖 *Рекомендации AI:*\n{ai_text}")
-
-    return "\n".join(out)
-
-
-async def doctor_report(doctor_name: str, days: int = 14) -> str:
-    """Детальный отчёт по конкретному врачу."""
-    try:
-        rows_main  = read_sheet_values(SHEET_REVENUE_MAIN)
-        rows_mutol = read_sheet_values(SHEET_REVENUE_MUTOL)
-    except RuntimeError as e:
-        return f"❌ {e}"
-
-    records = (
-        parse_revenue_sheet(rows_main,  "Основная")
-        + parse_revenue_sheet(rows_mutol, "Мутолиб")
-    )
-
-    cutoff = (datetime.now() - timedelta(days=days)).strftime("%d.%m.%Y")
-    doc_records = [
-        r for r in records
-        if not r["is_rent"]
-        and doctor_name.lower() in r["doctor"].lower()
-        and r["date"] >= cutoff
+    lines = [
+        f"🔍 *Воронка первичных пациентов* за {period_days} дней\n",
+        f"📥 Пришло первичных: *{flow['total_primary']}*\n",
+        f"✅ Остались на лечение: *{flow['stayed']}* — {flow['stayed_pct']}%",
+        f"   {bar(flow['stayed_pct'])}",
+        f"➡️  Перенаправлены: *{flow['referred']}* — {flow['referred_pct']}%",
+        f"❌ Ушли после 1 визита: *{flow['single_visit']}* — {flow['lost_pct']}%",
+        f"   {bar(flow['lost_pct'])}",
     ]
-
-    if not doc_records:
-        return f"❌ Врач '{doctor_name}' не найден или нет данных за {days} дней."
-
-    total    = sum(r["amount"] for r in doc_records)
-    patients = len(doc_records)
-    avg      = total // patients if patients else 0
-    by_date  = defaultdict(int)
-    for r in doc_records:
-        by_date[r["date"]] += r["amount"]
-
-    out = [f"👨‍⚕️ *{doc_records[0]['doctor']}* — {days} дней\n"]
-    out.append(f"💰 Выручка: {total:,} ₽")
-    out.append(f"👥 Пациентов: {patients}")
-    out.append(f"📊 Средний чек: {avg:,} ₽\n")
-    out.append("📅 По дням:")
-    for date in sorted(by_date)[-7:]:
-        out.append(f"  {date}: {by_date[date]:,} ₽")
-
-    # AI рекомендация
-    prompt = f"Врач {doc_records[0]['doctor']}: выручка {total:,} ₽, {patients} пациентов, средний чек {avg:,} ₽ за {days} дней. Дай 3 конкретных совета как увеличить показатели."
-    loop = asyncio.get_event_loop()
-    ai = await loop.run_in_executor(None, lambda: client.messages.create(
-        model=MODEL, max_tokens=400,
-        messages=[{"role": "user", "content": prompt}]
-    ))
-    out.append(f"\n🤖 *AI совет:*\n{ai.content[0].text.strip()}")
-
-    return "\n".join(out)
+    if flow["top_sources"]:
+        lines.append("\n📊 *Источники первичных:*")
+        for src, cnt in flow["top_sources"]:
+            lines.append(f"   • {src or 'не указан'}: {cnt}")
+    return "\n".join(lines)
 
 
-async def primary_patients_report() -> str:
-    """Отчёт по первичным пациентам: пришёл/не пришёл, причины."""
-    try:
-        rows_leads = read_sheet_values(SHEET_LEADS)
-    except RuntimeError as e:
-        return f"❌ {e}"
+# ════════════════════════════════════════════════════════════════
+#  ГЛАВНЫЙ МЕТОД
+# ════════════════════════════════════════════════════════════════
 
-    leads = parse_leads_sheet(rows_leads)
-    kpi   = calc_leads_kpi(leads, days=30)
+async def full_report(period_days: int = 30, with_ai: bool = True) -> dict:
+    rows = load_shift_data(period_days)
+    if not rows:
+        return {"error": (
+            f"❌ Нет данных за {period_days} дней.\n\n"
+            "Проверь:\n"
+            "1. Таблицы расшарены с email сервисного аккаунта\n"
+            "2. GOOGLE\\_CREDENTIALS\\_JSON добавлен в Railway ENV\n"
+            "3. Названия колонок совпадают с настройками"
+        )}
+    doctors = analyze_doctors(rows)
+    flow    = analyze_patient_flow(rows)
+    result  = {
+        "doctor_report": format_doctor_report(doctors, period_days),
+        "flow_report":   format_flow_report(flow, period_days),
+        "raw_doctors":   doctors,
+        "raw_flow":      flow,
+        "total_rows":    len(rows),
+    }
+    if with_ai:
+        result["ai_recs"] = await generate_recommendations(doctors, flow, period_days)
+    return result
 
-    out = ["🏥 *ПЕРВИЧНЫЕ ПАЦИЕНТЫ (30 дней)*\n"]
-    out.append(f"📞 Всего звонков: {kpi['total_calls']}")
-    out.append(f"🎯 Целевых: {kpi['targeted_calls']}")
-    out.append(f"✅ Записалось: {kpi['booked']} ({kpi['book_rate']}%)")
-    out.append(f"🚶 Пришло: {kpi['visited']} ({kpi['visit_rate']}% из записавшихся)\n")
 
-    out.append("📡 *По источникам:*")
-    for src, s in sorted(kpi["by_source"].items(), key=lambda x: -x[1]["visited"]):
-        rate = round(s["visited"] / s["calls"] * 100, 1) if s["calls"] else 0
-        out.append(f"  • {src}")
-        out.append(f"    {s['calls']} зв → {s['booked']} зап → {s['visited']} визитов ({rate}%)")
-
-    if kpi["no_book_reasons"]:
-        out.append("\n❌ *Причины отказа от записи:*")
-        for reason, cnt in sorted(kpi["no_book_reasons"].items(), key=lambda x: -x[1]):
-            out.append(f"  • {reason}: {cnt} чел.")
-
-    lost = kpi["booked"] - kpi["visited"]
-    if lost > 0:
-        prompt = f"Стоматология: из {kpi['booked']} записавшихся первичных пациентов не пришли {lost} ({100-kpi['visit_rate']}%). Как снизить процент неявок? Дай 3 конкретных действия."
-        loop = asyncio.get_event_loop()
-        ai = await loop.run_in_executor(None, lambda: client.messages.create(
-            model=MODEL, max_tokens=350,
-            messages=[{"role": "user", "content": prompt}]
-        ))
-        out.append(f"\n🤖 *Как вернуть не пришедших:*\n{ai.content[0].text.strip()}")
-
-    return "\n".join(out)
+if __name__ == "__main__":
+    import sys
+    days = int(sys.argv[1]) if len(sys.argv) > 1 else 30
+    async def main():
+        print(f"Загружаю данные за {days} дней...\n")
+        r = await full_report(days)
+        if "error" in r:
+            print(r["error"]); return
+        print(r["doctor_report"])
+        print("\n" + "="*50)
+        print(r["flow_report"])
+        print("\n" + "="*50)
+        print("AI РЕКОМЕНДАЦИИ:\n" + r.get("ai_recs", "—"))
+    asyncio.run(main())

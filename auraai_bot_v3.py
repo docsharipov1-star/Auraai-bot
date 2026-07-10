@@ -7413,62 +7413,140 @@ async def server_cmd(message: Message):
 #  📊 Аналитика клиники
 # ══════════════════════════════════════════════════════════════════
 
+async def _send_chunks(message: Message, text: str):
+    """Отправляет длинный текст частями."""
+    for chunk in [text[i:i+4000] for i in range(0, len(text), 4000)]:
+        await message.answer(chunk, parse_mode="Markdown")
+
+
 @router.message(Command("report"))
 async def cmd_report(message: Message):
+    """Полный отчёт за 30 дней: врачи + воронка + AI-рекомендации."""
     if message.from_user.id != ADMIN_ID:
         return
-    await message.answer("⏳ Собираю отчёт по клинике…")
+    parts = (message.text or "").split()
+    days = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 30
+    msg = await message.answer(f"⏳ Собираю отчёт за {days} дней…")
     try:
-        from clinic_analytics import run_full_report
-        text = await run_full_report(days_revenue=7, days_leads=30)
-        # Telegram ограничение 4096 символов
-        for chunk in [text[i:i+4000] for i in range(0, len(text), 4000)]:
-            await message.answer(chunk, parse_mode="Markdown")
+        from clinic_analytics import full_report
+        r = await full_report(period_days=days, with_ai=True)
+        if "error" in r:
+            await msg.edit_text(r["error"])
+            return
+        await msg.delete()
+        await _send_chunks(message, r["doctor_report"])
+        await _send_chunks(message, r["flow_report"])
+        if "ai_recs" in r:
+            await message.answer(f"🤖 *AI-рекомендации:*\n\n{r['ai_recs']}", parse_mode="Markdown")
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
 
 
 @router.message(Command("doctor"))
 async def cmd_doctor(message: Message):
+    """Отчёт по конкретному врачу: /doctor Кристина [дней]"""
     if message.from_user.id != ADMIN_ID:
         return
-    parts = (message.text or "").split(maxsplit=1)
+    parts = (message.text or "").split(maxsplit=2)
     if len(parts) < 2:
-        await message.answer("Укажи имя врача: /doctor Кристина")
+        await message.answer(
+            "Укажи имя врача:\n"
+            "`/doctor Кристина` — за 30 дней\n"
+            "`/doctor Кристина 14` — за 14 дней",
+            parse_mode="Markdown"
+        )
         return
     doctor_name = parts[1].strip()
-    await message.answer(f"⏳ Собираю данные по {doctor_name}…")
+    days = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 30
+    await message.answer(f"⏳ Анализирую {doctor_name} за {days} дней…")
     try:
-        from clinic_analytics import doctor_report
-        text = await doctor_report(doctor_name, days=14)
+        from clinic_analytics import load_shift_data, analyze_doctors, generate_recommendations, format_doctor_report
+        rows = load_shift_data(days)
+        doctors = analyze_doctors(rows)
+        if doctor_name not in doctors:
+            # Ищем по частичному совпадению
+            matches = [d for d in doctors if doctor_name.lower() in d.lower()]
+            if not matches:
+                names = "\n".join(f"• {d}" for d in sorted(doctors))
+                await message.answer(f"❌ Врач `{doctor_name}` не найден.\n\nДоступные:\n{names}", parse_mode="Markdown")
+                return
+            doctor_name = matches[0]
+
+        d = doctors[doctor_name]
+        top_svc = "\n".join(f"   • {s}: {c}" for s, c in d["top_services"]) or "   нет данных"
+        text = (
+            f"👨‍⚕️ *{doctor_name}* — {days} дней\n\n"
+            f"💵 Выручка: *{d['revenue']:,} ₽*\n"
+            f"📊 Выручка в день: {d['revenue_per_day']:,} ₽\n"
+            f"👥 Пациентов: {d['unique_patients']} (визитов {d['visits']})\n"
+            f"💳 Средний чек: {d['avg_check']:,} ₽\n"
+            f"🆕 Первичных: {d['primary']} ({d['primary_pct']}%)\n"
+            f"🔁 Повторных: {d['retention_pct']}%\n"
+            f"➡️ Перенаправил: {d['referred_out']} | Принял: {d['referred_in']}\n"
+            f"📅 Рабочих дней: {d['working_days']}\n\n"
+            f"🔝 Топ услуги:\n{top_svc}"
+        )
         await message.answer(text, parse_mode="Markdown")
+
+        # AI анализ одного врача
+        ai = await generate_recommendations({doctor_name: d}, {"total_primary": d["primary"], "stayed": 0, "stayed_pct": 0, "referred": d["referred_out"], "referred_pct": 0, "single_visit": 0, "lost_pct": 0, "top_sources": []}, days)
+        await message.answer(f"🤖 *Рекомендации по {doctor_name}:*\n\n{ai}", parse_mode="Markdown")
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
 
 
 @router.message(Command("patients"))
 async def cmd_patients(message: Message):
+    """Воронка первичных пациентов за 30 дней."""
     if message.from_user.id != ADMIN_ID:
         return
-    await message.answer("⏳ Анализирую воронку первичных пациентов…")
+    parts = (message.text or "").split()
+    days = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 30
+    await message.answer(f"⏳ Анализирую первичных пациентов за {days} дней…")
     try:
-        from clinic_analytics import primary_patients_report
-        text = await primary_patients_report()
-        for chunk in [text[i:i+4000] for i in range(0, len(text), 4000)]:
-            await message.answer(chunk, parse_mode="Markdown")
+        from clinic_analytics import load_shift_data, analyze_patient_flow, format_flow_report
+        rows = load_shift_data(days)
+        flow = analyze_patient_flow(rows)
+        await _send_chunks(message, format_flow_report(flow, days))
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
 
 
 @router.message(Command("today"))
 async def cmd_today(message: Message):
+    """Быстрый отчёт за сегодня без AI."""
     if message.from_user.id != ADMIN_ID:
         return
     await message.answer("⏳ Данные за сегодня…")
     try:
-        from clinic_analytics import run_full_report
-        text = await run_full_report(days_revenue=1, days_leads=7)
-        await message.answer(text, parse_mode="Markdown")
+        from clinic_analytics import full_report
+        r = await full_report(period_days=1, with_ai=False)
+        if "error" in r:
+            await message.answer(r["error"])
+            return
+        await _send_chunks(message, r["doctor_report"])
+        await _send_chunks(message, r["flow_report"])
+        await message.answer(f"📋 Записей за сегодня: {r['total_rows']}")
+    except Exception as e:
+        await message.answer(f"❌ Ошибка: {e}")
+
+
+@router.message(Command("week"))
+async def cmd_week(message: Message):
+    """Отчёт за 7 дней с AI-рекомендациями."""
+    if message.from_user.id != ADMIN_ID:
+        return
+    await message.answer("⏳ Отчёт за неделю…")
+    try:
+        from clinic_analytics import full_report
+        r = await full_report(period_days=7, with_ai=True)
+        if "error" in r:
+            await message.answer(r["error"])
+            return
+        await _send_chunks(message, r["doctor_report"])
+        await _send_chunks(message, r["flow_report"])
+        if "ai_recs" in r:
+            await message.answer(f"🤖 *AI-рекомендации:*\n\n{r['ai_recs']}", parse_mode="Markdown")
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
 

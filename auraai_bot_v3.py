@@ -1810,7 +1810,7 @@ async def to_main(message: Message, state: FSMContext):
 async def btn_clinic(message: Message):
     if message.from_user.id != ADMIN_ID:
         return
-    await clinic_cmd(message)
+    await cmd_finance(message)
 
 @router.message(F.text == "💡 AI Чат")
 async def btn_ai_chat(message: Message):

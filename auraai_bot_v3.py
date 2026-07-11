@@ -1213,29 +1213,42 @@ async def generate_avatar(image_url: str, audio_url: str, model_id: str = "kling
 
 def main_kb(is_admin: bool = False) -> ReplyKeyboardMarkup:
     b = ReplyKeyboardBuilder()
-    b.row(KeyboardButton(text="💡 GPTs/Claude/Gemini"))
-    b.row(KeyboardButton(text="🧠 Психолог"))
-    b.row(
-        KeyboardButton(text="🎨 Дизайн с ИИ"),
-        KeyboardButton(text="🎙 Аудио с ИИ"),
-    )
-    b.row(
-        KeyboardButton(text="🎬 Видео будущего"),
-        KeyboardButton(text="🗂 Хранитель изображений"),
-    )
-    b.row(
-        KeyboardButton(text="👤 Профиль"),
-        KeyboardButton(text="🔗 Рефералы"),
-    )
-    b.row(KeyboardButton(text="🎓 Обучение"))
-    b.row(KeyboardButton(text="🤖 Команда агентов"))
-    b.row(
-        KeyboardButton(text="❓ Помощь"),
-        KeyboardButton(text="📕 База знаний"),
-    )
     if is_admin:
-        b.row(KeyboardButton(text="📊 Доктора"), KeyboardButton(text="💰 Финансы бизнеса"))
+        b.row(KeyboardButton(text="🏥 Аналитика клиники"))
+        b.row(
+            KeyboardButton(text="📊 Доктора"),
+            KeyboardButton(text="💰 Финансы бизнеса"),
+        )
         b.row(KeyboardButton(text="🗓 Таблицы клиники"))
+        b.row(
+            KeyboardButton(text="💡 AI Чат"),
+            KeyboardButton(text="🧠 Психолог"),
+        )
+        b.row(
+            KeyboardButton(text="👤 Профиль"),
+            KeyboardButton(text="❓ Помощь"),
+        )
+    else:
+        b.row(KeyboardButton(text="💡 AI Чат"))
+        b.row(KeyboardButton(text="🧠 Психолог"))
+        b.row(
+            KeyboardButton(text="🎨 Дизайн с ИИ"),
+            KeyboardButton(text="🎙 Аудио с ИИ"),
+        )
+        b.row(
+            KeyboardButton(text="🎬 Видео будущего"),
+            KeyboardButton(text="🗂 Хранитель изображений"),
+        )
+        b.row(
+            KeyboardButton(text="👤 Профиль"),
+            KeyboardButton(text="🔗 Рефералы"),
+        )
+        b.row(KeyboardButton(text="🎓 Обучение"))
+        b.row(KeyboardButton(text="🤖 Команда агентов"))
+        b.row(
+            KeyboardButton(text="❓ Помощь"),
+            KeyboardButton(text="📕 База знаний"),
+        )
     return b.as_markup(resize_keyboard=True)
 
 def text_tools_kb() -> ReplyKeyboardMarkup:
@@ -1795,6 +1808,16 @@ async def to_main(message: Message, state: FSMContext):
     await state.clear()
     bal = await get_balance(message.from_user.id)
     await message.answer(f"🏠 *Главное меню*\n\n💎 Токены: *{bal}*", parse_mode="Markdown", reply_markup=main_kb(message.from_user.id == ADMIN_ID))
+
+@router.message(F.text == "🏥 Аналитика клиники")
+async def btn_clinic(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    await clinic_cmd(message)
+
+@router.message(F.text == "💡 AI Чат")
+async def btn_ai_chat(message: Message):
+    await message.answer("💡 *AI Чат*\n\nВыбери инструмент:", parse_mode="Markdown", reply_markup=text_tools_kb())
 
 @router.message(F.text == "📊 Доктора")
 async def btn_doctors(message: Message):

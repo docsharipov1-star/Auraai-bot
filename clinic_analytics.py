@@ -36,12 +36,33 @@ _NUM_RE    = re.compile(r'^\d+$')
 _SKIP_RE   = re.compile(r'^(итог|аренда|[a-f0-9]{20,})', re.IGNORECASE)
 
 # ── Экономика клиники ─────────────────────────────────────────────
-# Постоянные расходы в день (аренда + admin-зарплата + прочее)
-DAILY_EXPENSES = float(os.getenv("DAILY_EXPENSES", "25000"))
-# Целевая чистая прибыль в день
-TARGET_PROFIT  = float(os.getenv("TARGET_PROFIT",  "50000"))
-# Процент врача от выручки (по умолчанию 35%), можно задать per-doctor через DR_PCT_Имя=40
-DEFAULT_DOCTOR_PCT = float(os.getenv("DEFAULT_DOCTOR_PCT", "35"))
+# Постоянные расходы в месяц → в день
+# Аренда 155463 + Налоги 43000 + Яндекс 100000 + Маркетолог 30000
+# + Бухгалтер 35000 + Материалы 50000 + Коммуналка 22000 + Мусор 7500 = 442963
+MONTHLY_EXPENSES = float(os.getenv("MONTHLY_EXPENSES", "442963"))
+DAILY_EXPENSES   = float(os.getenv("DAILY_EXPENSES",   str(round(MONTHLY_EXPENSES / 30))))
+TARGET_PROFIT    = float(os.getenv("TARGET_PROFIT",    "50000"))   # цель чистой прибыли в день
+DEFAULT_DOCTOR_PCT = float(os.getenv("DEFAULT_DOCTOR_PCT", "30"))
+
+# Процент каждого врача: DR_PCT_КРИСТИНА=30, DR_PCT_БИБО=20 и т.д.
+# Ключ — первое слово имени в верхнем регистре
+_DOCTOR_PCTS: dict[str, float] = {
+    "КРИСТИНА":  30.0,  # Кристина Алибековна
+    "БИБО":      20.0,  # Бибо Балаевич
+    "БЕГА":      20.0,  # Бега Балаевич
+    "КИСИЕВ":   25.0,  # Кисиев Михаил (имплантация; удаление 30% — усредняем)
+    "МИХАИЛ":   20.0,  # Кисиев Михаил (альтернативное написание)
+    "ДАВЛАТ":   30.0,  # Давлат Зафарович
+    "АЛЕКСАНДРОВ": 30.0,
+}
+
+def _doctor_pct(doc_name: str) -> float:
+    first = doc_name.upper().split()[0] if doc_name.split() else ""
+    # Сначала env-override, потом словарь, потом дефолт
+    env_key = "DR_PCT_" + first
+    if os.getenv(env_key):
+        return float(os.getenv(env_key))
+    return _DOCTOR_PCTS.get(first, DEFAULT_DOCTOR_PCT)
 
 PAY_TYPES = {
     "нал": "наличные", "налич": "наличные",
@@ -310,9 +331,7 @@ def analyze_doctors(records: list[dict]) -> dict:
         visits = s["visits"] or 1
         working_days = len(s["days"]) or 1
         revenue = round(s["revenue"])
-        # Процент врача (можно переопределить через env DR_PCT_ИМЯ=40)
-        key = "DR_PCT_" + doc.upper().replace(" ", "_")
-        pct = float(os.getenv(key, str(DEFAULT_DOCTOR_PCT)))
+        pct = _doctor_pct(doc)
         doctor_earn = round(revenue * pct / 100)
         result[doc] = {
             "revenue":         revenue,
@@ -423,19 +442,21 @@ def format_doctor_report(doctors: dict, period_days: int = 30) -> str:
         return "❌ Нет данных по врачам."
     total_rev    = sum(d["revenue"] for d in doctors.values())
     total_to_doc = sum(d["doctor_earn"] for d in doctors.values())
-    clinic_gross = total_rev - total_to_doc          # клинике до расходов
+    clinic_gross = total_rev - total_to_doc
     daily_exp    = DAILY_EXPENSES * period_days
-    clinic_net   = clinic_gross - daily_exp           # чистая прибыль
-    need_revenue = (DAILY_EXPENSES + TARGET_PROFIT) * period_days / (1 - DEFAULT_DOCTOR_PCT / 100)
+    clinic_net   = clinic_gross - daily_exp
+    avg_doc_pct  = round(total_to_doc / total_rev * 100) if total_rev else 0
+    # Нужная выручка для цели: (расходы + цель_прибыли) / (1 - средний_% врачам)
+    need_per_day = (DAILY_EXPENSES + TARGET_PROFIT) / max(1 - avg_doc_pct / 100, 0.01)
 
     lines = [
         f"🏥 *Отчёт клиники за {period_days} дн.*\n",
         f"💰 Выручка: *{total_rev:,} ₽*",
-        f"👨‍⚕️ Врачам ({DEFAULT_DOCTOR_PCT:.0f}%): *{total_to_doc:,} ₽*",
-        f"🏢 Клинике (до расходов): *{clinic_gross:,} ₽*",
-        f"📉 Расходы (~{DAILY_EXPENSES:,.0f} ₽/день): *{daily_exp:,.0f} ₽*",
+        f"👨‍⚕️ Врачам (~{avg_doc_pct}%): *{total_to_doc:,} ₽*",
+        f"🏢 Клинике до расходов: *{clinic_gross:,} ₽*",
+        f"📉 Расходы ({DAILY_EXPENSES:,.0f} ₽/день): *{daily_exp:,.0f} ₽*",
         f"{'✅' if clinic_net >= 0 else '❌'} Чистая прибыль: *{clinic_net:,.0f} ₽*",
-        f"🎯 Цель ({TARGET_PROFIT:,.0f} ₽/день): нужно *{need_revenue:,.0f} ₽* за период\n",
+        f"🎯 Цель {TARGET_PROFIT:,.0f} ₽/день → нужно *{need_per_day:,.0f} ₽/день*\n",
     ]
     medals = ["🥇", "🥈", "🥉"]
     for i, (doc, d) in enumerate(sorted(doctors.items(), key=lambda x: -x[1]["revenue"]), 1):

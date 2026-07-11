@@ -35,6 +35,14 @@ _DOCTOR_RE = re.compile(r'врач\s+(.+)', re.IGNORECASE)
 _NUM_RE    = re.compile(r'^\d+$')
 _SKIP_RE   = re.compile(r'^(итог|аренда|[a-f0-9]{20,})', re.IGNORECASE)
 
+# ── Экономика клиники ─────────────────────────────────────────────
+# Постоянные расходы в день (аренда + admin-зарплата + прочее)
+DAILY_EXPENSES = float(os.getenv("DAILY_EXPENSES", "25000"))
+# Целевая чистая прибыль в день
+TARGET_PROFIT  = float(os.getenv("TARGET_PROFIT",  "50000"))
+# Процент врача от выручки (по умолчанию 35%), можно задать per-doctor через DR_PCT_Имя=40
+DEFAULT_DOCTOR_PCT = float(os.getenv("DEFAULT_DOCTOR_PCT", "35"))
+
 PAY_TYPES = {
     "нал": "наличные", "налич": "наличные",
     "терминал": "терминал",
@@ -125,50 +133,84 @@ async def _fetch_csv_async(sheet_id: str) -> list[list[str]]:
     return list(csv.reader(io.StringIO(content)))
 
 
+_NUM_DOT_RE = re.compile(r'^\d+\.?$')  # "1", "2", "5." — номер строки
+
+
 async def _parse_block_sheet(sheet_id: str, shift: str) -> list[dict]:
-    """Парсит блочный формат таблицы (дата → врач → строки пациентов)."""
+    """Парсит блочный формат таблицы (дата → врач → строки пациентов).
+
+    Учитывает разделённую оплату: основная строка (№) + продолжение (пустой №).
+    Пример: '1 | Иванов беглион | 2750' + '  | Иванов | 700' → один пациент, 3450 ₽
+    """
     rows = await _fetch_csv_async(sheet_id)
     records = []
     current_date: Optional[date] = None
     current_doctor: str = ""
+    last_row_num: str = ""
 
     for row in rows:
         cells = [c.strip() for c in row]
         col0 = cells[0] if cells else ""
         col1 = cells[1] if len(cells) > 1 else ""
+        cost_raw = cells[2] if len(cells) > 2 else ""
 
+        # Строка полностью пустая или только суммой (продолжение)
         if not col0 and not col1:
+            extra = _normalize_cost(cost_raw)
+            if extra and records:
+                records[-1]["cost"] += extra
             continue
 
         # Дата (иногда с именем: "03.07.2026 -Мутолиб")
         date_match = _DATE_RE.search(col0)
-        if date_match and not _NUM_RE.match(col0):
+        if date_match and not _NUM_DOT_RE.match(col0):
             current_date = _normalize_date(date_match.group(1))
+            last_row_num = ""
             continue
 
         # Врач
         doc_match = _DOCTOR_RE.match(col0)
         if doc_match:
             current_doctor = doc_match.group(1).strip().title()
+            last_row_num = ""
             continue
 
-        # Пропускаем заголовок, итоги, аренду, пустые, хэши
-        if col0 in ("№",) or _SKIP_RE.match(col0):
+        # Пропускаем заголовок, итоги, аренду, хэши
+        if col0 == "№" or _SKIP_RE.match(col0):
             continue
-        if not _NUM_RE.match(col0):
+
+        # Продолжение строки: пустой col0 но есть имя/сумма
+        if not col0 and col1:
+            extra = _normalize_cost(cost_raw)
+            if records and current_doctor:
+                records[-1]["cost"] += extra
             continue
+
+        # Номер строки пациента: "1", "2", "5." и т.д.
+        if not _NUM_DOT_RE.match(col0):
+            continue
+
+        clean_num = col0.rstrip(".")
+
+        # Тот же номер строки повторяется (например "5." дважды) → продолжение
+        if clean_num == last_row_num and records and records[-1]["doctor"] == current_doctor:
+            extra = _normalize_cost(cost_raw)
+            records[-1]["cost"] += extra
+            continue
+
+        last_row_num = clean_num
 
         # Строка пациента
-        patient_service = col1
-        if not patient_service or not current_date or not current_doctor:
+        if not current_date or not current_doctor:
             continue
 
-        cost_raw = cells[2] if len(cells) > 2 else ""
-        pay_raw  = cells[4] if len(cells) > 4 else ""
-        anest    = cells[3] if len(cells) > 3 else ""
-
+        pay_raw = cells[4] if len(cells) > 4 else ""
         cost = _normalize_cost(cost_raw)
-        patient_name, service = _split_patient_service(patient_service)
+        patient_name, service = _split_patient_service(col1) if col1 else ("", "")
+
+        # Пропускаем пустые строки-заглушки (нет пациента и нет оплаты)
+        if not patient_name and cost == 0:
+            continue
 
         records.append({
             "shift":        shift,
@@ -179,7 +221,7 @@ async def _parse_block_sheet(sheet_id: str, shift: str) -> list[dict]:
             "service":      service,
             "cost":         cost,
             "pay_type":     _normalize_pay(pay_raw),
-            "anesthesia":   anest,
+            "anesthesia":   cells[3] if len(cells) > 3 else "",
         })
 
     return records
@@ -267,16 +309,24 @@ def analyze_doctors(records: list[dict]) -> dict:
     for doc, s in stats.items():
         visits = s["visits"] or 1
         working_days = len(s["days"]) or 1
+        revenue = round(s["revenue"])
+        # Процент врача (можно переопределить через env DR_PCT_ИМЯ=40)
+        key = "DR_PCT_" + doc.upper().replace(" ", "_")
+        pct = float(os.getenv(key, str(DEFAULT_DOCTOR_PCT)))
+        doctor_earn = round(revenue * pct / 100)
         result[doc] = {
-            "revenue":         round(s["revenue"]),
+            "revenue":         revenue,
             "visits":          visits,
             "paid_visits":     s["paid_visits"],
             "unique_patients": len(s["patients"]),
-            "avg_check":       round(s["revenue"] / max(s["paid_visits"], 1)),
-            "revenue_per_day": round(s["revenue"] / working_days),
+            "avg_check":       round(revenue / max(s["paid_visits"], 1)),
+            "revenue_per_day": round(revenue / working_days),
             "working_days":    working_days,
             "top_services":    sorted(s["services"].items(), key=lambda x: -x[1])[:3],
             "pay_types":       dict(s["pay_types"]),
+            "doctor_pct":      pct,
+            "doctor_earn":     doctor_earn,
+            "clinic_net":      revenue - doctor_earn,
         }
     return result
 
@@ -371,10 +421,21 @@ async def generate_recommendations(doctors: dict, retention: dict, period_days: 
 def format_doctor_report(doctors: dict, period_days: int = 30) -> str:
     if not doctors:
         return "❌ Нет данных по врачам."
-    total_rev = sum(d["revenue"] for d in doctors.values())
+    total_rev    = sum(d["revenue"] for d in doctors.values())
+    total_to_doc = sum(d["doctor_earn"] for d in doctors.values())
+    clinic_gross = total_rev - total_to_doc          # клинике до расходов
+    daily_exp    = DAILY_EXPENSES * period_days
+    clinic_net   = clinic_gross - daily_exp           # чистая прибыль
+    need_revenue = (DAILY_EXPENSES + TARGET_PROFIT) * period_days / (1 - DEFAULT_DOCTOR_PCT / 100)
+
     lines = [
-        f"👨‍⚕️ *Врачи за {period_days} дней*\n",
-        f"💰 Выручка клиники: *{total_rev:,} ₽*\n",
+        f"🏥 *Отчёт клиники за {period_days} дн.*\n",
+        f"💰 Выручка: *{total_rev:,} ₽*",
+        f"👨‍⚕️ Врачам ({DEFAULT_DOCTOR_PCT:.0f}%): *{total_to_doc:,} ₽*",
+        f"🏢 Клинике (до расходов): *{clinic_gross:,} ₽*",
+        f"📉 Расходы (~{DAILY_EXPENSES:,.0f} ₽/день): *{daily_exp:,.0f} ₽*",
+        f"{'✅' if clinic_net >= 0 else '❌'} Чистая прибыль: *{clinic_net:,.0f} ₽*",
+        f"🎯 Цель ({TARGET_PROFIT:,.0f} ₽/день): нужно *{need_revenue:,.0f} ₽* за период\n",
     ]
     medals = ["🥇", "🥈", "🥉"]
     for i, (doc, d) in enumerate(sorted(doctors.items(), key=lambda x: -x[1]["revenue"]), 1):
@@ -382,9 +443,9 @@ def format_doctor_report(doctors: dict, period_days: int = 30) -> str:
         share = round(d["revenue"] / total_rev * 100) if total_rev else 0
         lines.append(
             f"{m} *{doc}*\n"
-            f"   💵 {d['revenue']:,} ₽ ({share}%) · чек {d['avg_check']:,} ₽/визит\n"
-            f"   📅 {d['working_days']} дн · {d['revenue_per_day']:,} ₽/день\n"
-            f"   👥 {d['unique_patients']} пациентов · {d['visits']} визитов\n"
+            f"   💵 {d['revenue']:,} ₽ ({share}%) · чек {d['avg_check']:,} ₽\n"
+            f"   💼 Его доля {d['doctor_pct']:.0f}%: {d['doctor_earn']:,} ₽ · клинике: {d['clinic_net']:,} ₽\n"
+            f"   👥 {d['unique_patients']} пац · {d['visits']} визит · {d['working_days']} дн\n"
         )
     return "\n".join(lines)
 

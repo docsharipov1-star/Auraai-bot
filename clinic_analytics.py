@@ -552,40 +552,80 @@ async def full_report(
 # ════════════════════════════════════════════════════════════════
 
 async def compare_periods(days: int = 7) -> str:
-    """Текущий период vs предыдущий такой же."""
-    today = date.today()
-    cur_from = today - timedelta(days=days)
+    """Текущий период vs предыдущий — чёткий блочный формат."""
+    today    = date.today()
+    cur_from = today - timedelta(days=days - 1)
     prev_to  = cur_from - timedelta(days=1)
     prev_from = prev_to - timedelta(days=days - 1)
 
     cur  = await load_shift_data(from_date=cur_from,  to_date=today)
     prev = await load_shift_data(from_date=prev_from, to_date=prev_to)
 
-    def summary(records):
-        rev = sum(r["cost"] for r in records)
-        pats = len({r["patient"] for r in records if r["patient"]})
-        return rev, pats, len(records)
+    def period_stats(records, other_records):
+        rev      = sum(r["cost"] for r in records)
+        visits   = len(records)
+        patients = {r["patient"] for r in records if r["patient"]}
+        other_p  = {r["patient"] for r in other_records if r["patient"]}
+        # первичные = не встречались в другом периоде
+        primary  = len(patients - other_p)
+        repeat   = len(patients & other_p)
+        total_p  = len(patients)
+        avg_chk  = round(rev / visits) if visits else 0
+        return rev, visits, total_p, primary, repeat, avg_chk
 
-    cr, cp, cv = summary(cur)
-    pr, pp, pv = summary(prev)
+    cr, cv, cp, cprim, crep, cchk = period_stats(cur,  prev)
+    pr, pv, pp, pprim, prep, pchk = period_stats(prev, cur)
 
-    def delta(a, b):
-        if b == 0: return "∞" if a > 0 else "0"
+    def sign(a, b):
+        if b == 0: return ("➡️", "нет данных")
         d = round((a - b) / b * 100)
-        return f"+{d}%" if d >= 0 else f"{d}%"
+        if d > 0:   return ("📈", f"+{d}%")
+        if d < 0:   return ("📉", f"{d}%")
+        return ("➡️", "0%")
 
-    period_label = "неделю" if days == 7 else f"{days} дней"
+    label = "неделя" if days == 7 else f"{days} дней"
+    df   = cur_from.strftime("%d.%m")
+    dt   = today.strftime("%d.%m")
+    pf   = prev_from.strftime("%d.%m")
+    pt   = prev_to.strftime("%d.%m")
+
+    def block(title, rev, visits, total_p, primary, repeat, avg_chk):
+        return (
+            f"*{title}*\n"
+            f"💰 Выручка:      *{rev:,} ₽*\n"
+            f"👥 Пациентов:    *{total_p}*\n"
+            f"   ↳ Первичных:  {primary}\n"
+            f"   ↳ Повторных:  {repeat}\n"
+            f"🔢 Визитов:      {visits}\n"
+            f"💳 Средний чек:  {avg_chk:,} ₽"
+        )
+
+    ico_r, txt_r = sign(cr, pr)
+    ico_p, txt_p = sign(cp, pp)
+    ico_v, txt_v = sign(cv, pv)
+    ico_c, txt_c = sign(cchk, pchk)
+    ico_pr, txt_pr = sign(cprim, pprim)
+    ico_re, txt_re = sign(crep, prep)
+
+    cmp_block = (
+        f"*📊 Сравнение*\n"
+        f"💰 Выручка:      {ico_r} *{txt_r}*"
+        + (f"  ({cr-pr:+,} ₽)" if pr else "") + "\n"
+        f"👥 Пациентов:    {ico_p} *{txt_p}*\n"
+        f"   ↳ Первичных:  {ico_pr} {txt_pr}\n"
+        f"   ↳ Повторных:  {ico_re} {txt_re}\n"
+        f"🔢 Визитов:      {ico_v} {txt_v}\n"
+        f"💳 Средний чек:  {ico_c} {txt_c}"
+    )
+
     lines = [
-        f"📊 *Эта {period_label} vs предыдущая*\n",
-        f"{'':4}{'Сейчас':>12}{'Прошлая':>12}{'Δ':>8}",
-        f"💰 Выручка:  {cr:>10,} ₽  {pr:>10,} ₽  {delta(cr,pr):>6}",
-        f"👥 Пациенты: {cp:>10}    {pp:>10}    {delta(cp,pp):>6}",
-        f"🔢 Визиты:   {cv:>10}    {pv:>10}    {delta(cv,pv):>6}",
+        f"⚖️ *Сравнение периодов ({label})*\n",
+        block(f"📅 {df}–{dt} (текущий)", cr, cv, cp, cprim, crep, cchk),
+        "",
+        block(f"📅 {pf}–{pt} (прошлый)", pr, pv, pp, pprim, prep, pchk),
+        "",
+        cmp_block,
     ]
-    if cv and pv:
-        ca = round(cr / cv) if cv else 0
-        pa = round(pr / pv) if pv else 0
-        lines.append(f"💳 Ср.чек:   {ca:>10,} ₽  {pa:>10,} ₽  {delta(ca,pa):>6}")
     return "\n".join(lines)
 
 

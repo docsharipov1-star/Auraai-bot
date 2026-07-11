@@ -7468,7 +7468,7 @@ async def _send_finance(target, days: int = None, year: int = None, month: int =
     await target.answer(f"📋 Всего записей: {r['total_rows']} · период: {label}")
 
 
-@router.message(Command("finance", "report", "week", "today"))
+@router.message(Command("clinic", "report", "week", "today"))
 async def cmd_finance(message: Message):
     """Финансовый отчёт клиники с выбором периода."""
     if message.from_user.id != ADMIN_ID:
@@ -7491,7 +7491,7 @@ async def cmd_finance(message: Message):
             await message.answer(f"❌ Ошибка: {e}")
         await msg.delete()
         return
-    # /report [дней] — быстрый с числом
+    # /report [дней] или /clinic — показываем кнопки или быстрый отчёт
     if cmd == "report":
         parts = (message.text or "").split()
         if len(parts) > 1 and parts[1].isdigit():
@@ -7503,7 +7503,7 @@ async def cmd_finance(message: Message):
                 await message.answer(f"❌ Ошибка: {e}")
             await msg.delete()
             return
-    # /finance — показываем кнопки
+    # /clinic — показываем кнопки
     await message.answer(
         "📊 *Финансовый отчёт клиники*\n\nВыбери период:",
         reply_markup=_finance_kb().as_markup(),

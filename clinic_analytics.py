@@ -528,6 +528,197 @@ async def full_report(
     return result
 
 
+# ════════════════════════════════════════════════════════════════
+#  СРАВНЕНИЕ ПЕРИОДОВ
+# ════════════════════════════════════════════════════════════════
+
+async def compare_periods(days: int = 7) -> str:
+    """Текущий период vs предыдущий такой же."""
+    today = date.today()
+    cur_from = today - timedelta(days=days)
+    prev_to  = cur_from - timedelta(days=1)
+    prev_from = prev_to - timedelta(days=days - 1)
+
+    cur  = await load_shift_data(from_date=cur_from,  to_date=today)
+    prev = await load_shift_data(from_date=prev_from, to_date=prev_to)
+
+    def summary(records):
+        rev = sum(r["cost"] for r in records)
+        pats = len({r["patient"] for r in records if r["patient"]})
+        return rev, pats, len(records)
+
+    cr, cp, cv = summary(cur)
+    pr, pp, pv = summary(prev)
+
+    def delta(a, b):
+        if b == 0: return "∞" if a > 0 else "0"
+        d = round((a - b) / b * 100)
+        return f"+{d}%" if d >= 0 else f"{d}%"
+
+    period_label = "неделю" if days == 7 else f"{days} дней"
+    lines = [
+        f"📊 *Эта {period_label} vs предыдущая*\n",
+        f"{'':4}{'Сейчас':>12}{'Прошлая':>12}{'Δ':>8}",
+        f"💰 Выручка:  {cr:>10,} ₽  {pr:>10,} ₽  {delta(cr,pr):>6}",
+        f"👥 Пациенты: {cp:>10}    {pp:>10}    {delta(cp,pp):>6}",
+        f"🔢 Визиты:   {cv:>10}    {pv:>10}    {delta(cv,pv):>6}",
+    ]
+    if cv and pv:
+        ca = round(cr / cv) if cv else 0
+        pa = round(pr / pv) if pv else 0
+        lines.append(f"💳 Ср.чек:   {ca:>10,} ₽  {pa:>10,} ₽  {delta(ca,pa):>6}")
+    return "\n".join(lines)
+
+
+# ════════════════════════════════════════════════════════════════
+#  РЕЙТИНГ УСЛУГ
+# ════════════════════════════════════════════════════════════════
+
+async def services_report(days: int = 30) -> str:
+    records = await load_shift_data(days_back=days)
+    if not records:
+        return "❌ Нет данных."
+
+    services: dict = defaultdict(lambda: {"count": 0, "revenue": 0.0})
+    for r in records:
+        svc = r["service"].strip().lower() if r["service"] else "не указана"
+        if svc:
+            services[svc]["count"]   += 1
+            services[svc]["revenue"] += r["cost"]
+
+    total_rev = sum(s["revenue"] for s in services.values()) or 1
+    top = sorted(services.items(), key=lambda x: -x[1]["revenue"])[:12]
+
+    lines = [f"🔧 *Топ услуг за {days} дней*\n"]
+    for i, (svc, s) in enumerate(top, 1):
+        share = round(s["revenue"] / total_rev * 100)
+        lines.append(
+            f"{i}. *{svc.title()}*\n"
+            f"   {s['count']} раз · {s['revenue']:,.0f} ₽ ({share}%)\n"
+        )
+    return "\n".join(lines)
+
+
+# ════════════════════════════════════════════════════════════════
+#  ЗАГРУЖЕННОСТЬ ПО ДНЯМ НЕДЕЛИ
+# ════════════════════════════════════════════════════════════════
+
+async def weekday_report(days: int = 30) -> str:
+    records = await load_shift_data(days_back=days)
+    if not records:
+        return "❌ Нет данных."
+
+    DAYS_RU = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
+    stats: dict = defaultdict(lambda: {"revenue": 0.0, "visits": 0, "days_count": set()})
+
+    for r in records:
+        wd = r["date"].weekday()
+        stats[wd]["revenue"] += r["cost"]
+        stats[wd]["visits"]  += 1
+        stats[wd]["days_count"].add(r["date"])
+
+    max_rev = max((s["revenue"] for s in stats.values()), default=1)
+    lines = [f"📅 *Загруженность по дням за {days} дней*\n"]
+    for wd in range(7):
+        s = stats.get(wd)
+        if not s:
+            lines.append(f"{DAYS_RU[wd]}: нет данных")
+            continue
+        dc = len(s["days_count"]) or 1
+        avg_rev = round(s["revenue"] / dc)
+        bar_len = round(s["revenue"] / max_rev * 12)
+        bar = "█" * bar_len + "░" * (12 - bar_len)
+        lines.append(f"{DAYS_RU[wd]} {bar} {avg_rev:,} ₽/день · {s['visits']} визитов")
+    return "\n".join(lines)
+
+
+# ════════════════════════════════════════════════════════════════
+#  РАСЧЁТ ЗАРПЛАТ
+# ════════════════════════════════════════════════════════════════
+
+async def salary_report(year: int = None, month: int = None) -> str:
+    import calendar
+    today = date.today()
+    y = year or today.year
+    m = month or today.month
+    records = await load_shift_data(year=y, month=m)
+
+    month_name = ["", "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь",
+                  "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"][m]
+
+    if not records:
+        return f"❌ Нет данных за {month_name} {y}."
+
+    doctors = analyze_doctors(records)
+    total_rev    = sum(d["revenue"] for d in doctors.values())
+    total_salary = sum(d["doctor_earn"] for d in doctors.values())
+    clinic_gross = total_rev - total_salary
+    working_days = calendar.monthrange(y, m)[1]
+    clinic_net   = clinic_gross - DAILY_EXPENSES * working_days
+
+    lines = [
+        f"💼 *Зарплаты за {month_name} {y}*\n",
+        f"💰 Выручка клиники: *{total_rev:,} ₽*",
+        f"🏢 Клинике (чистыми): *{clinic_net:,.0f} ₽*\n",
+        f"{'Врач':<22} {'%':>4} {'Выручка':>10} {'Зарплата':>10}",
+        "─" * 50,
+    ]
+    for doc, d in sorted(doctors.items(), key=lambda x: -x[1]["revenue"]):
+        lines.append(
+            f"{doc:<22} {d['doctor_pct']:>3.0f}% "
+            f"{d['revenue']:>10,} ₽ {d['doctor_earn']:>10,} ₽"
+        )
+    lines += ["─" * 50, f"{'ИТОГО':<22} {'':>4} {total_rev:>10,} ₽ {total_salary:>10,} ₽"]
+    return "\n".join(lines)
+
+
+# ════════════════════════════════════════════════════════════════
+#  ПОТЕРЯННЫЕ ПАЦИЕНТЫ
+# ════════════════════════════════════════════════════════════════
+
+async def lost_patients_report(days: int = 60) -> str:
+    """Пациенты которые были 1 раз и не вернулись."""
+    records = await load_shift_data(days_back=days)
+    if not records:
+        return "❌ Нет данных."
+
+    patient_info: dict = defaultdict(lambda: {"visits": 0, "last_date": None, "doctor": "", "cost": 0.0})
+    for r in records:
+        p = r["patient_raw"] or r["patient"]
+        if not p or p.lower() in ("пациент", "пац", ""):
+            continue
+        pi = patient_info[p]
+        pi["visits"] += 1
+        pi["cost"]   += r["cost"]
+        if not pi["last_date"] or r["date"] > pi["last_date"]:
+            pi["last_date"] = r["date"]
+            pi["doctor"]    = r["doctor"]
+
+    today = date.today()
+    lost = [
+        (name, info)
+        for name, info in patient_info.items()
+        if info["visits"] == 1 and info["last_date"] and (today - info["last_date"]).days >= 14
+    ]
+    lost.sort(key=lambda x: x[1]["last_date"])
+
+    if not lost:
+        return f"✅ Нет потерянных пациентов за {days} дней."
+
+    lines = [f"⚠️ *Потерянные пациенты* (1 визит, не вернулись)\n"]
+    for name, info in lost[:20]:
+        days_ago = (today - info["last_date"]).days
+        lines.append(
+            f"• *{name}* — {info['last_date'].strftime('%d.%m')}, "
+            f"врач {info['doctor']}, {info['cost']:,.0f} ₽, "
+            f"{days_ago} дн. назад"
+        )
+    if len(lost) > 20:
+        lines.append(f"\n...и ещё {len(lost) - 20} пациентов")
+    lines.append(f"\n_Всего потеряно: {len(lost)}_")
+    return "\n".join(lines)
+
+
 if __name__ == "__main__":
     import sys
     days = int(sys.argv[1]) if len(sys.argv) > 1 else 30

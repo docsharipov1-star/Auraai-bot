@@ -7424,13 +7424,21 @@ def _finance_kb() -> InlineKeyboardBuilder:
     from datetime import date
     import calendar
     kb = InlineKeyboardBuilder()
-    kb.button(text="📅 Сегодня",       callback_data="fin:days:1")
-    kb.button(text="📆 Вчера",         callback_data="fin:days:2")
-    kb.button(text="📆 Неделя",        callback_data="fin:days:7")
-    kb.button(text="🗓 Месяц",         callback_data="fin:days:30")
-    kb.button(text="📊 Квартал",       callback_data="fin:days:90")
-    kb.button(text="🗓 Год",           callback_data="fin:days:365")
-    # Последние 3 месяца как отдельные кнопки
+    kb.button(text="📅 Сегодня",        callback_data="fin:days:1")
+    kb.button(text="📆 Вчера",          callback_data="fin:days:2")
+    kb.button(text="📆 Неделя",         callback_data="fin:days:7")
+    kb.button(text="🗓 Месяц",          callback_data="fin:days:30")
+    kb.button(text="📊 Квартал",        callback_data="fin:days:90")
+    kb.button(text="🗓 Год",            callback_data="fin:days:365")
+    # Сравнение
+    kb.button(text="⚖️ Неделя vs прошлая", callback_data="fin:cmp:7")
+    kb.button(text="⚖️ Месяц vs прошлый",  callback_data="fin:cmp:30")
+    # Дополнительная аналитика
+    kb.button(text="🔧 Топ услуг",      callback_data="fin:svc:30")
+    kb.button(text="📅 По дням недели", callback_data="fin:wd:30")
+    kb.button(text="⚠️ Потерянные пац.", callback_data="fin:lost:60")
+    kb.button(text="💼 Зарплаты месяц", callback_data="fin:sal:0")
+    # Последние 3 месяца
     today = date.today()
     for i in range(3):
         m = today.month - i
@@ -7439,7 +7447,7 @@ def _finance_kb() -> InlineKeyboardBuilder:
             m += 12; y -= 1
         label = f"{calendar.month_abbr[m]} {y}"
         kb.button(text=label, callback_data=f"fin:ym:{y}:{m}")
-    kb.adjust(2, 2, 2, 3)
+    kb.adjust(2, 2, 2, 2, 3, 3)
     return kb
 
 
@@ -7519,20 +7527,50 @@ async def cb_finance(call: CallbackQuery):
     await call.answer()
     parts = call.data.split(":")
     mode = parts[1]
+    msg = await call.message.answer("⏳ Загружаю…")
     try:
         if mode == "days":
             days = int(parts[2])
-            msg = await call.message.answer(f"⏳ Собираю отчёт за {days} дней…")
             await _send_finance(call.message, days=days, with_ai=days >= 7)
+
         elif mode == "ym":
             y, m = int(parts[2]), int(parts[3])
-            import calendar
-            label = f"{calendar.month_name[m]} {y}"
-            msg = await call.message.answer(f"⏳ Отчёт за {label}…")
             await _send_finance(call.message, year=y, month=m)
+
+        elif mode == "cmp":
+            from clinic_analytics import compare_periods
+            days = int(parts[2])
+            text = await compare_periods(days)
+            await call.message.answer(text, parse_mode="Markdown")
+
+        elif mode == "svc":
+            from clinic_analytics import services_report
+            days = int(parts[2])
+            text = await services_report(days)
+            await call.message.answer(text, parse_mode="Markdown")
+
+        elif mode == "wd":
+            from clinic_analytics import weekday_report
+            days = int(parts[2])
+            text = await weekday_report(days)
+            await call.message.answer(text, parse_mode="Markdown")
+
+        elif mode == "lost":
+            from clinic_analytics import lost_patients_report
+            days = int(parts[2])
+            text = await lost_patients_report(days)
+            await call.message.answer(text, parse_mode="Markdown")
+
+        elif mode == "sal":
+            from clinic_analytics import salary_report
+            from datetime import date
+            today = date.today()
+            text = await salary_report(today.year, today.month)
+            await call.message.answer(f"```\n{text}\n```", parse_mode="Markdown")
+
         await msg.delete()
     except Exception as e:
-        await call.message.answer(f"❌ Ошибка: {e}")
+        await msg.edit_text(f"❌ Ошибка: {e}")
 
 
 @router.message(Command("doctor"))
@@ -7586,6 +7624,34 @@ async def cmd_doctor(message: Message):
         await message.answer(f"❌ Ошибка: {e}")
 
 
+def _start_clinic_daily_report(bot):
+    """Авто-отчёт клиники каждый день в 21:00 МСК."""
+    import asyncio
+    from datetime import datetime, timezone, timedelta
+
+    async def _daily_loop():
+        MSK = timezone(timedelta(hours=3))
+        while True:
+            now = datetime.now(MSK)
+            target = now.replace(hour=21, minute=0, second=0, microsecond=0)
+            if now >= target:
+                target += timedelta(days=1)
+            await asyncio.sleep((target - now).total_seconds())
+            try:
+                from clinic_analytics import full_report
+                r = await full_report(days_back=1, with_ai=False)
+                if "error" not in r:
+                    text = f"🌙 *Итог дня {datetime.now(MSK).strftime('%d.%m.%Y')}*\n\n"
+                    text += r["doctor_report"]
+                    # Разбиваем по 4096 символов
+                    for i in range(0, len(text), 4000):
+                        await bot.send_message(ADMIN_ID, text[i:i+4000], parse_mode="Markdown")
+            except Exception as e:
+                logging.warning(f"clinic daily report error: {e}")
+
+    asyncio.create_task(_daily_loop())
+
+
 async def main():
     global anthropic_client, openai_client, deepseek_client
 
@@ -7615,6 +7681,7 @@ async def main():
     dp.include_router(router)
     start_autoposter(bot)
     start_biz_sync(bot)
+    _start_clinic_daily_report(bot)
 
     logging.info(f"🚀 AuraAI Bot v3.44 FIX-отчётность запущен | @{BOT_USERNAME}")
     logging.info("✅ ВЕРСИЯ С ВЫБОРОМ ФОРМАТА 9:16 16:9 — если видишь это, новый код работает")

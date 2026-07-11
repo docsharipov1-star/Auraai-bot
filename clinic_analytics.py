@@ -108,21 +108,26 @@ def _split_patient_service(text: str) -> tuple[str, str]:
     return name, service
 
 
-def _fetch_csv(sheet_id: str) -> list[list[str]]:
-    import urllib.request
+async def _fetch_csv_async(sheet_id: str) -> list[list[str]]:
     url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv"
-    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
     try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
+        import aiohttp
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=aiohttp.ClientTimeout(total=20), allow_redirects=True) as resp:
+                content = await resp.text(encoding="utf-8")
+    except ImportError:
+        import urllib.request
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=20) as resp:
             content = resp.read().decode("utf-8")
     except Exception as e:
         raise RuntimeError(f"Не удалось скачать таблицу {sheet_id}: {e}")
     return list(csv.reader(io.StringIO(content)))
 
 
-def _parse_block_sheet(sheet_id: str, shift: str) -> list[dict]:
+async def _parse_block_sheet(sheet_id: str, shift: str) -> list[dict]:
     """Парсит блочный формат таблицы (дата → врач → строки пациентов)."""
-    rows = _fetch_csv(sheet_id)
+    rows = await _fetch_csv_async(sheet_id)
     records = []
     current_date: Optional[date] = None
     current_doctor: str = ""
@@ -184,7 +189,7 @@ def _parse_block_sheet(sheet_id: str, shift: str) -> list[dict]:
 #  ЗАГРУЗКА ДАННЫХ
 # ════════════════════════════════════════════════════════════════
 
-def load_shift_data(
+async def load_shift_data(
     days_back: int = 30,
     year: int = None,
     month: int = None,
@@ -216,7 +221,7 @@ def load_shift_data(
     all_records = []
     for sheet_id, shift in [(SHEET_DAY, "день"), (SHEET_NIGHT, "ночь")]:
         try:
-            recs = _parse_block_sheet(sheet_id, shift)
+            recs = await _parse_block_sheet(sheet_id, shift)
             filtered = [r for r in recs if r["date"] and d_from <= r["date"] <= d_to]
             all_records.extend(filtered)
             log.info(f"Смена '{shift}': загружено {len(filtered)} записей")
@@ -414,7 +419,7 @@ async def full_report(
     from_date: date = None,
     to_date: date = None,
 ) -> dict:
-    records = load_shift_data(
+    records = await load_shift_data(
         days_back=days_back or period_days,
         year=year, month=month,
         from_date=from_date, to_date=to_date,

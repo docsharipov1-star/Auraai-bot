@@ -7554,7 +7554,7 @@ async def cmd_doctor(message: Message):
     await message.answer(f"⏳ Анализирую {doctor_name} за {days} дней…")
     try:
         from clinic_analytics import load_shift_data, analyze_doctors, generate_recommendations
-        records = load_shift_data(days_back=days)
+        records = await load_shift_data(days_back=days)
         doctors = analyze_doctors(records)
         if doctor_name not in doctors:
             matches = [d for d in doctors if doctor_name.lower() in d.lower()]

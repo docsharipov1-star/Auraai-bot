@@ -31,9 +31,9 @@ SHEET_NIGHT  = os.getenv("SHEET_NIGHT",  "1IebXYtEpJWi9rpUHGmrQk-sPJkBPN-p_dsCko
 SHEET_SALARY = os.getenv("SHEET_SALARY", "10GAbXPUtOvx0tvMSlL_PzFBuxUaI-kWkoCL7k84k-A8")
 
 _DATE_RE   = re.compile(r'(\d{2}\.\d{2}\.\d{4})')
-_DOCTOR_RE = re.compile(r'врач\s+(.+)', re.IGNORECASE)
+_DOCTOR_RE = re.compile(r'врач[\s\-–—:.]+(.+)', re.IGNORECASE)  # Врач Иванов / Врач- Иванов
 _NUM_RE    = re.compile(r'^\d+$')
-_SKIP_RE   = re.compile(r'^(итог|аренда|[a-f0-9]{20,})', re.IGNORECASE)
+_SKIP_RE   = re.compile(r'^(итог|аренда|наличн|терминал|перевод|[a-f0-9]{20,})', re.IGNORECASE)
 
 # ── Экономика клиники ─────────────────────────────────────────────
 # Постоянные расходы в месяц → в день
@@ -137,21 +137,36 @@ def _split_patient_service(text: str) -> tuple[str, str]:
     return name, service
 
 
-async def _fetch_csv_async(sheet_id: str) -> list[list[str]]:
-    url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv"
+async def _fetch_one_csv(sheet_id: str, gid: str = "") -> list[list[str]]:
+    """Скачивает одну вкладку таблицы."""
+    gid_param = f"&gid={gid}" if gid else ""
+    url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv{gid_param}"
     try:
         import aiohttp
         async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=aiohttp.ClientTimeout(total=20), allow_redirects=True) as resp:
+            async with session.get(url, headers={"User-Agent": "Mozilla/5.0"},
+                                   timeout=aiohttp.ClientTimeout(total=20), allow_redirects=True) as resp:
+                if resp.status != 200:
+                    return []
                 content = await resp.text(encoding="utf-8")
     except ImportError:
         import urllib.request
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
         with urllib.request.urlopen(req, timeout=20) as resp:
             content = resp.read().decode("utf-8")
-    except Exception as e:
-        raise RuntimeError(f"Не удалось скачать таблицу {sheet_id}: {e}")
+    except Exception:
+        return []
     return list(csv.reader(io.StringIO(content)))
+
+
+async def _fetch_csv_async(sheet_id: str) -> list[list[str]]:
+    """Читает все вкладки таблицы: default (текущий месяц) + gid=0 (история)."""
+    rows_default = await _fetch_one_csv(sheet_id)
+    rows_gid0    = await _fetch_one_csv(sheet_id, gid="0")
+    # Если default и gid=0 вернули одинаковое содержимое — не дублируем
+    if rows_gid0 and rows_gid0 != rows_default:
+        return rows_default + rows_gid0
+    return rows_default
 
 
 _NUM_DOT_RE = re.compile(r'^\d+\.?$')  # "1", "2", "5." — номер строки

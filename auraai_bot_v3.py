@@ -1215,10 +1215,7 @@ def main_kb(is_admin: bool = False) -> ReplyKeyboardMarkup:
     b = ReplyKeyboardBuilder()
     if is_admin:
         b.row(KeyboardButton(text="🏥 Аналитика клиники"))
-        b.row(
-            KeyboardButton(text="📊 Доктора"),
-            KeyboardButton(text="💰 Финансы бизнеса"),
-        )
+        b.row(KeyboardButton(text="📊 Доктора"))
         b.row(KeyboardButton(text="🗓 Таблицы клиники"))
         b.row(
             KeyboardButton(text="💡 AI Чат"),

@@ -7645,31 +7645,118 @@ async def cmd_doctor(message: Message):
 
 
 def _start_clinic_daily_report(bot):
-    """Авто-отчёт клиники каждый день в 21:00 МСК."""
+    """Все авто-задачи клиники: утро, обед, вечер, понедельник, зарплата."""
     import asyncio
-    from datetime import datetime, timezone, timedelta
+    from datetime import datetime, timezone, timedelta as td
 
-    async def _daily_loop():
-        MSK = timezone(timedelta(hours=3))
+    MSK = timezone(td(hours=3))
+
+    async def _wait_until(hour: int, minute: int = 0):
         while True:
-            now = datetime.now(MSK)
-            target = now.replace(hour=21, minute=0, second=0, microsecond=0)
+            now    = datetime.now(MSK)
+            target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
             if now >= target:
-                target += timedelta(days=1)
+                target += td(days=1)
             await asyncio.sleep((target - now).total_seconds())
+            yield
+
+    async def _morning_plan():
+        """09:00 — план на день: сколько нужно заработать."""
+        async for _ in _wait_until(9):
+            try:
+                from clinic_analytics import DAILY_EXPENSES, TARGET_PROFIT
+                need = DAILY_EXPENSES + TARGET_PROFIT
+                text = (
+                    f"☀️ *Доброе утро! План на {datetime.now(MSK).strftime('%d.%m.%Y')}*\n\n"
+                    f"💰 Нужно заработать: *{need:,.0f} ₽*\n"
+                    f"   ↳ Покрыть расходы: {DAILY_EXPENSES:,.0f} ₽\n"
+                    f"   ↳ Чистая прибыль:  {TARGET_PROFIT:,.0f} ₽\n\n"
+                    f"📊 Следите за отчётом → /clinic"
+                )
+                await bot.send_message(ADMIN_ID, text, parse_mode="Markdown")
+            except Exception as e:
+                logging.warning(f"clinic morning plan error: {e}")
+
+    async def _midday_alert():
+        """16:00 — алерт если выручка меньше 50% плана."""
+        async for _ in _wait_until(16):
+            try:
+                from clinic_analytics import full_report, DAILY_EXPENSES, TARGET_PROFIT
+                r = await full_report(days_back=1, with_ai=False)
+                if "error" in r:
+                    continue
+                today_rev = sum(
+                    d["revenue"] for d in r["raw_doctors"].values()
+                )
+                need = DAILY_EXPENSES + TARGET_PROFIT
+                pct  = round(today_rev / need * 100) if need else 0
+                if pct < 70:
+                    emoji = "🔴" if pct < 40 else "🟡"
+                    text = (
+                        f"{emoji} *Дневной алерт* — {datetime.now(MSK).strftime('%d.%m')}\n\n"
+                        f"💰 Выручка сейчас: *{today_rev:,.0f} ₽* ({pct}% от плана)\n"
+                        f"🎯 Нужно до конца дня: *{max(need - today_rev, 0):,.0f} ₽*\n\n"
+                        f"_До закрытия ещё несколько часов — можно наверстать!_"
+                    )
+                    await bot.send_message(ADMIN_ID, text, parse_mode="Markdown")
+            except Exception as e:
+                logging.warning(f"clinic midday alert error: {e}")
+
+    async def _evening_report():
+        """21:00 — итог дня."""
+        async for _ in _wait_until(21):
             try:
                 from clinic_analytics import full_report
                 r = await full_report(days_back=1, with_ai=False)
                 if "error" not in r:
-                    text = f"🌙 *Итог дня {datetime.now(MSK).strftime('%d.%m.%Y')}*\n\n"
-                    text += r["doctor_report"]
-                    # Разбиваем по 4096 символов
+                    header = f"🌙 *Итог дня {datetime.now(MSK).strftime('%d.%m.%Y')}*\n\n"
+                    text = header + r["doctor_report"]
                     for i in range(0, len(text), 4000):
                         await bot.send_message(ADMIN_ID, text[i:i+4000], parse_mode="Markdown")
             except Exception as e:
-                logging.warning(f"clinic daily report error: {e}")
+                logging.warning(f"clinic evening report error: {e}")
 
-    asyncio.create_task(_daily_loop())
+    async def _weekly_monday():
+        """Пн 10:00 — итог недели vs прошлой."""
+        while True:
+            now    = datetime.now(MSK)
+            # следующий понедельник 10:00
+            days_ahead = (7 - now.weekday()) % 7 or 7
+            target = (now + td(days=days_ahead)).replace(hour=10, minute=0, second=0, microsecond=0)
+            await asyncio.sleep((target - now).total_seconds())
+            try:
+                from clinic_analytics import compare_periods
+                text = f"📊 *Еженедельный отчёт*\n\n" + await compare_periods(7)
+                await bot.send_message(ADMIN_ID, text, parse_mode="Markdown")
+            except Exception as e:
+                logging.warning(f"clinic weekly report error: {e}")
+
+    async def _monthly_salary():
+        """1-го числа 09:30 — зарплатная ведомость за прошлый месяц."""
+        while True:
+            now = datetime.now(MSK)
+            # Следующее 1-е число
+            if now.day == 1 and now.hour < 9:
+                target = now.replace(hour=9, minute=30, second=0, microsecond=0)
+            else:
+                m = now.month % 12 + 1
+                y = now.year + (1 if now.month == 12 else 0)
+                target = now.replace(year=y, month=m, day=1, hour=9, minute=30, second=0, microsecond=0)
+            await asyncio.sleep((target - now).total_seconds())
+            try:
+                from clinic_analytics import salary_report
+                prev_m = now.month - 1 or 12
+                prev_y = now.year if now.month > 1 else now.year - 1
+                text = await salary_report(prev_y, prev_m)
+                await bot.send_message(ADMIN_ID, f"```\n{text}\n```", parse_mode="Markdown")
+            except Exception as e:
+                logging.warning(f"clinic salary report error: {e}")
+
+    asyncio.create_task(_morning_plan())
+    asyncio.create_task(_midday_alert())
+    asyncio.create_task(_evening_report())
+    asyncio.create_task(_weekly_monday())
+    asyncio.create_task(_monthly_salary())
 
 
 async def main():

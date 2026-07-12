@@ -35,6 +35,30 @@ _DOCTOR_RE = re.compile(r'врач[\s\-–—:.]+(.+)', re.IGNORECASE)  # Вра
 _NUM_RE    = re.compile(r'^\d+$')
 _SKIP_RE   = re.compile(r'^(итог|аренда|наличн|терминал|перевод|[a-f0-9]{20,})', re.IGNORECASE)
 
+# Нормализация услуг — аббревиатуры → полные названия
+_SERVICE_MAP: dict[str, str] = {
+    "имп": "Имплантация", "импл": "Имплантация", "имплант": "Имплантация",
+    "рест": "Реставрация", "реставрация": "Реставрация",
+    "пломб": "Пломбирование", "пломба": "Пломбирование",
+    "леч": "Лечение", "лечение": "Лечение",
+    "удал": "Удаление", "удален": "Удаление", "удаление": "Удаление",
+    "корон": "Коронка", "коронка": "Коронка",
+    "протез": "Протезирование", "протезирование": "Протезирование",
+    "чистка": "Чистка", "гигиена": "Чистка",
+    "отбел": "Отбеливание", "отбеливание": "Отбеливание",
+    "рентген": "Рентген", "снимок": "Рентген",
+    "конс": "Консультация", "консультация": "Консультация",
+    "стекловолокно": "Штифт/стекловолокно",
+    "шт": "Штифт/стекловолокно",
+}
+# Платёжные слова — НЕ являются услугами
+_PAYMENT_WORDS = {
+    "биглион", "biglion", "нал", "наличка", "перевод", "терминал",
+    "тинькофф", "тинк", "сбер", "сбербанк", "опт", "оптом",
+}
+# Placeholder-имена пациентов (игнорировать в статистике)
+_PATIENT_SKIP = {"пациент", "пац", "patient", "-", "—", ""}
+
 # ── Экономика клиники ─────────────────────────────────────────────
 # Постоянные расходы в месяц → в день
 # Аренда 155463 + Налоги 43000 + Яндекс 100000 + Маркетолог 30000
@@ -127,7 +151,6 @@ def _split_patient_service(text: str) -> tuple[str, str]:
     if len(parts) == 1:
         return parts[0], ""
     if "." in parts[0]:
-        # Находим последнюю часть с точкой — это имя
         last_name_idx = max(i for i, p in enumerate(parts) if "." in p)
         name = " ".join(parts[: last_name_idx + 1])
         service = " ".join(parts[last_name_idx + 1 :])
@@ -135,6 +158,28 @@ def _split_patient_service(text: str) -> tuple[str, str]:
         name = parts[0]
         service = " ".join(parts[1:])
     return name, service
+
+
+def _normalize_service(raw: str) -> str:
+    """Нормализует аббревиатуру услуги. Убирает платёжные слова. Возвращает '' если не услуга."""
+    if not raw:
+        return ""
+    words = raw.strip().split()
+    # Убираем платёжные слова
+    svc_words = [w for w in words if w.lower() not in _PAYMENT_WORDS]
+    if not svc_words:
+        return ""
+    key = " ".join(svc_words).lower().strip()
+    # Попробуем нормализовать целиком
+    if key in _SERVICE_MAP:
+        return _SERVICE_MAP[key]
+    # Попробуем первое слово
+    first = svc_words[0].lower()
+    if first in _SERVICE_MAP:
+        return _SERVICE_MAP[first]
+    # Вернём исходное (с заглавной) если осталось что-то разумное
+    result = " ".join(svc_words).strip()
+    return result.capitalize() if len(result) <= 40 else ""
 
 
 async def _fetch_one_csv(sheet_id: str, gid: str = "") -> list[list[str]]:
@@ -639,22 +684,37 @@ async def services_report(days: int = 30) -> str:
         return "❌ Нет данных."
 
     services: dict = defaultdict(lambda: {"count": 0, "revenue": 0.0})
+    no_service_rev = 0.0
+    no_service_cnt = 0
+
     for r in records:
-        svc = r["service"].strip().lower() if r["service"] else "не указана"
+        raw_svc = r.get("service", "")
+        svc = _normalize_service(raw_svc)
         if svc:
             services[svc]["count"]   += 1
             services[svc]["revenue"] += r["cost"]
+        else:
+            no_service_cnt += 1
+            no_service_rev += r["cost"]
 
-    total_rev = sum(s["revenue"] for s in services.values()) or 1
-    top = sorted(services.items(), key=lambda x: -x[1]["revenue"])[:12]
+    if not services and no_service_cnt == 0:
+        return "❌ Нет данных по услугам."
+
+    total_rev = sum(s["revenue"] for s in services.values()) + no_service_rev or 1
+    top = sorted(services.items(), key=lambda x: -x[1]["revenue"])[:10]
 
     lines = [f"🔧 *Топ услуг за {days} дней*\n"]
     for i, (svc, s) in enumerate(top, 1):
         share = round(s["revenue"] / total_rev * 100)
+        bar = "█" * (share // 5) + "░" * (20 - share // 5)
         lines.append(
-            f"{i}. *{svc.title()}*\n"
-            f"   {s['count']} раз · {s['revenue']:,.0f} ₽ ({share}%)\n"
+            f"{i}. *{svc}*\n"
+            f"   {bar} {share}%\n"
+            f"   {s['count']} визитов · {s['revenue']:,.0f} ₽\n"
         )
+    if no_service_cnt:
+        share = round(no_service_rev / total_rev * 100)
+        lines.append(f"_Без услуги: {no_service_cnt} визитов · {no_service_rev:,.0f} ₽ ({share}%)_")
     return "\n".join(lines)
 
 
@@ -668,26 +728,40 @@ async def weekday_report(days: int = 30) -> str:
         return "❌ Нет данных."
 
     DAYS_RU = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
-    stats: dict = defaultdict(lambda: {"revenue": 0.0, "visits": 0, "days_count": set()})
+    stats: dict = defaultdict(lambda: {"revenue": 0.0, "visits": 0, "patients": set(), "dates": set()})
 
     for r in records:
         wd = r["date"].weekday()
-        stats[wd]["revenue"] += r["cost"]
-        stats[wd]["visits"]  += 1
-        stats[wd]["days_count"].add(r["date"])
+        stats[wd]["revenue"]  += r["cost"]
+        stats[wd]["visits"]   += 1
+        stats[wd]["dates"].add(r["date"])
+        if r["patient"] and r["patient"] not in _PATIENT_SKIP:
+            stats[wd]["patients"].add(r["patient"])
 
-    max_rev = max((s["revenue"] for s in stats.values()), default=1)
-    lines = [f"📅 *Загруженность по дням за {days} дней*\n"]
+    if not stats:
+        return "❌ Нет данных по дням недели."
+
+    max_avg = max(
+        (s["revenue"] / max(len(s["dates"]), 1) for s in stats.values()),
+        default=1
+    ) or 1
+
+    lines = [f"📅 *Загруженность по дням недели* (за {days} дней)\n"]
     for wd in range(7):
         s = stats.get(wd)
-        if not s:
-            lines.append(f"{DAYS_RU[wd]}: нет данных")
+        if not s or not s["dates"]:
+            lines.append(f"{DAYS_RU[wd]}  — нет данных")
             continue
-        dc = len(s["days_count"]) or 1
+        dc      = len(s["dates"])
         avg_rev = round(s["revenue"] / dc)
-        bar_len = round(s["revenue"] / max_rev * 12)
-        bar = "█" * bar_len + "░" * (12 - bar_len)
-        lines.append(f"{DAYS_RU[wd]} {bar} {avg_rev:,} ₽/день · {s['visits']} визитов")
+        avg_vis = round(s["visits"] / dc, 1)
+        bar_len = round(avg_rev / max_avg * 10)
+        bar     = "█" * bar_len + "░" * (10 - bar_len)
+        lines.append(
+            f"*{DAYS_RU[wd]}* {bar}\n"
+            f"   💰 {avg_rev:,} ₽/день  👥 {avg_vis} пац/день\n"
+            f"   _({dc} раб.дней · итого {s['visits']} визитов)_\n"
+        )
     return "\n".join(lines)
 
 
@@ -736,45 +810,58 @@ async def salary_report(year: int = None, month: int = None) -> str:
 # ════════════════════════════════════════════════════════════════
 
 async def lost_patients_report(days: int = 60) -> str:
-    """Пациенты которые были 1 раз и не вернулись."""
+    """Пациенты которые были 1 раз и не вернулись 14+ дней."""
     records = await load_shift_data(days_back=days)
     if not records:
         return "❌ Нет данных."
 
-    patient_info: dict = defaultdict(lambda: {"visits": 0, "last_date": None, "doctor": "", "cost": 0.0})
+    # Нормализуем имя: убираем точки, приводим к нижнему регистру
+    def norm_name(raw: str) -> str:
+        return re.sub(r'[.\s]+', ' ', raw.strip()).lower()
+
+    patient_info: dict = defaultdict(lambda: {"visits": 0, "dates": [], "doctor": "", "cost": 0.0, "raw": ""})
     for r in records:
-        p = r["patient_raw"] or r["patient"]
-        if not p or p.lower() in ("пациент", "пац", ""):
+        raw = (r.get("patient_raw") or r.get("patient") or "").strip()
+        # Пропускаем placeholder-имена
+        if not raw or norm_name(raw) in _PATIENT_SKIP or len(raw) <= 2:
             continue
-        pi = patient_info[p]
+        key = norm_name(raw)
+        pi  = patient_info[key]
         pi["visits"] += 1
         pi["cost"]   += r["cost"]
-        if not pi["last_date"] or r["date"] > pi["last_date"]:
-            pi["last_date"] = r["date"]
-            pi["doctor"]    = r["doctor"]
+        pi["dates"].append(r["date"])
+        if not pi["raw"]:
+            pi["raw"] = raw
+        if not pi["doctor"]:
+            pi["doctor"] = r["doctor"]
 
     today = date.today()
-    lost = [
-        (name, info)
-        for name, info in patient_info.items()
-        if info["visits"] == 1 and info["last_date"] and (today - info["last_date"]).days >= 14
-    ]
-    lost.sort(key=lambda x: x[1]["last_date"])
+    lost = []
+    for key, info in patient_info.items():
+        if info["visits"] != 1:
+            continue
+        last = max(info["dates"])
+        gap  = (today - last).days
+        if gap >= 14:
+            lost.append((info["raw"] or key, last, info["doctor"], info["cost"], gap))
+
+    lost.sort(key=lambda x: -x[4])  # сначала самые давние
 
     if not lost:
-        return f"✅ Нет потерянных пациентов за {days} дней."
+        return f"✅ За {days} дней нет пациентов с 1 визитом, которые не вернулись 14+ дней."
 
-    lines = [f"⚠️ *Потерянные пациенты* (1 визит, не вернулись)\n"]
-    for name, info in lost[:20]:
-        days_ago = (today - info["last_date"]).days
+    total_lost_rev = sum(x[3] for x in lost)
+    lines = [
+        f"⚠️ *Потерянные пациенты* — 1 визит, не вернулись 14+ дней\n",
+        f"Всего: *{len(lost)}* чел. · потенциал возврата: *{total_lost_rev:,.0f} ₽*\n",
+    ]
+    for name, last, doctor, cost, gap in lost[:25]:
         lines.append(
-            f"• *{name}* — {info['last_date'].strftime('%d.%m')}, "
-            f"врач {info['doctor']}, {info['cost']:,.0f} ₽, "
-            f"{days_ago} дн. назад"
+            f"• *{name}*\n"
+            f"  📅 {last.strftime('%d.%m.%Y')} · 👨‍⚕️ {doctor} · 💰 {cost:,.0f} ₽ · {gap} дн. назад"
         )
-    if len(lost) > 20:
-        lines.append(f"\n...и ещё {len(lost) - 20} пациентов")
-    lines.append(f"\n_Всего потеряно: {len(lost)}_")
+    if len(lost) > 25:
+        lines.append(f"\n_...и ещё {len(lost) - 25} пациентов_")
     return "\n".join(lines)
 
 

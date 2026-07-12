@@ -1215,15 +1215,15 @@ def main_kb(is_admin: bool = False) -> ReplyKeyboardMarkup:
     b = ReplyKeyboardBuilder()
     if is_admin:
         b.row(KeyboardButton(text="🏥 Аналитика клиники"))
+        b.row(
+            KeyboardButton(text="➕ Добавить пациента"),
+            KeyboardButton(text="📋 Пациенты"),
+        )
         b.row(KeyboardButton(text="📊 Доктора"))
         b.row(KeyboardButton(text="🗓 Таблицы клиники"))
         b.row(
             KeyboardButton(text="💡 AI Чат"),
-            KeyboardButton(text="🧠 Психолог"),
-        )
-        b.row(
             KeyboardButton(text="👤 Профиль"),
-            KeyboardButton(text="❓ Помощь"),
         )
     else:
         b.row(KeyboardButton(text="💡 AI Чат"))
@@ -1386,6 +1386,9 @@ class State_(StatesGroup):
     biz_date  = State()  # финансы бизнеса: отчёт за конкретную дату
     calllist      = State()   # список для обзвона Алиной
     numerology    = State()   # ввод имени и даты рождения для нумерологии
+    pat_name  = State()  # добавить пациента: имя
+    pat_phone = State()  # добавить пациента: телефон
+    pat_doc   = State()  # добавить пациента: врач
 
 user_tool:  dict[int, str] = {}
 user_model: dict[int, str] = {}
@@ -1815,6 +1818,113 @@ async def btn_clinic(message: Message):
 @router.message(F.text == "💡 AI Чат")
 async def btn_ai_chat(message: Message):
     await message.answer("💡 *AI Чат*\n\nВыбери инструмент:", parse_mode="Markdown", reply_markup=text_tools_kb())
+
+@router.message(F.text == "➕ Добавить пациента")
+async def btn_add_patient(message: Message, state: FSMContext):
+    if message.from_user.id != ADMIN_ID:
+        return
+    await state.set_state(State_.pat_name)
+    await message.answer(
+        "👤 *Добавление пациента*\n\n"
+        "Введите имя и фамилию пациента:\n"
+        "_(например: Иванова Мария)_",
+        parse_mode="Markdown",
+        reply_markup=ReplyKeyboardMarkup(
+            keyboard=[[KeyboardButton(text="❌ Отмена")]],
+            resize_keyboard=True
+        )
+    )
+
+@router.message(State_.pat_name, ~F.text.startswith("/"))
+async def pat_name_input(message: Message, state: FSMContext):
+    if message.text == "❌ Отмена":
+        await state.clear()
+        bal = await get_balance(message.from_user.id)
+        await message.answer("Отменено.", reply_markup=main_kb(True))
+        return
+    await state.update_data(pat_name=message.text.strip())
+    await state.set_state(State_.pat_phone)
+    await message.answer(
+        "📱 Введите номер телефона:\n_(например: 89161234567 или +7916...)_",
+        parse_mode="Markdown"
+    )
+
+@router.message(State_.pat_phone, ~F.text.startswith("/"))
+async def pat_phone_input(message: Message, state: FSMContext):
+    if message.text == "❌ Отмена":
+        await state.clear()
+        await message.answer("Отменено.", reply_markup=main_kb(True))
+        return
+    await state.update_data(pat_phone=message.text.strip())
+    await state.set_state(State_.pat_doc)
+    await message.answer(
+        "👨‍⚕️ Врач на приёме (необязательно — нажмите *Пропустить*):",
+        parse_mode="Markdown",
+        reply_markup=ReplyKeyboardMarkup(
+            keyboard=[[KeyboardButton(text="⏭ Пропустить")], [KeyboardButton(text="❌ Отмена")]],
+            resize_keyboard=True
+        )
+    )
+
+@router.message(State_.pat_doc, ~F.text.startswith("/"))
+async def pat_doc_input(message: Message, state: FSMContext):
+    if message.text == "❌ Отмена":
+        await state.clear()
+        await message.answer("Отменено.", reply_markup=main_kb(True))
+        return
+    doctor = "" if message.text == "⏭ Пропустить" else message.text.strip()
+    await state.update_data(pat_doc=doctor)
+    data = await state.get_data()
+    await state.clear()
+
+    from clinic_patients import add_patient, normalize_phone
+    name  = data["pat_name"]
+    phone = normalize_phone(data["pat_phone"])
+    doc   = data.get("pat_doc", "")
+
+    try:
+        pid = await add_patient(name=name, phone=phone, doctor=doc)
+        await message.answer(
+            f"✅ *Пациент добавлен!*\n\n"
+            f"👤 {name}\n"
+            f"📱 {phone}\n"
+            f"👨‍⚕️ {doc or '—'}\n\n"
+            f"📅 Завтра в 10:00 — звонок о самочувствии\n"
+            f"📅 Через 3 мес — звонок на гигиену\n"
+            f"📅 Через 6 мес — звонок на осмотр",
+            parse_mode="Markdown",
+            reply_markup=main_kb(True)
+        )
+    except Exception as e:
+        await message.answer(f"❌ Ошибка: {e}", reply_markup=main_kb(True))
+
+
+@router.message(F.text == "📋 Пациенты")
+async def btn_patients_list(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    from clinic_patients import get_all_patients, CALL_LABELS
+    import json
+    patients = await get_all_patients()
+    if not patients:
+        await message.answer("Пациентов пока нет. Нажмите *➕ Добавить пациента*.", parse_mode="Markdown")
+        return
+    today = date.today()
+    lines = [f"📋 *Пациенты* ({len(patients)})\n"]
+    for p in patients[:20]:
+        vd   = date.fromisoformat(p["visit_date"])
+        days = (today - vd).days
+        done = json.loads(p.get("calls_done") or "[]")
+        done_str = ", ".join(CALL_LABELS.get(d, d) for d in done) or "—"
+        lines.append(
+            f"• *{p['name']}* · {p['phone']}\n"
+            f"  Визит: {vd.strftime('%d.%m.%Y')} ({days} дн. назад)\n"
+            f"  Звонки: {done_str}"
+        )
+    if len(patients) > 20:
+        lines.append(f"\n_...и ещё {len(patients)-20} пациентов_")
+    await message.answer("\n".join(lines), parse_mode="Markdown")
+
 
 @router.message(F.text == "📊 Доктора")
 async def btn_doctors(message: Message):
@@ -7789,6 +7899,12 @@ async def main():
     start_autoposter(bot)
     start_biz_sync(bot)
     _start_clinic_daily_report(bot)
+    try:
+        from clinic_patients import init_db, start_patient_calls
+        await init_db()
+        start_patient_calls(bot)
+    except Exception as _e:
+        logging.warning(f"clinic_patients init: {_e}")
 
     logging.info(f"🚀 AuraAI Bot v3.44 FIX-отчётность запущен | @{BOT_USERNAME}")
     logging.info("✅ ВЕРСИЯ С ВЫБОРОМ ФОРМАТА 9:16 16:9 — если видишь это, новый код работает")

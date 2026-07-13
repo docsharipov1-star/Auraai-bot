@@ -7849,7 +7849,11 @@ def _start_clinic_daily_report(bot):
             today = datetime.now(MSK).date()
             records = await load_shift_data(from_date=today, to_date=today)
             if not records:
-                await bot.send_message(ADMIN_ID, f"🌙 *Итог {today.strftime('%d.%m.%Y')}*\n\nЗаписей за сегодня нет.", parse_mode="Markdown")
+                # попробуем вчера — может данные обновились с задержкой
+                yesterday = today - timedelta(days=1)
+                records = await load_shift_data(from_date=yesterday, to_date=today)
+            if not records:
+                await bot.send_message(ADMIN_ID, f"🌙 *Итог {today.strftime('%d.%m.%Y')}*\n\nЗаписей не найдено\. Проверьте что Google Таблицы открыты на просмотр\.", parse_mode="MarkdownV2")
                 return
             doctors = analyze_doctors(records)
             report  = format_doctor_report(doctors, period_days=1)
@@ -7858,7 +7862,11 @@ def _start_clinic_daily_report(bot):
             for i in range(0, len(text), 4000):
                 await bot.send_message(ADMIN_ID, text[i:i+4000], parse_mode="Markdown")
         except Exception as e:
-            logging.warning(f"clinic evening report error: {e}")
+            logging.error(f"clinic evening report error: {e}")
+            try:
+                await bot.send_message(ADMIN_ID, f"⚠️ Ошибка вечернего отчёта:\n<code>{str(e)[:300]}</code>", parse_mode="HTML")
+            except Exception:
+                pass
 
     async def _weekly_monday():
         """Пн 10:00 — итог недели vs прошлой."""

@@ -5189,6 +5189,32 @@ async def start_daily_finance_report(bot):
 #  <<< КОНЕЦ БЛОКА АГЕНТОВ >>>
 # ====================================================================
 
+@router.message(Command("тест", "test_report"))
+async def test_evening_report(message: Message):
+    """Тест вечернего отчёта — /тест"""
+    if message.from_user.id != ADMIN_ID:
+        return
+    await message.answer("⏳ Запускаю тест вечернего отчёта…")
+    from datetime import datetime, timezone, timedelta
+    MSK = timezone(timedelta(hours=3))
+    try:
+        from clinic_analytics import load_shift_data, analyze_doctors, format_doctor_report
+        today = datetime.now(MSK).date()
+        records = await load_shift_data(from_date=today, to_date=today)
+        if not records:
+            # попробуем вчера
+            yesterday = today - timedelta(days=1)
+            records = await load_shift_data(from_date=yesterday, to_date=today)
+        if not records:
+            await message.answer("❌ Нет данных ни за сегодня, ни за вчера.\nПроверьте что таблицы открыты на просмотр.")
+            return
+        doctors = analyze_doctors(records)
+        report  = format_doctor_report(doctors, period_days=1)
+        await message.answer(f"🌙 *Тест итога дня {today.strftime('%d.%m.%Y')}*\n\n{report}", parse_mode="Markdown")
+    except Exception as e:
+        await message.answer(f"❌ Ошибка: {e}")
+
+
 @router.message(Command("testpost"))
 async def testpost_cmd(message: Message):
     if message.from_user.id != ADMIN_ID:
@@ -7815,16 +7841,24 @@ def _start_clinic_daily_report(bot):
     async def _evening_report():
         """21:00 — итог дня."""
         async for _ in _wait_until(21):
-            try:
-                from clinic_analytics import full_report
-                r = await full_report(days_back=1, with_ai=False)
-                if "error" not in r:
-                    header = f"🌙 *Итог дня {datetime.now(MSK).strftime('%d.%m.%Y')}*\n\n"
-                    text = header + r["doctor_report"]
-                    for i in range(0, len(text), 4000):
-                        await bot.send_message(ADMIN_ID, text[i:i+4000], parse_mode="Markdown")
-            except Exception as e:
-                logging.warning(f"clinic evening report error: {e}")
+            await _send_evening_report(bot, MSK)
+
+    async def _send_evening_report(bot, MSK):
+        try:
+            from clinic_analytics import load_shift_data, analyze_doctors, format_doctor_report, DAILY_EXPENSES, TARGET_PROFIT
+            today = datetime.now(MSK).date()
+            records = await load_shift_data(from_date=today, to_date=today)
+            if not records:
+                await bot.send_message(ADMIN_ID, f"🌙 *Итог {today.strftime('%d.%m.%Y')}*\n\nЗаписей за сегодня нет.", parse_mode="Markdown")
+                return
+            doctors = analyze_doctors(records)
+            report  = format_doctor_report(doctors, period_days=1)
+            header  = f"🌙 *Итог дня {today.strftime('%d.%m.%Y')}*\n\n"
+            text    = header + report
+            for i in range(0, len(text), 4000):
+                await bot.send_message(ADMIN_ID, text[i:i+4000], parse_mode="Markdown")
+        except Exception as e:
+            logging.warning(f"clinic evening report error: {e}")
 
     async def _weekly_monday():
         """Пн 10:00 — итог недели vs прошлой."""

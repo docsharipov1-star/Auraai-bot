@@ -7593,6 +7593,7 @@ def _finance_kb() -> InlineKeyboardBuilder:
     kb.button(text="🔧 Топ услуг",      callback_data="fin:svc:30")
     kb.button(text="📅 По дням недели", callback_data="fin:wd:30")
     kb.button(text="⚠️ Потерянные пац.", callback_data="fin:lost:60")
+    kb.button(text="🌅 Смены день/ночь", callback_data="fin:shift:30")
     kb.button(text="💼 Зарплаты месяц", callback_data="fin:sal:0")
     # Последние 3 месяца
     today = date.today()
@@ -7603,7 +7604,7 @@ def _finance_kb() -> InlineKeyboardBuilder:
             m += 12; y -= 1
         label = f"{calendar.month_abbr[m]} {y}"
         kb.button(text=label, callback_data=f"fin:ym:{y}:{m}")
-    kb.adjust(2, 2, 2, 2, 3, 3)
+    kb.adjust(2, 2, 2, 2, 2, 1, 3)
     return kb
 
 
@@ -7709,6 +7710,12 @@ async def cb_finance(call: CallbackQuery):
             from clinic_analytics import weekday_report
             days = int(parts[2])
             text = await weekday_report(days)
+            await call.message.answer(text, parse_mode="Markdown")
+
+        elif mode == "shift":
+            from clinic_analytics import shift_report
+            days = int(parts[2])
+            text = await shift_report(days)
             await call.message.answer(text, parse_mode="Markdown")
 
         elif mode == "lost":

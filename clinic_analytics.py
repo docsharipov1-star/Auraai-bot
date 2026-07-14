@@ -865,6 +865,110 @@ async def lost_patients_report(days: int = 60) -> str:
     return "\n".join(lines)
 
 
+# ════════════════════════════════════════════════════════════════
+#  ОТЧЁТ ПО СМЕНАМ (ДЕНЬ / НОЧЬ)
+# ════════════════════════════════════════════════════════════════
+
+async def shift_report(days: int = 30) -> str:
+    """Сравнение дневной и ночной смены за период."""
+    records = await load_shift_data(days_back=days)
+    if not records:
+        return "❌ Нет данных за период."
+
+    def shift_stats(recs):
+        rev      = sum(r["cost"] for r in recs)
+        visits   = len(recs)
+        patients = len({r["patient"] for r in recs if r["patient"]})
+        doctors  = len({r["doctor"] for r in recs if r["doctor"]})
+        avg_chk  = round(rev / visits) if visits else 0
+        days_set = len({r["date"] for r in recs if r["date"]})
+        rev_day  = round(rev / days_set) if days_set else 0
+        # топ-3 услуги
+        svc_cnt: dict = defaultdict(int)
+        for r in recs:
+            if r["service"]:
+                svc_cnt[r["service"]] += 1
+        top_svc = sorted(svc_cnt.items(), key=lambda x: -x[1])[:3]
+        # виды оплаты
+        pay_cnt: dict = defaultdict(float)
+        for r in recs:
+            pay_cnt[r["pay_type"]] += r["cost"]
+        return {
+            "rev": rev, "visits": visits, "patients": patients,
+            "doctors": doctors, "avg_chk": avg_chk, "days": days_set,
+            "rev_day": rev_day, "top_svc": top_svc, "pay": dict(pay_cnt),
+        }
+
+    day_recs   = [r for r in records if r["shift"] == "день"]
+    night_recs = [r for r in records if r["shift"] == "ночь"]
+
+    d = shift_stats(day_recs)
+    n = shift_stats(night_recs)
+    total_rev = d["rev"] + n["rev"]
+
+    def pct(val, total):
+        return round(val / total * 100) if total else 0
+
+    def arrow(a, b):
+        if a > b:   return "📈"
+        if a < b:   return "📉"
+        return "➡️"
+
+    def fmt_pay(pay_dict):
+        parts = []
+        for k, v in sorted(pay_dict.items(), key=lambda x: -x[1]):
+            if v > 0:
+                parts.append(f"{k}: {v:,.0f}₽")
+        return ", ".join(parts) if parts else "—"
+
+    lines = [
+        f"🌅 *Аналитика по сменам* — {days} дней\n",
+        f"💰 Общая выручка: *{total_rev:,.0f} ₽*\n",
+
+        "━━━━━━━━━━━━━━━━━━━━",
+        f"☀️ *Дневная смена* — {pct(d['rev'], total_rev)}% выручки",
+        f"   💰 Выручка:    *{d['rev']:,.0f} ₽*",
+        f"   📊 В день:     *{d['rev_day']:,.0f} ₽* ({d['days']} раб. дней)",
+        f"   👥 Пациентов:  *{d['patients']}*",
+        f"   🩺 Визитов:    *{d['visits']}*",
+        f"   👨‍⚕️ Врачей:     *{d['doctors']}*",
+        f"   💳 Ср. чек:   *{d['avg_chk']:,.0f} ₽*",
+        f"   💳 Оплата:    {fmt_pay(d['pay'])}",
+    ]
+    if d["top_svc"]:
+        lines.append("   🔧 Топ услуг:  " + " · ".join(f"{s}×{c}" for s, c in d["top_svc"]))
+
+    lines += [
+        "",
+        "━━━━━━━━━━━━━━━━━━━━",
+        f"🌙 *Ночная смена* — {pct(n['rev'], total_rev)}% выручки",
+        f"   💰 Выручка:    *{n['rev']:,.0f} ₽*",
+        f"   📊 В день:     *{n['rev_day']:,.0f} ₽* ({n['days']} раб. дней)",
+        f"   👥 Пациентов:  *{n['patients']}*",
+        f"   🩺 Визитов:    *{n['visits']}*",
+        f"   👨‍⚕️ Врачей:     *{n['doctors']}*",
+        f"   💳 Ср. чек:   *{n['avg_chk']:,.0f} ₽*",
+        f"   💳 Оплата:    {fmt_pay(n['pay'])}",
+    ]
+    if n["top_svc"]:
+        lines.append("   🔧 Топ услуг:  " + " · ".join(f"{s}×{c}" for s, c in n["top_svc"]))
+
+    lines += [
+        "",
+        "━━━━━━━━━━━━━━━━━━━━",
+        f"⚖️ *Сравнение*",
+        f"   Выручка:   {arrow(d['rev'], n['rev'])} день {d['rev']:,.0f} vs {n['rev']:,.0f} ночь",
+        f"   Пациенты:  {arrow(d['patients'], n['patients'])} день {d['patients']} vs {n['patients']} ночь",
+        f"   Ср. чек:   {arrow(d['avg_chk'], n['avg_chk'])} день {d['avg_chk']:,.0f} vs {n['avg_chk']:,.0f} ночь",
+    ]
+    if not day_recs:
+        lines.append("\n⚠️ Данных дневной смены нет — проверь SHEET\\_DAY")
+    if not night_recs:
+        lines.append("\n⚠️ Данных ночной смены нет — проверь SHEET\\_NIGHT")
+
+    return "\n".join(lines)
+
+
 if __name__ == "__main__":
     import sys
     days = int(sys.argv[1]) if len(sys.argv) > 1 else 30

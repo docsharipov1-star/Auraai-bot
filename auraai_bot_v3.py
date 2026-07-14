@@ -7794,78 +7794,51 @@ def _start_clinic_daily_report(bot):
 
     MSK = timezone(td(hours=3))
 
-    async def _wait_until(hour: int, minute: int = 0):
-        while True:
-            now    = datetime.now(MSK)
-            target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-            if now >= target:
-                target += td(days=1)
-            await asyncio.sleep((target - now).total_seconds())
-            yield
+    async def _sleep_until(hour: int, minute: int = 0):
+        """Спит до следующего наступления hour:minute по МСК."""
+        now    = datetime.now(MSK)
+        target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        if now >= target:
+            target += td(days=1)
+        await asyncio.sleep((target - now).total_seconds())
 
-    async def _morning_plan():
-        """09:00 — план на день: сколько нужно заработать."""
-        async for _ in _wait_until(9):
-            try:
-                from clinic_analytics import DAILY_EXPENSES, TARGET_PROFIT
-                need = DAILY_EXPENSES + TARGET_PROFIT
-                text = (
-                    f"☀️ *Доброе утро! План на {datetime.now(MSK).strftime('%d.%m.%Y')}*\n\n"
-                    f"💰 Нужно заработать: *{need:,.0f} ₽*\n"
-                    f"   ↳ Покрыть расходы: {DAILY_EXPENSES:,.0f} ₽\n"
-                    f"   ↳ Чистая прибыль:  {TARGET_PROFIT:,.0f} ₽\n\n"
-                    f"📊 Следите за отчётом → /clinic"
-                )
-                await bot.send_message(ADMIN_ID, text, parse_mode="Markdown")
-            except Exception as e:
-                logging.warning(f"clinic morning plan error: {e}")
-
-    async def _midday_alert():
-        """16:00 — алерт если выручка меньше 50% плана."""
-        async for _ in _wait_until(16):
-            try:
-                from clinic_analytics import full_report, DAILY_EXPENSES, TARGET_PROFIT
-                r = await full_report(days_back=1, with_ai=False)
-                if "error" in r:
-                    continue
-                today_rev = sum(
-                    d["revenue"] for d in r["raw_doctors"].values()
-                )
-                need = DAILY_EXPENSES + TARGET_PROFIT
-                pct  = round(today_rev / need * 100) if need else 0
-                if pct < 70:
-                    emoji = "🔴" if pct < 40 else "🟡"
-                    text = (
-                        f"{emoji} *Дневной алерт* — {datetime.now(MSK).strftime('%d.%m')}\n\n"
-                        f"💰 Выручка сейчас: *{today_rev:,.0f} ₽* ({pct}% от плана)\n"
-                        f"🎯 Нужно до конца дня: *{max(need - today_rev, 0):,.0f} ₽*\n\n"
-                        f"_До закрытия ещё несколько часов — можно наверстать!_"
-                    )
-                    await bot.send_message(ADMIN_ID, text, parse_mode="Markdown")
-            except Exception as e:
-                logging.warning(f"clinic midday alert error: {e}")
-
-    async def _evening_report():
-        """21:00 — итог дня."""
-        async for _ in _wait_until(21):
-            await _send_evening_report(bot, MSK)
-
-    async def _send_evening_report(bot, MSK):
+    async def _send_morning(now=None):
         try:
-            from clinic_analytics import load_shift_data, analyze_doctors, format_doctor_report, DAILY_EXPENSES, TARGET_PROFIT
-            today = datetime.now(MSK).date()
+            from clinic_analytics import DAILY_EXPENSES, TARGET_PROFIT
+            if now is None:
+                now = datetime.now(MSK)
+            need = DAILY_EXPENSES + TARGET_PROFIT
+            text = (
+                f"☀️ *Доброе утро! План на {now.strftime('%d.%m.%Y')}*\n\n"
+                f"💰 Нужно заработать: *{need:,.0f} ₽*\n"
+                f"   ↳ Покрыть расходы: {DAILY_EXPENSES:,.0f} ₽\n"
+                f"   ↳ Чистая прибыль:  {TARGET_PROFIT:,.0f} ₽\n\n"
+                f"📊 Открыть отчёт → /clinic"
+            )
+            await bot.send_message(ADMIN_ID, text, parse_mode="Markdown")
+        except Exception as e:
+            logging.warning(f"clinic morning plan error: {e}")
+
+    async def _send_evening(target_date=None):
+        try:
+            from clinic_analytics import load_shift_data, analyze_doctors, format_doctor_report
+            from datetime import date as date_
+            today = target_date or datetime.now(MSK).date()
             records = await load_shift_data(from_date=today, to_date=today)
             if not records:
-                # попробуем вчера — может данные обновились с задержкой
-                yesterday = today - timedelta(days=1)
+                yesterday = today - td(days=1)
                 records = await load_shift_data(from_date=yesterday, to_date=today)
             if not records:
-                await bot.send_message(ADMIN_ID, f"🌙 *Итог {today.strftime('%d.%m.%Y')}*\n\nЗаписей не найдено\. Проверьте что Google Таблицы открыты на просмотр\.", parse_mode="MarkdownV2")
+                await bot.send_message(
+                    ADMIN_ID,
+                    f"🌙 *Итог {today.strftime('%d.%m.%Y')}*\n\n"
+                    f"Записей нет. Проверьте что Google Таблицы открыты на просмотр.",
+                    parse_mode="Markdown"
+                )
                 return
             doctors = analyze_doctors(records)
             report  = format_doctor_report(doctors, period_days=1)
-            header  = f"🌙 *Итог дня {today.strftime('%d.%m.%Y')}*\n\n"
-            text    = header + report
+            text    = f"🌙 *Итог дня {today.strftime('%d.%m.%Y')}*\n\n" + report
             for i in range(0, len(text), 4000):
                 await bot.send_message(ADMIN_ID, text[i:i+4000], parse_mode="Markdown")
         except Exception as e:
@@ -7875,26 +7848,64 @@ def _start_clinic_daily_report(bot):
             except Exception:
                 pass
 
-    async def _weekly_monday():
-        """Пн 10:00 — итог недели vs прошлой."""
+    async def _startup_catch_up():
+        """При старте: отправляем пропущенные отчёты + уведомление о запуске."""
+        await asyncio.sleep(3)  # ждём пока бот полностью поднимется
+        try:
+            now = datetime.now(MSK)
+            h   = now.hour
+
+            # Уведомление о запуске
+            await bot.send_message(
+                ADMIN_ID,
+                f"🤖 *Бот запущен* — {now.strftime('%d.%m.%Y %H:%M')} МСК\n\n"
+                f"Расписание отчётов:\n"
+                f"☀️ 11:00 — план дня\n"
+                f"🌙 22:00 — итог дня",
+                parse_mode="Markdown"
+            )
+
+            # Если пропустили утренний (11:00) — шлём сейчас
+            if h >= 11:
+                await _send_morning(now)
+
+            # Если пропустили вечерний (22:00) — шлём итог вчера
+            if h >= 22:
+                await _send_evening(now.date())
+            elif h < 11:
+                # ранний старт — шлём итог вчера
+                yesterday = (now - td(days=1)).date()
+                await _send_evening(yesterday)
+
+        except Exception as e:
+            logging.warning(f"startup catch-up error: {e}")
+
+    async def _morning_plan():
         while True:
-            now    = datetime.now(MSK)
-            # следующий понедельник 10:00
+            await _sleep_until(11)
+            await _send_morning()
+
+    async def _evening_report():
+        while True:
+            await _sleep_until(22)
+            await _send_evening()
+
+    async def _weekly_monday():
+        while True:
+            now        = datetime.now(MSK)
             days_ahead = (7 - now.weekday()) % 7 or 7
-            target = (now + td(days=days_ahead)).replace(hour=10, minute=0, second=0, microsecond=0)
+            target     = (now + td(days=days_ahead)).replace(hour=10, minute=0, second=0, microsecond=0)
             await asyncio.sleep((target - now).total_seconds())
             try:
                 from clinic_analytics import compare_periods
-                text = f"📊 *Еженедельный отчёт*\n\n" + await compare_periods(7)
+                text = "📊 *Еженедельный отчёт*\n\n" + await compare_periods(7)
                 await bot.send_message(ADMIN_ID, text, parse_mode="Markdown")
             except Exception as e:
                 logging.warning(f"clinic weekly report error: {e}")
 
     async def _monthly_salary():
-        """1-го числа 09:30 — зарплатная ведомость за прошлый месяц."""
         while True:
             now = datetime.now(MSK)
-            # Следующее 1-е число
             if now.day == 1 and now.hour < 9:
                 target = now.replace(hour=9, minute=30, second=0, microsecond=0)
             else:
@@ -7911,8 +7922,8 @@ def _start_clinic_daily_report(bot):
             except Exception as e:
                 logging.warning(f"clinic salary report error: {e}")
 
+    asyncio.create_task(_startup_catch_up())
     asyncio.create_task(_morning_plan())
-    asyncio.create_task(_midday_alert())
     asyncio.create_task(_evening_report())
     asyncio.create_task(_weekly_monday())
     asyncio.create_task(_monthly_salary())

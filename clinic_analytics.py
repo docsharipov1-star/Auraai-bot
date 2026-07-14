@@ -969,6 +969,165 @@ async def shift_report(days: int = 30) -> str:
     return "\n".join(lines)
 
 
+# ════════════════════════════════════════════════════════════════
+#  ПРОГНОЗ МЕСЯЦА
+# ════════════════════════════════════════════════════════════════
+
+async def forecast_report() -> str:
+    """Прогноз выручки до конца месяца на основе текущего темпа."""
+    import calendar
+    today    = date.today()
+    d_from   = date(today.year, today.month, 1)
+    records  = await load_shift_data(from_date=d_from, to_date=today)
+
+    days_passed  = today.day
+    days_in_month = calendar.monthrange(today.year, today.month)[1]
+    days_left    = days_in_month - days_passed
+
+    if not records:
+        return "❌ Нет данных за текущий месяц."
+
+    earned      = sum(r["cost"] for r in records)
+    visits      = len(records)
+    patients    = len({r["patient"] for r in records if r["patient"]})
+    daily_avg   = earned / max(days_passed, 1)
+    forecast    = earned + daily_avg * days_left
+    visits_avg  = visits / max(days_passed, 1)
+
+    # Цель месяца
+    monthly_target = (DAILY_EXPENSES + TARGET_PROFIT) * days_in_month
+    gap = monthly_target - forecast
+    on_track = forecast >= monthly_target
+
+    def bar(pct, width=20):
+        filled = min(int(pct / 100 * width), width)
+        return "█" * filled + "░" * (width - filled)
+
+    earned_pct   = round(earned / monthly_target * 100) if monthly_target else 0
+    forecast_pct = round(forecast / monthly_target * 100) if monthly_target else 0
+
+    lines = [
+        f"📈 *Прогноз месяца — {today.strftime('%B %Y')}*\n",
+        f"📅 Прошло дней: *{days_passed}* из {days_in_month} (осталось {days_left})\n",
+        "━━━━━━━━━━━━━━━━━━━━",
+        f"✅ Заработано:   *{earned:,.0f} ₽* ({earned_pct}%)",
+        f"   {bar(earned_pct)}",
+        f"📊 Темп в день:  *{daily_avg:,.0f} ₽*",
+        f"👥 Пациентов:   *{patients}* · визитов {visits}",
+        "",
+        "━━━━━━━━━━━━━━━━━━━━",
+        f"🔮 Прогноз к концу месяца: *{forecast:,.0f} ₽* ({forecast_pct}%)",
+        f"   {bar(forecast_pct)}",
+        f"🎯 Цель месяца:  *{monthly_target:,.0f} ₽*",
+    ]
+
+    if on_track:
+        lines.append(f"\n✅ *Идёте по плану!* Запас: +{abs(gap):,.0f} ₽")
+    else:
+        need_per_day = abs(gap) / max(days_left, 1)
+        lines.append(f"\n⚠️ *Отставание:* -{abs(gap):,.0f} ₽")
+        lines.append(f"   Нужно в день: *{daily_avg + need_per_day:,.0f} ₽* (сейчас {daily_avg:,.0f})")
+
+    return "\n".join(lines)
+
+
+# ════════════════════════════════════════════════════════════════
+#  РЕЙТИНГ ВРАЧЕЙ
+# ════════════════════════════════════════════════════════════════
+
+async def doctors_ranking(days: int = 7) -> str:
+    """Рейтинг врачей по выручке, чеку и пациентам за период."""
+    records = await load_shift_data(days_back=days)
+    if not records:
+        return "❌ Нет данных за период."
+
+    doctors = analyze_doctors(records)
+    if not doctors:
+        return "❌ Врачи не найдены."
+
+    sorted_docs = sorted(doctors.items(), key=lambda x: -x[1]["revenue"])
+    total_rev   = sum(d["revenue"] for d in doctors.values())
+
+    medals = ["🥇", "🥈", "🥉"]
+    lines  = [f"🏆 *Рейтинг врачей* — {days} дней\n"]
+
+    for i, (doc, d) in enumerate(sorted_docs):
+        medal  = medals[i] if i < 3 else f"{i+1}."
+        share  = round(d["revenue"] / total_rev * 100) if total_rev else 0
+        lines += [
+            f"{medal} *{doc}*",
+            f"   💰 {d['revenue']:,.0f} ₽  ({share}% выручки)",
+            f"   👥 {d['unique_patients']} пац · 🩺 {d['visits']} визитов · ср.чек {d['avg_check']:,.0f} ₽",
+            f"   📅 {d['working_days']} раб.дней · в день {d['revenue_per_day']:,.0f} ₽",
+        ]
+        if d["top_services"]:
+            svc = " · ".join(f"{s}×{c}" for s, c in d["top_services"])
+            lines.append(f"   🔧 {svc}")
+        lines.append("")
+
+    lines.append(f"━━━━━━━━━━━━━━━━━━━━")
+    lines.append(f"💰 Итого: *{total_rev:,.0f} ₽* · {len(doctors)} врача(ей)")
+    return "\n".join(lines)
+
+
+# ════════════════════════════════════════════════════════════════
+#  РАЗБИВКА ПО ВИДАМ ОПЛАТЫ
+# ════════════════════════════════════════════════════════════════
+
+async def payment_report(days: int = 30) -> str:
+    """Разбивка выручки по видам оплаты (наличные/терминал/перевод)."""
+    records = await load_shift_data(days_back=days)
+    if not records:
+        return "❌ Нет данных за период."
+
+    pay_rev: dict   = defaultdict(float)
+    pay_count: dict = defaultdict(int)
+    total_rev = 0.0
+
+    for r in records:
+        pt = r["pay_type"] or "неизвестно"
+        pay_rev[pt]   += r["cost"]
+        pay_count[pt] += 1
+        total_rev     += r["cost"]
+
+    sorted_pay = sorted(pay_rev.items(), key=lambda x: -x[1])
+
+    def bar(pct, width=15):
+        filled = min(int(pct / 100 * width), width)
+        return "█" * filled + "░" * (width - filled)
+
+    PAY_EMOJI = {
+        "наличные": "💵", "нал": "💵",
+        "терминал": "💳", "карта": "💳",
+        "перевод": "📲", "безнал": "📲",
+    }
+
+    lines = [f"💳 *Виды оплаты* — {days} дней\n",
+             f"💰 Общая выручка: *{total_rev:,.0f} ₽*\n",
+             "━━━━━━━━━━━━━━━━━━━━"]
+
+    for pt, rev in sorted_pay:
+        pct   = round(rev / total_rev * 100) if total_rev else 0
+        emoji = next((v for k, v in PAY_EMOJI.items() if k in pt.lower()), "💰")
+        lines += [
+            f"{emoji} *{pt.title()}*",
+            f"   {bar(pct)} {pct}%",
+            f"   {rev:,.0f} ₽ · {pay_count[pt]} платежей · ср. {round(rev/max(pay_count[pt],1)):,.0f} ₽",
+            "",
+        ]
+
+    # По дням недели — наличные vs безнал
+    cash_keys = {"наличные", "нал", "наличный"}
+    cash  = sum(v for k, v in pay_rev.items() if k.lower() in cash_keys)
+    noncash = total_rev - cash
+    lines += [
+        "━━━━━━━━━━━━━━━━━━━━",
+        f"💵 Наличные: *{cash:,.0f} ₽* ({round(cash/total_rev*100) if total_rev else 0}%)",
+        f"💳 Безнал:   *{noncash:,.0f} ₽* ({round(noncash/total_rev*100) if total_rev else 0}%)",
+    ]
+    return "\n".join(lines)
+
+
 if __name__ == "__main__":
     import sys
     days = int(sys.argv[1]) if len(sys.argv) > 1 else 30

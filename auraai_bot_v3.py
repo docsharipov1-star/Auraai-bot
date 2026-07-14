@@ -7594,7 +7594,10 @@ def _finance_kb() -> InlineKeyboardBuilder:
     kb.button(text="📅 По дням недели", callback_data="fin:wd:30")
     kb.button(text="⚠️ Потерянные пац.", callback_data="fin:lost:60")
     kb.button(text="🌅 Смены день/ночь", callback_data="fin:shift:30")
-    kb.button(text="💼 Зарплаты месяц", callback_data="fin:sal:0")
+    kb.button(text="📈 Прогноз месяца",  callback_data="fin:forecast:0")
+    kb.button(text="🏆 Рейтинг врачей",  callback_data="fin:rank:7")
+    kb.button(text="💳 Виды оплаты",     callback_data="fin:pay:30")
+    kb.button(text="💼 Зарплаты месяц",  callback_data="fin:sal:0")
     # Последние 3 месяца
     today = date.today()
     for i in range(3):
@@ -7604,7 +7607,7 @@ def _finance_kb() -> InlineKeyboardBuilder:
             m += 12; y -= 1
         label = f"{calendar.month_abbr[m]} {y}"
         kb.button(text=label, callback_data=f"fin:ym:{y}:{m}")
-    kb.adjust(2, 2, 2, 2, 2, 1, 3)
+    kb.adjust(2, 2, 2, 2, 2, 2, 1, 3)
     return kb
 
 
@@ -7716,6 +7719,23 @@ async def cb_finance(call: CallbackQuery):
             from clinic_analytics import shift_report
             days = int(parts[2])
             text = await shift_report(days)
+            await call.message.answer(text, parse_mode="Markdown")
+
+        elif mode == "forecast":
+            from clinic_analytics import forecast_report
+            text = await forecast_report()
+            await call.message.answer(text, parse_mode="Markdown")
+
+        elif mode == "rank":
+            from clinic_analytics import doctors_ranking
+            days = int(parts[2])
+            text = await doctors_ranking(days)
+            await call.message.answer(text, parse_mode="Markdown")
+
+        elif mode == "pay":
+            from clinic_analytics import payment_report
+            days = int(parts[2])
+            text = await payment_report(days)
             await call.message.answer(text, parse_mode="Markdown")
 
         elif mode == "lost":

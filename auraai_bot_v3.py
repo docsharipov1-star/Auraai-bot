@@ -1944,15 +1944,51 @@ async def cb_call_patient(call: CallbackQuery):
     )
 
     try:
-        from autocall import call_patient as mango_call
+        from autocall import call_patient as mango_call, send_sms
         ok = await mango_call(phone=phone, patient_name="пациент", call_type=ctype)
-        status = "✅ Звонок инициирован!" if ok else "⚠️ Не удалось позвонить — проверь настройки Mango Office"
+        status = "✅ Звонок инициирован! Через 5 мин придёт SMS если не ответит." if ok else "⚠️ Не удалось позвонить — проверь настройки Mango Office"
         await call.message.edit_text(
-            call.message.text.replace("⏳ Звоню...", "") + f"\n\n{status}",
+            call.message.text + f"\n\n{status}",
             parse_mode="Markdown"
         )
+        if ok:
+            asyncio.create_task(_sms_fallback(phone, ctype, delay=300))
     except Exception as e:
         await call.message.answer(f"❌ Ошибка звонка: {e}")
+
+
+async def _sms_fallback(phone: str, call_type: str, delay: int = 300):
+    """Через delay секунд шлёт SMS — на случай если пациент не взял трубку."""
+    await asyncio.sleep(delay)
+    SMS_TEXTS = {
+        "wellbeing": (
+            "Добрый день! Это клиника Аура. Мы звонили узнать как ваше самочувствие после приёма. "
+            "Если есть вопросы — перезвоните нам: 7 (812) 220-56-81"
+        ),
+        "confirm": (
+            "Добрый день! Это клиника Аура. Пожалуйста, подтвердите запись на приём. "
+            "Перезвоните нам: 7 (812) 220-56-81"
+        ),
+        "hygiene": (
+            "Добрый день! Это клиника Аура. Прошло 3 месяца — пора на профессиональную чистку зубов. "
+            "Записаться: 7 (812) 220-56-81"
+        ),
+        "implant": (
+            "Добрый день! Это клиника Аура. Хотели обсудить консультацию по имплантации. "
+            "Перезвоните нам: 7 (812) 220-56-81"
+        ),
+        "checkup": (
+            "Добрый день! Это клиника Аура. Прошло полгода — время на профилактический осмотр. "
+            "Записаться: 7 (812) 220-56-81"
+        ),
+    }
+    text = SMS_TEXTS.get(call_type, "Добрый день! Это клиника Аура. Мы вам звонили. Перезвоните: 7 (812) 220-56-81")
+    try:
+        from autocall import send_sms
+        ok = await send_sms(phone, text)
+        logging.info(f"SMS fallback → {phone}: {'OK' if ok else 'FAIL'}")
+    except Exception as e:
+        logging.warning(f"SMS fallback error: {e}")
 
 
 @router.message(F.text == "📋 Пациенты")

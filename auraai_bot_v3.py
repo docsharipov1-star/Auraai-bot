@@ -1889,6 +1889,7 @@ async def pat_doc_input(message: Message, state: FSMContext):
 
         # Клавиатура звонка
         call_kb = InlineKeyboardBuilder()
+        call_kb.button(text="💊 Самочувствие",        callback_data=f"call:{pid}:{phone}:wellbeing")
         call_kb.button(text="📞 Подтвердить приём",  callback_data=f"call:{pid}:{phone}:confirm")
         call_kb.button(text="🦷 Гигиена",            callback_data=f"call:{pid}:{phone}:hygiene")
         call_kb.button(text="🔩 Имплантация",        callback_data=f"call:{pid}:{phone}:implant")
@@ -1929,10 +1930,11 @@ async def cb_call_patient(call: CallbackQuery):
         return
 
     LABELS = {
-        "confirm": "подтверждение приёма",
-        "hygiene": "приглашение на гигиену",
-        "implant": "консультация по имплантации",
-        "checkup": "приглашение на осмотр",
+        "wellbeing": "вопрос о самочувствии",
+        "confirm":   "подтверждение приёма",
+        "hygiene":   "приглашение на гигиену",
+        "implant":   "консультация по имплантации",
+        "checkup":   "приглашение на осмотр",
     }
     label = LABELS.get(ctype, ctype)
 

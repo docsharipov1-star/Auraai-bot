@@ -1886,19 +1886,71 @@ async def pat_doc_input(message: Message, state: FSMContext):
 
     try:
         pid = await add_patient(name=name, phone=phone, doctor=doc)
+
+        # Клавиатура звонка
+        call_kb = InlineKeyboardBuilder()
+        call_kb.button(text="📞 Подтвердить приём",  callback_data=f"call:{pid}:{phone}:confirm")
+        call_kb.button(text="🦷 Гигиена",            callback_data=f"call:{pid}:{phone}:hygiene")
+        call_kb.button(text="🔩 Имплантация",        callback_data=f"call:{pid}:{phone}:implant")
+        call_kb.button(text="🔍 Осмотр",             callback_data=f"call:{pid}:{phone}:checkup")
+        call_kb.button(text="❌ Не звонить",          callback_data=f"call:{pid}:{phone}:skip")
+        call_kb.adjust(1)
+
         await message.answer(
             f"✅ *Пациент добавлен!*\n\n"
             f"👤 {name}\n"
             f"📱 {phone}\n"
             f"👨‍⚕️ {doc or '—'}\n\n"
-            f"📅 Завтра в 10:00 — звонок о самочувствии\n"
-            f"📅 Через 3 мес — звонок на гигиену\n"
-            f"📅 Через 6 мес — звонок на осмотр",
+            f"Позвонить сейчас?",
             parse_mode="Markdown",
-            reply_markup=main_kb(True)
+            reply_markup=call_kb.as_markup()
         )
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}", reply_markup=main_kb(True))
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith("call:"))
+async def cb_call_patient(call: CallbackQuery):
+    if call.from_user.id != ADMIN_ID:
+        await call.answer("Нет доступа")
+        return
+    await call.answer()
+
+    parts   = call.data.split(":")
+    pid     = parts[1]
+    phone   = parts[2]
+    ctype   = parts[3]
+
+    if ctype == "skip":
+        await call.message.edit_text(
+            call.message.text + "\n\n_Звонок отложен — бот позвонит по расписанию._",
+            parse_mode="Markdown"
+        )
+        return
+
+    LABELS = {
+        "confirm": "подтверждение приёма",
+        "hygiene": "приглашение на гигиену",
+        "implant": "консультация по имплантации",
+        "checkup": "приглашение на осмотр",
+    }
+    label = LABELS.get(ctype, ctype)
+
+    await call.message.edit_text(
+        call.message.text + f"\n\n⏳ Звоню — {label}...",
+        parse_mode="Markdown"
+    )
+
+    try:
+        from autocall import call_patient as mango_call
+        ok = await mango_call(phone=phone, patient_name="пациент", call_type=ctype)
+        status = "✅ Звонок инициирован!" if ok else "⚠️ Не удалось позвонить — проверь настройки Mango Office"
+        await call.message.edit_text(
+            call.message.text.replace("⏳ Звоню...", "") + f"\n\n{status}",
+            parse_mode="Markdown"
+        )
+    except Exception as e:
+        await call.message.answer(f"❌ Ошибка звонка: {e}")
 
 
 @router.message(F.text == "📋 Пациенты")

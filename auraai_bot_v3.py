@@ -52,7 +52,7 @@ BOT_USERNAME  = os.getenv("BOT_USERNAME", "GetAuraAI_bot")
 VPS_API_URL   = os.getenv("VPS_API_URL", "http://92.53.124.13:9090")
 VPS_API_SECRET = os.getenv("VPS_API_SECRET", "alina_vps_2024")
 YOOKASSA_TOKEN = os.getenv("YOOKASSA_TOKEN", "")  # provider token из BotFather (ЮKassa)
-DB_PATH       = "/app/data/auraai.db"
+DB_PATH       = "/app/data/auraai.db"  # переопределяется ниже при старте
 FREE_CREDITS  = 150
 REFERRAL_BONUS = 50
 
@@ -291,7 +291,9 @@ def is_crisis(text: str) -> bool:
 # ══════════════════════════════════════════════════════
 
 import pathlib
-pathlib.Path("/app/data").mkdir(parents=True, exist_ok=True)
+_data_dir = pathlib.Path("/app/data") if pathlib.Path("/app").exists() else pathlib.Path(__file__).parent / "data"
+_data_dir.mkdir(parents=True, exist_ok=True)
+DB_PATH = str(_data_dir / "auraai.db")
 
 async def init_db():
     async with aiosqlite.connect(DB_PATH) as db:

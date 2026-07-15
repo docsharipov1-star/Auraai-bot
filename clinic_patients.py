@@ -20,7 +20,10 @@ import aiosqlite
 
 log = logging.getLogger("clinic_patients")
 
-DB_PATH = os.getenv("DB_PATH", "/app/data/auraai.db")
+import pathlib as _pl
+_data_dir = _pl.Path("/app/data") if _pl.Path("/app").exists() else _pl.Path(__file__).parent / "data"
+_data_dir.mkdir(parents=True, exist_ok=True)
+DB_PATH = os.getenv("DB_PATH", str(_data_dir / "auraai.db"))
 
 # Расписание звонков: (тип, дней_после_визита)
 CALL_SCHEDULE = [

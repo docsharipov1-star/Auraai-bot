@@ -8078,6 +8078,12 @@ async def main():
     except Exception as _e:
         logging.warning(f"clinic_patients init: {_e}")
 
+    try:
+        import voice_bot
+        voice_bot.start(bot)
+    except Exception as _e:
+        logging.warning(f"voice_bot init: {_e}")
+
     logging.info(f"🚀 AuraAI Bot v3.44 FIX-отчётность запущен | @{BOT_USERNAME}")
     logging.info("✅ ВЕРСИЯ С ВЫБОРОМ ФОРМАТА 9:16 16:9 — если видишь это, новый код работает")
     await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())

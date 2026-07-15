@@ -84,6 +84,13 @@ async def call_patient(
         success = resp.status_code == 200 and data.get("result", -1) == 0
         if success:
             log.info(f"Звонок инициирован → {patient_name} ({phone}) [{call_type}]")
+            # Регистрируем в голосовом боте чтобы связать с входящим SIP
+            try:
+                from voice_bot import register_call
+                command_id = payload["commandId"]
+                register_call(command_id, patient_name, call_type)
+            except Exception:
+                pass
         else:
             log.warning(f"Mango ответил: {resp.status_code} | {resp.text[:200]}")
         return success

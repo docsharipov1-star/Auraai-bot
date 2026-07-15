@@ -7982,8 +7982,8 @@ async def main():
     start_biz_sync(bot)
     _start_clinic_daily_report(bot)
     try:
-        from clinic_patients import init_db, start_patient_calls
-        await init_db()
+        from clinic_patients import init_db as init_patients_db, start_patient_calls
+        await init_patients_db()
         start_patient_calls(bot)
     except Exception as _e:
         logging.warning(f"clinic_patients init: {_e}")

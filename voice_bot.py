@@ -1,97 +1,115 @@
 """
-AI голосовой бот: Mango SIP + Yandex SpeechKit + Claude.
+AI голосовой бот: Mango SIP + OpenAI Whisper (STT) + OpenAI TTS + Claude.
 
 Схема:
-  autocall.py → Mango Callback API → Mango звонит на наш SIP (doctor@vpbx...)
-  → pyVoIP отвечает → пациент говорит → Yandex STT → Claude → Yandex TTS → пациент слышит
+  autocall.py → Mango Callback API → Mango звонит на SIP doctor@vpbx400375166.mangosip.ru
+  → pyVoIP отвечает → пациент говорит → Whisper STT → Claude Haiku → OpenAI TTS → пациент слышит
+
+Переменные Railway:
+  SIP_USER, SIP_PASS, SIP_DOMAIN, OPENAI_API_KEY
 """
 import os
 import io
+import wave
 import asyncio
+import audioop
 import logging
 import threading
 import time
-import audioop
-import wave
 
 import httpx
 from anthropic import Anthropic
 
 log = logging.getLogger("voice_bot")
 
-# ── Конфигурация ─────────────────────────────────────────────────────────────
+# ── Конфиг ───────────────────────────────────────────────────────────────────
 
 SIP_USER   = os.getenv("SIP_USER",   "doctor")
 SIP_PASS   = os.getenv("SIP_PASS",   "")
 SIP_DOMAIN = os.getenv("SIP_DOMAIN", "vpbx400375166.mangosip.ru")
 SIP_PORT   = int(os.getenv("SIP_PORT", "5060"))
 
-YANDEX_KEY       = os.getenv("YANDEX_API_KEY", "")
-YANDEX_FOLDER_ID = os.getenv("YANDEX_FOLDER_ID", "")
+OPENAI_KEY    = os.getenv("OPENAI_API_KEY", "")
+ANTHROPIC_KEY = os.getenv("ANTHROPIC_API_KEY") or os.getenv("ANTHROPIC_KEY", "")
 
-_claude = Anthropic(
-    api_key=os.getenv("ANTHROPIC_API_KEY") or os.getenv("ANTHROPIC_KEY", "")
-)
+_claude = Anthropic(api_key=ANTHROPIC_KEY) if ANTHROPIC_KEY else None
 
-# RTP / аудио
-SAMPLE_RATE       = 8000   # G.711 ulaw
-FRAME_SIZE        = 160    # 20 мс
-SILENCE_RMS       = 400    # порог тишины
-SILENCE_FRAMES    = 25     # ~500 мс тишины → конец фразы
+# RTP
+SAMPLE_RATE    = 8000
+FRAME_SIZE     = 160    # 20 мс
+SILENCE_RMS    = 400
+SILENCE_FRAMES = 25     # ~500 мс тишины = конец фразы
 
-# ── Yandex SpeechKit ─────────────────────────────────────────────────────────
-
-async def _stt(pcm: bytes) -> str:
-    """16-bit PCM 8кГц моно → текст."""
-    if not YANDEX_KEY or len(pcm) < 1600:
-        return ""
-    try:
-        async with httpx.AsyncClient(timeout=20) as c:
-            r = await c.post(
-                "https://stt.api.cloud.yandex.net/speech/v1/stt:recognize",
-                params={"lang": "ru-RU", "format": "lpcm",
-                        "sampleRateHertz": SAMPLE_RATE,
-                        "folderId": YANDEX_FOLDER_ID},
-                content=pcm,
-                headers={"Authorization": f"Api-Key {YANDEX_KEY}"},
-            )
-        if r.status_code == 200:
-            return r.json().get("result", "")
-        log.warning(f"STT {r.status_code}: {r.text[:120]}")
-    except Exception as e:
-        log.error(f"STT error: {e}")
-    return ""
-
+# ── TTS: OpenAI → PCM 8kHz ───────────────────────────────────────────────────
 
 async def _tts(text: str) -> bytes:
-    """Текст → 16-bit PCM 8кГц."""
-    if not YANDEX_KEY or not text:
+    """Текст → 16-bit PCM 8кГц через OpenAI TTS."""
+    if not OPENAI_KEY or not text:
         return b""
     try:
-        async with httpx.AsyncClient(timeout=20) as c:
+        async with httpx.AsyncClient(timeout=30) as c:
             r = await c.post(
-                "https://tts.api.cloud.yandex.net/speech/v1/tts:synthesize",
-                data={"text": text[:200], "lang": "ru-RU", "voice": "alena",
-                      "speed": "1.1", "format": "lpcm",
-                      "sampleRateHertz": str(SAMPLE_RATE),
-                      "folderId": YANDEX_FOLDER_ID},
-                headers={"Authorization": f"Api-Key {YANDEX_KEY}"},
+                "https://api.openai.com/v1/audio/speech",
+                headers={"Authorization": f"Bearer {OPENAI_KEY}"},
+                json={
+                    "model": "tts-1",
+                    "input": text[:500],
+                    "voice": "nova",          # женский голос, звучит мягко
+                    "response_format": "pcm", # 24kHz 16-bit signed LE
+                },
             )
         if r.status_code == 200:
-            return r.content
+            pcm_24k = r.content
+            # Ресэмплируем 24кГц → 8кГц
+            pcm_8k, _ = audioop.ratecv(pcm_24k, 2, 1, 24000, 8000, None)
+            return pcm_8k
         log.warning(f"TTS {r.status_code}: {r.text[:120]}")
     except Exception as e:
         log.error(f"TTS error: {e}")
     return b""
 
 
-# ── Claude ───────────────────────────────────────────────────────────────────
+# ── STT: OpenAI Whisper ───────────────────────────────────────────────────────
+
+async def _stt(pcm: bytes) -> str:
+    """16-bit PCM 8кГц → текст через OpenAI Whisper."""
+    if not OPENAI_KEY or len(pcm) < 3200:   # < 200ms → пропускаем
+        return ""
+    # Оборачиваем в WAV
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(SAMPLE_RATE)
+        wf.writeframes(pcm)
+    buf.seek(0)
+    buf.name = "audio.wav"
+
+    try:
+        async with httpx.AsyncClient(timeout=30) as c:
+            r = await c.post(
+                "https://api.openai.com/v1/audio/transcriptions",
+                headers={"Authorization": f"Bearer {OPENAI_KEY}"},
+                files={"file": ("audio.wav", buf, "audio/wav")},
+                data={"model": "whisper-1", "language": "ru"},
+            )
+        if r.status_code == 200:
+            return r.json().get("text", "").strip()
+        log.warning(f"STT {r.status_code}: {r.text[:120]}")
+    except Exception as e:
+        log.error(f"STT error: {e}")
+    return ""
+
+
+# ── Claude ────────────────────────────────────────────────────────────────────
 
 def _ai_reply(history: list, system: str) -> str:
+    if not _claude:
+        return "Один момент, пожалуйста."
     try:
         resp = _claude.messages.create(
             model="claude-haiku-4-5-20251001",
-            max_tokens=120,
+            max_tokens=100,
             system=system,
             messages=history,
         )
@@ -101,7 +119,7 @@ def _ai_reply(history: list, system: str) -> str:
         return "Один момент, пожалуйста."
 
 
-# ── Сессия звонка ─────────────────────────────────────────────────────────────
+# ── Скрипты ───────────────────────────────────────────────────────────────────
 
 _GOALS = {
     "wellbeing": "узнать как пациент себя чувствует после вчерашнего приёма",
@@ -111,63 +129,58 @@ _GOALS = {
     "implant":   "узнать как проходит заживление после имплантации",
 }
 
-_GREETINGS = {
-    "wellbeing": "Добрый день, {name}! Это клиника Аура. Как вы себя чувствуете после вчерашнего приёма?",
-    "hygiene":   "Добрый день, {name}! Это клиника Аура. Напоминаем о профессиональной чистке зубов — прошло три месяца. Хотите записаться?",
-    "checkup":   "Добрый день, {name}! Это клиника Аура. Прошло полгода с вашего последнего визита — пора на осмотр. Вам удобно?",
-    "confirm":   "Добрый день, {name}! Это клиника Аура. Хотим подтвердить вашу запись на приём.",
-    "implant":   "Добрый день, {name}! Это клиника Аура. Как проходит заживление после имплантации? Никаких жалоб нет?",
+_GREET = {
+    "wellbeing": "Добрый день, {n}! Это клиника Аура. Как вы себя чувствуете после вчерашнего приёма?",
+    "hygiene":   "Добрый день, {n}! Это клиника Аура. Напоминаем о профессиональной чистке зубов — прошло три месяца. Хотите записаться?",
+    "checkup":   "Добрый день, {n}! Это клиника Аура. Прошло полгода с вашего визита — пора на осмотр. Удобно?",
+    "confirm":   "Добрый день, {n}! Это клиника Аура. Хотим подтвердить вашу запись на приём.",
+    "implant":   "Добрый день, {n}! Это клиника Аура. Как проходит заживление? Никаких жалоб нет?",
 }
 
 
+# ── Сессия звонка ─────────────────────────────────────────────────────────────
+
 class CallSession:
     def __init__(self, call, patient_name: str, call_type: str):
-        self.call         = call
-        self.patient_name = patient_name
-        self.call_type    = call_type
-        self.history      = []
-        self.buf          = b""
-        self.silence_cnt  = 0
-        self.has_voice    = False
-        self.loop         = asyncio.new_event_loop()
+        self.call      = call
+        self.name      = patient_name
+        self.ctype     = call_type
+        self.history   = []
+        self.buf       = b""
+        self.sil_cnt   = 0
+        self.voiced    = False
+        self.loop      = asyncio.new_event_loop()
 
         fname = patient_name.split()[0] if patient_name else "пациент"
         self.system = (
-            f"Ты — голосовой ассистент стоматологической клиники Аура. "
-            f"Звонишь пациенту {fname}. Цель: {_GOALS.get(call_type, 'помочь пациенту')}. "
-            f"Отвечай ОЧЕНЬ кратко — 1-2 коротких предложения. "
-            f"Говори тепло и профессионально. Если хочет записаться — "
-            f"скажи что передашь информацию администратору и он перезвонит."
+            f"Ты — голосовой ассистент клиники Аура. Звонишь пациенту {fname}. "
+            f"Цель: {_GOALS.get(call_type, 'помочь пациенту')}. "
+            f"Отвечай очень кратко — 1-2 предложения. Тепло, профессионально. "
+            f"Если хочет записаться — скажи что передашь администратору."
         )
-        self._greeting = _GREETINGS.get(
-            call_type,
-            f"Добрый день, {fname}! Это клиника Аура."
-        ).format(name=fname)
+        self._greeting = _GREET.get(call_type, f"Добрый день! Это клиника Аура.").format(n=fname)
 
-    # ── аудио pipeline ──────────────────────────────────────────
+    # ── аудио pipeline ──────────────────────────────────────────────────────
 
-    def on_frame(self, ulaw_frame: bytes):
-        """Вызывается из потока RTP на каждый 20-мс фрейм."""
-        pcm = audioop.ulaw2lin(ulaw_frame, 2)
+    def on_frame(self, ulaw: bytes):
+        pcm = audioop.ulaw2lin(ulaw, 2)
         rms = audioop.rms(pcm, 2)
 
         if rms > SILENCE_RMS:
-            self.buf        += pcm
-            self.silence_cnt = 0
-            self.has_voice   = True
-        elif self.has_voice:
-            self.buf        += pcm
-            self.silence_cnt += 1
-            if self.silence_cnt >= SILENCE_FRAMES:
-                chunk          = self.buf
-                self.buf       = b""
-                self.has_voice = False
-                self.silence_cnt = 0
-                asyncio.run_coroutine_threadsafe(
-                    self._process(chunk), self.loop
-                )
+            self.buf    += pcm
+            self.sil_cnt = 0
+            self.voiced  = True
+        elif self.voiced:
+            self.buf    += pcm
+            self.sil_cnt += 1
+            if self.sil_cnt >= SILENCE_FRAMES:
+                chunk       = self.buf
+                self.buf    = b""
+                self.voiced = False
+                self.sil_cnt = 0
+                asyncio.run_coroutine_threadsafe(self._handle(chunk), self.loop)
 
-    async def _process(self, pcm: bytes):
+    async def _handle(self, pcm: bytes):
         text = await _stt(pcm)
         if not text:
             return
@@ -180,27 +193,25 @@ class CallSession:
 
         audio = await _tts(reply)
         if audio:
-            self._send(audio)
+            self._play(audio)
 
-    def _send(self, pcm: bytes):
-        """Отправляем PCM → G.711 → RTP."""
+    def _play(self, pcm: bytes):
+        """PCM 8kHz → G.711 ulaw → RTP."""
         ulaw = audioop.lin2ulaw(pcm, 2)
         for i in range(0, len(ulaw), FRAME_SIZE):
-            chunk = ulaw[i:i + FRAME_SIZE]
-            if len(chunk) < FRAME_SIZE:
-                chunk += b"\x7f" * (FRAME_SIZE - len(chunk))
+            chunk = ulaw[i:i + FRAME_SIZE].ljust(FRAME_SIZE, b"\x7f")
             try:
                 self.call.write_audio(chunk)
             except Exception:
-                break
+                return
             time.sleep(0.019)
 
-    # ── жизненный цикл ──────────────────────────────────────────
+    # ── жизненный цикл ─────────────────────────────────────────────────────
 
     def start(self):
-        threading.Thread(target=self._run_loop, daemon=True).start()
+        threading.Thread(target=self._run, daemon=True).start()
 
-    def _run_loop(self):
+    def _run(self):
         asyncio.set_event_loop(self.loop)
         self.loop.run_until_complete(self._greet())
         self.loop.run_forever()
@@ -209,7 +220,9 @@ class CallSession:
         self.history.append({"role": "assistant", "content": self._greeting})
         audio = await _tts(self._greeting)
         if audio:
-            self._send(audio)
+            self._play(audio)
+        else:
+            log.warning("TTS недоступен — OPENAI_API_KEY не задан?")
 
     def stop(self):
         self.loop.call_soon_threadsafe(self.loop.stop)
@@ -217,26 +230,19 @@ class CallSession:
 
 # ── Глобальное состояние ─────────────────────────────────────────────────────
 
-_sessions: dict[str, CallSession] = {}
-_pending:  dict[str, dict]        = {}   # commandId → {patient_name, call_type}
-_phone     = None
+_sessions: dict[int, CallSession] = {}
+_pending:  dict[str, dict]        = {}
+_phone = None
 
 
 def register_call(command_id: str, patient_name: str, call_type: str):
-    """
-    Вызывается из autocall.py сразу после отправки запроса в Mango.
-    Сохраняем метаданные чтобы связать с входящим SIP звонком.
-    """
     _pending[command_id] = {"patient_name": patient_name, "call_type": call_type}
-    log.debug(f"pending call registered: {command_id}")
+    log.debug(f"pending: {command_id} → {patient_name} [{call_type}]")
 
 
 def _on_call(call):
-    """Обработчик входящего SIP вызова от Mango."""
     call.answer()
 
-    # Mango передаёт commandId в SIP заголовке X-Mango-Command-Id (или похожем)
-    # Если не нашли — берём последний pending
     meta = {}
     try:
         hdrs = call.request.headers
@@ -244,7 +250,6 @@ def _on_call(call):
         meta = _pending.pop(cid, {})
     except Exception:
         pass
-
     if not meta and _pending:
         _, meta = _pending.popitem()
 
@@ -253,8 +258,8 @@ def _on_call(call):
     log.info(f"Звонок: {patient_name} [{call_type}]")
 
     session = CallSession(call, patient_name, call_type)
-    call_id = id(call)
-    _sessions[call_id] = session
+    cid = id(call)
+    _sessions[cid] = session
     session.start()
 
     try:
@@ -265,8 +270,8 @@ def _on_call(call):
             session.on_frame(frame)
     finally:
         session.stop()
-        _sessions.pop(call_id, None)
-        log.info(f"Звонок завершён: {patient_name}")
+        _sessions.pop(cid, None)
+        log.info(f"Завершён: {patient_name}")
 
 
 # ── Запуск ────────────────────────────────────────────────────────────────────
@@ -277,11 +282,13 @@ def start(bot=None):
     if not SIP_PASS:
         log.warning("SIP_PASS не задан — голосовой бот отключён")
         return
+    if not OPENAI_KEY:
+        log.warning("OPENAI_API_KEY не задан — TTS/STT не работает")
 
     try:
         from pyVoIP.VoIP import VoIPPhone
     except ImportError:
-        log.error("Установи pyVoIP: pip install pyVoIP")
+        log.error("pip install pyVoIP")
         return
 
     try:
@@ -297,6 +304,6 @@ def start(bot=None):
             rtpPortHigh  = 10200,
         )
         _phone.start()
-        log.info(f"SIP online: {SIP_USER}@{SIP_DOMAIN}")
+        log.info(f"✅ SIP online: {SIP_USER}@{SIP_DOMAIN}")
     except Exception as e:
         log.error(f"SIP start failed: {e}")

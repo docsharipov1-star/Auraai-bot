@@ -7779,73 +7779,103 @@ async def cb_finance(call: CallbackQuery):
     await call.answer()
     parts = call.data.split(":")
     mode = parts[1]
-    msg = await call.message.answer("⏳ Загружаю…")
+
+    back_kb = InlineKeyboardBuilder()
+    back_kb.button(text="◀️ Назад", callback_data="fin:menu")
+
+    # Редактируем существующее сообщение вместо отправки нового
     try:
+        await call.message.edit_text("⏳ Загружаю…")
+    except Exception:
+        pass
+
+    try:
+        if mode == "menu":
+            await call.message.edit_text(
+                "📊 *Финансовый отчёт клиники*\n\nВыбери период:",
+                reply_markup=_finance_kb().as_markup(),
+                parse_mode="Markdown",
+            )
+            return
+
+        text = None
+
         if mode == "days":
             days = int(parts[2])
             await _send_finance(call.message, days=days, with_ai=days >= 7)
+            try:
+                await call.message.delete()
+            except Exception:
+                pass
+            return
 
         elif mode == "ym":
             y, m = int(parts[2]), int(parts[3])
             await _send_finance(call.message, year=y, month=m)
+            try:
+                await call.message.delete()
+            except Exception:
+                pass
+            return
 
         elif mode == "cmp":
             from clinic_analytics import compare_periods
-            days = int(parts[2])
-            text = await compare_periods(days)
-            await call.message.answer(text, parse_mode="Markdown")
+            text = await compare_periods(int(parts[2]))
 
         elif mode == "svc":
             from clinic_analytics import services_report
-            days = int(parts[2])
-            text = await services_report(days)
-            await call.message.answer(text, parse_mode="Markdown")
+            text = await services_report(int(parts[2]))
 
         elif mode == "wd":
             from clinic_analytics import weekday_report
-            days = int(parts[2])
-            text = await weekday_report(days)
-            await call.message.answer(text, parse_mode="Markdown")
+            text = await weekday_report(int(parts[2]))
 
         elif mode == "shift":
             from clinic_analytics import shift_report
-            days = int(parts[2])
-            text = await shift_report(days)
-            await call.message.answer(text, parse_mode="Markdown")
+            text = await shift_report(int(parts[2]))
 
         elif mode == "forecast":
             from clinic_analytics import forecast_report
             text = await forecast_report()
-            await call.message.answer(text, parse_mode="Markdown")
 
         elif mode == "rank":
             from clinic_analytics import doctors_ranking
-            days = int(parts[2])
-            text = await doctors_ranking(days)
-            await call.message.answer(text, parse_mode="Markdown")
+            text = await doctors_ranking(int(parts[2]))
 
         elif mode == "pay":
             from clinic_analytics import payment_report
-            days = int(parts[2])
-            text = await payment_report(days)
-            await call.message.answer(text, parse_mode="Markdown")
+            text = await payment_report(int(parts[2]))
 
         elif mode == "lost":
             from clinic_analytics import lost_patients_report
-            days = int(parts[2])
-            text = await lost_patients_report(days)
-            await call.message.answer(text, parse_mode="Markdown")
+            text = await lost_patients_report(int(parts[2]))
 
         elif mode == "sal":
             from clinic_analytics import salary_report
-            from datetime import date
-            today = date.today()
+            from datetime import date as _date
+            today = _date.today()
             text = await salary_report(today.year, today.month)
-            await call.message.answer(f"```\n{text}\n```", parse_mode="Markdown")
+            text = f"```\n{text}\n```"
 
-        await msg.delete()
+        if text:
+            try:
+                await call.message.edit_text(
+                    text,
+                    parse_mode="Markdown",
+                    reply_markup=back_kb.as_markup(),
+                )
+            except Exception:
+                await call.message.answer(
+                    text,
+                    parse_mode="Markdown",
+                    reply_markup=back_kb.as_markup(),
+                )
+
     except Exception as e:
-        await msg.edit_text(f"❌ Ошибка: {e}")
+        try:
+            await call.message.edit_text(f"❌ Ошибка: {e}", reply_markup=back_kb.as_markup())
+        except Exception:
+            pass
 
 
 @router.message(Command("doctor"))

@@ -34,7 +34,8 @@ log = logging.getLogger("autocall")
 
 MANGO_API_KEY  = os.getenv("MANGO_API_KEY", "")
 MANGO_API_SALT = os.getenv("MANGO_API_SALT", "")
-MANGO_FROM_EXT = os.getenv("MANGO_FROM_EXT", "")  # добавочный номер или номер клиники
+MANGO_FROM_EXT  = os.getenv("MANGO_FROM_EXT", "")   # добавочный номер сотрудника (extension)
+MANGO_FROM_NUM  = os.getenv("MANGO_FROM_NUM", "")   # исходящий номер клиники (fallback)
 
 MANGO_BASE = "https://app.mango-office.ru/vpbx"
 
@@ -68,17 +69,22 @@ async def call_patient(
         log.warning("MANGO_API_KEY не задан — звонки не работают")
         return False
 
-    if not MANGO_FROM_EXT:
-        log.warning("MANGO_FROM_EXT не задан — укажи добавочный номер клиники")
-        return False
-
     digits = _normalize_phone(phone)
     if not digits:
         log.warning(f"Некорректный номер: {phone}")
         return False
 
+    # Выбираем источник звонка: extension (SIP) или number (внешний номер)
+    if MANGO_FROM_EXT:
+        from_field = {"extension": MANGO_FROM_EXT}
+    elif MANGO_FROM_NUM:
+        from_field = {"number": _normalize_phone(MANGO_FROM_NUM)}
+    else:
+        log.warning("Нужен MANGO_FROM_EXT или MANGO_FROM_NUM")
+        return False
+
     payload = {
-        "from": {"extension": MANGO_FROM_EXT},
+        "from": from_field,
         "to":   {"number": digits},
         "commandId": f"aura_{call_type}_{digits[-4:]}",
     }

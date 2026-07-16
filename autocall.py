@@ -8,6 +8,27 @@ import hashlib
 import json
 import logging
 import httpx
+from fastapi import APIRouter, Request
+from fastapi.responses import JSONResponse
+
+router = APIRouter(prefix="/autocall")
+
+
+@router.post("/event")
+async def mango_event(request: Request):
+    """Webhook для событий Mango Office (входящие уведомления о звонках)."""
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    log.info(f"Mango event: {data}")
+    return JSONResponse({"ok": True})
+
+
+@router.post("/audio")
+async def mango_audio(request: Request):
+    """Webhook для аудио событий Mango Office."""
+    return JSONResponse({"ok": True})
 
 log = logging.getLogger("autocall")
 

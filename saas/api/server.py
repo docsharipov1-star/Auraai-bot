@@ -14,6 +14,7 @@ from voice_agent import app as voice_app
 from autocall import router as autocall_router
 from admin_agent import router as admin_router
 from call_queue import router as alina_router
+from sqns_client import router as sqns_router
 try:
     from psych_agent import get_session, reset_session
     _psych_ok = True
@@ -29,6 +30,7 @@ app.mount("/voice", voice_app)
 app.include_router(autocall_router)   # /autocall/event, /autocall/audio
 app.include_router(admin_router)      # /admin/call/start|audio|end|test
 app.include_router(alina_router)      # /alina/event, /alina/inbound, /alina/audio
+app.include_router(sqns_router)       # /sqns/hook/{secret} — вебхуки SQNS CRM
 
 TEMPLATES = Path(__file__).parent.parent / "templates"
 

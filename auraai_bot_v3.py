@@ -1221,6 +1221,7 @@ def main_kb(is_admin: bool = False) -> ReplyKeyboardMarkup:
             KeyboardButton(text="➕ Добавить пациента"),
             KeyboardButton(text="📋 Пациенты"),
         )
+        b.row(KeyboardButton(text="📅 Запись SQNS"))
         b.row(KeyboardButton(text="📊 Доктора"))
         b.row(KeyboardButton(text="🗓 Таблицы клиники"))
         b.row(
@@ -8097,6 +8098,11 @@ async def main():
 
     bot = Bot(token=BOT_TOKEN)
     dp  = Dispatcher(storage=MemoryStorage())
+    try:
+        import sqns_bot  # раньше основного роутера: его FSM-состояния приоритетнее
+        dp.include_router(sqns_bot.router)
+    except Exception as _e:
+        logging.warning(f"sqns_bot init: {_e}")
     dp.include_router(router)
     start_autoposter(bot)
     start_biz_sync(bot)

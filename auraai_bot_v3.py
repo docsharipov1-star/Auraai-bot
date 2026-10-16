@@ -50,6 +50,7 @@ AIML_KEY      = os.getenv("AIML_KEY", "")
 ADMIN_ID      = int(os.getenv("ADMIN_ID", "0"))
 BOT_USERNAME  = os.getenv("BOT_USERNAME", "GetAuraAI_bot")
 VPS_API_URL   = os.getenv("VPS_API_URL", "http://92.53.124.13:9090")
+SQNS_ENABLED  = bool(os.getenv("SQNS_EMAIL"))  # кнопка «Запись SQNS» только после настройки
 VPS_API_SECRET = os.getenv("VPS_API_SECRET", "alina_vps_2024")
 YOOKASSA_TOKEN = os.getenv("YOOKASSA_TOKEN", "")  # provider token из BotFather (ЮKassa)
 DB_PATH       = "/app/data/auraai.db"  # переопределяется ниже при старте
@@ -1221,7 +1222,8 @@ def main_kb(is_admin: bool = False) -> ReplyKeyboardMarkup:
             KeyboardButton(text="➕ Добавить пациента"),
             KeyboardButton(text="📋 Пациенты"),
         )
-        b.row(KeyboardButton(text="📅 Запись SQNS"))
+        if SQNS_ENABLED:
+            b.row(KeyboardButton(text="📅 Запись SQNS"))
         b.row(KeyboardButton(text="📊 Доктора"))
         b.row(KeyboardButton(text="🗓 Таблицы клиники"))
         b.row(
@@ -2040,6 +2042,7 @@ async def btn_tables(message: Message):
         "📅 Смены день/ночь → отчёт по врачам:\n`/setshift ссылка`\n\n"
         "💼 Зарплата персонала → расход в /biz:\n`/setsalary ссылка`\n\n"
         "📋 Простая таблица (Дата|Пациенты|Выручка|Расходы) → /biz:\n`/setsheet ссылка`\n\n"
+        "⚙️ Настройки: проценты врачей, оклады, расходы → зарплаты и средний чек:\n`/setsettings ссылка`\n\n"
         "Списки/удаление: /visits · /sheets · /delshift N · /delsheet N\n"
         "Отчёты — кнопки «📊 Доктора» и «💰 Финансы бизнеса».",
         parse_mode="Markdown")
@@ -6077,6 +6080,49 @@ async def _biz_sync_from_sheet():
                      (day, expenses))
     return len(all_rows) + len(sal_rows), ("; ".join(errors) if errors else None)
 
+@router.message(Command("setsettings"))
+async def setsettings_cmd(message: Message):
+    """Вкладка «Настройки»: проценты врачей, оклады сотрудников, расходы."""
+    if message.from_user.id != ADMIN_ID:
+        return
+    import clinic_analytics as ca
+
+    async def _reply(text):
+        try:
+            await message.answer(text, parse_mode="Markdown")
+        except Exception:
+            await message.answer(text.replace("*", ""))
+
+    parts = (message.text or "").split(maxsplit=1)
+    if len(parts) < 2:
+        if ca.SHEET_SETTINGS:
+            await ca.load_settings(force=True)
+            await _reply(ca.settings_summary() + "\n\nСменить таблицу: /setsettings <ссылка>")
+        else:
+            await message.answer(
+                "Подключи вкладку «Настройки»:\n/setsettings <ссылка на вкладку>\n\n"
+                "Три блока, заголовок блока — в первой колонке:\n"
+                "ВРАЧИ | Процент | Особые услуги (Удаление=30)\n"
+                "СОТРУДНИКИ | Оклад в месяц\n"
+                "РАСХОДЫ | Сумма в месяц\n\n"
+                "Доступ: «Все, у кого есть ссылка → Читатель». Бот перечитывает её сам каждые 10 минут.")
+        return
+    link = parts[1].strip()
+    if "/spreadsheets/d/" not in link:
+        await message.answer("Это не похоже на ссылку Google-таблицы. Открой вкладку «Настройки» и скопируй ссылку из адресной строки.")
+        return
+    old = ca.SHEET_SETTINGS
+    ca.set_settings_sheet(link)
+    await ca.load_settings(force=True)
+    if ca._settings["error"]:
+        err = ca._settings["error"]
+        ca.set_settings_sheet(old)
+        await message.answer(f"⚠️ {err}. Настройки не сохранены.")
+        return
+    await set_setting("clinic_settings_sheet", link)
+    await _reply("✅ Таблица подключена.\n\n" + ca.settings_summary() +
+                 "\n\nЗарплаты: /clinic → «💼 Зарплаты месяц»")
+
 @router.message(Command("setsalary"))
 async def setsalary_cmd(message: Message):
     if message.from_user.id != ADMIN_ID:
@@ -8113,6 +8159,13 @@ async def main():
         start_patient_calls(bot)
     except Exception as _e:
         logging.warning(f"clinic_patients init: {_e}")
+    try:
+        _settings_link = await get_setting("clinic_settings_sheet", "")
+        if _settings_link:
+            import clinic_analytics
+            clinic_analytics.set_settings_sheet(_settings_link)
+    except Exception as _e:
+        logging.warning(f"clinic settings init: {_e}")
 
     try:
         import voice_bot

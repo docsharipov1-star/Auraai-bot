@@ -50,7 +50,6 @@ AIML_KEY      = os.getenv("AIML_KEY", "")
 ADMIN_ID      = int(os.getenv("ADMIN_ID", "0"))
 BOT_USERNAME  = os.getenv("BOT_USERNAME", "GetAuraAI_bot")
 VPS_API_URL   = os.getenv("VPS_API_URL", "http://92.53.124.13:9090")
-SQNS_ENABLED  = bool(os.getenv("SQNS_EMAIL"))  # кнопка «Запись SQNS» только после настройки
 VPS_API_SECRET = os.getenv("VPS_API_SECRET", "alina_vps_2024")
 YOOKASSA_TOKEN = os.getenv("YOOKASSA_TOKEN", "")  # provider token из BotFather (ЮKassa)
 DB_PATH       = "/app/data/auraai.db"  # переопределяется ниже при старте
@@ -1222,8 +1221,6 @@ def main_kb(is_admin: bool = False) -> ReplyKeyboardMarkup:
             KeyboardButton(text="➕ Добавить пациента"),
             KeyboardButton(text="📋 Пациенты"),
         )
-        if SQNS_ENABLED:
-            b.row(KeyboardButton(text="📅 Запись SQNS"))
         b.row(KeyboardButton(text="📊 Доктора"))
         b.row(KeyboardButton(text="🗓 Таблицы клиники"))
         b.row(
@@ -8144,11 +8141,6 @@ async def main():
 
     bot = Bot(token=BOT_TOKEN)
     dp  = Dispatcher(storage=MemoryStorage())
-    try:
-        import sqns_bot  # раньше основного роутера: его FSM-состояния приоритетнее
-        dp.include_router(sqns_bot.router)
-    except Exception as _e:
-        logging.warning(f"sqns_bot init: {_e}")
     dp.include_router(router)
     start_autoposter(bot)
     start_biz_sync(bot)

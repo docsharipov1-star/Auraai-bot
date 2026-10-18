@@ -68,15 +68,6 @@ async def add_patient(name: str, phone: str, doctor: str = "", visit_date: date 
         return cur.lastrowid
 
 
-async def patient_exists(phone: str, visit_date: date) -> bool:
-    async with aiosqlite.connect(DB_PATH) as db:
-        row = await (await db.execute(
-            "SELECT 1 FROM clinic_patients WHERE phone=? AND visit_date=? LIMIT 1",
-            (phone.strip(), visit_date.isoformat())
-        )).fetchone()
-        return row is not None
-
-
 async def get_all_patients() -> list[dict]:
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row

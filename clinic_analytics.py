@@ -82,11 +82,146 @@ _DOCTOR_PCTS: dict[str, float] = {
 
 def _doctor_pct(doc_name: str) -> float:
     first = doc_name.upper().split()[0] if doc_name.split() else ""
-    # Сначала env-override, потом словарь, потом дефолт
+    # Сначала таблица «Настройки», потом env-override, потом словарь, потом дефолт
+    found = _settings_doctor(doc_name)
+    if found:
+        return found[0]
     env_key = "DR_PCT_" + first
     if os.getenv(env_key):
         return float(os.getenv(env_key))
     return _DOCTOR_PCTS.get(first, DEFAULT_DOCTOR_PCT)
+
+
+def _pct_for(doc_name: str, service: str) -> float:
+    """Процент врача с учётом особых услуг из «Настроек» (Удаление=30)."""
+    found = _settings_doctor(doc_name)
+    if found and service:
+        svc = service.lower()
+        for key, pct in found[1].items():
+            if key in svc or svc in key:
+                return pct
+    return _doctor_pct(doc_name)
+
+
+# ── Настройки из Google Таблицы ──────────────────────────────────
+# Одна вкладка, три блока (заголовок блока — в первой колонке):
+#   ВРАЧИ      | Процент       | Особые услуги («Удаление=30; Имплантация=25»)
+#   СОТРУДНИКИ | Оклад в месяц
+#   РАСХОДЫ    | Сумма в месяц
+# Доступ к таблице: «Все, у кого есть ссылка → Читатель».
+# Если задан блок РАСХОДЫ — он заменяет MONTHLY_EXPENSES; оклады сотрудников
+# добавляются к расходам сверху. Читается сама раз в 10 минут.
+SHEET_SETTINGS = os.getenv("SHEET_SETTINGS", "")   # ссылка на вкладку
+_BASE_MONTHLY_EXPENSES = MONTHLY_EXPENSES
+_SETTINGS_TTL = 600
+_settings: dict = {"doctors": {}, "staff": {}, "expenses": {}, "loaded_at": 0.0, "error": None}
+
+
+def _num(val: str) -> float:
+    return _normalize_cost(str(val).replace("%", ""))
+
+
+def _settings_doctor(doc_name: str) -> Optional[tuple[float, dict]]:
+    doctors = _settings["doctors"]
+    if not doctors or not doc_name.strip():
+        return None
+    name = doc_name.lower().strip()
+    if name in doctors:
+        return doctors[name]
+    first = name.split()[0]
+    for key, val in doctors.items():
+        if key.split()[0] == first:
+            return val
+    return None
+
+
+def parse_settings_rows(rows: list[list[str]]) -> dict:
+    out = {"doctors": {}, "staff": {}, "expenses": {}}
+    section = None
+    for row in rows:
+        cells = [c.strip() for c in row] + ["", ""]
+        head = cells[0].lower()
+        if not head:
+            continue
+        if head.startswith("врачи") or head == "врач":
+            section = "doctors"; continue
+        if head.startswith("сотрудник"):
+            section = "staff"; continue
+        if head.startswith("расход"):
+            section = "expenses"; continue
+        if section is None or head.startswith("итог"):
+            continue
+        value = _num(cells[1])
+        if section == "doctors":
+            if not 0 < value <= 100:
+                continue
+            services = {}
+            for part in re.split(r"[;\n]", cells[2]):
+                m = re.match(r"\s*(.+?)\s*[=:–-]\s*(\d{1,3})\s*%?\s*$", part)
+                if m and 0 < int(m.group(2)) <= 100:
+                    services[m.group(1).lower()] = float(m.group(2))
+            out["doctors"][cells[0].lower()] = (value, services)
+        elif value > 0:
+            out[section][cells[0]] = value
+    return out
+
+
+def _sheet_id_gid(link: str) -> tuple[str, str]:
+    m = re.search(r"/spreadsheets/d/([a-zA-Z0-9_-]+)", link)
+    sid = m.group(1) if m else link.split("#")[0].strip()
+    g = re.search(r"gid=(\d+)", link)
+    return sid, (g.group(1) if g else "")
+
+
+def set_settings_sheet(link: str):
+    global SHEET_SETTINGS
+    SHEET_SETTINGS = (link or "").strip()
+    _settings["loaded_at"] = 0.0
+
+
+async def load_settings(force: bool = False) -> dict:
+    """Читает вкладку «Настройки» (кэш 10 мин) и применяет расходы."""
+    global MONTHLY_EXPENSES, DAILY_EXPENSES
+    import time
+    if not SHEET_SETTINGS:
+        return _settings
+    if not force and time.time() - _settings["loaded_at"] < _SETTINGS_TTL:
+        return _settings
+    sid, gid = _sheet_id_gid(SHEET_SETTINGS)
+    rows = await _fetch_one_csv(sid, gid)
+    _settings["loaded_at"] = time.time()
+    parsed = parse_settings_rows(rows) if rows else None
+    if not parsed or not (parsed["doctors"] or parsed["staff"] or parsed["expenses"]):
+        _settings["error"] = ("таблица не открылась — проверь доступ «по ссылке: Читатель»"
+                              if not rows else "не нашёл блоки ВРАЧИ / СОТРУДНИКИ / РАСХОДЫ")
+        log.warning(f"Настройки: {_settings['error']}")
+        return _settings
+    _settings.update(parsed, error=None)
+    fixed = sum(parsed["expenses"].values()) if parsed["expenses"] else _BASE_MONTHLY_EXPENSES
+    MONTHLY_EXPENSES = fixed + sum(parsed["staff"].values())
+    DAILY_EXPENSES = round(MONTHLY_EXPENSES / 30)
+    log.info(f"Настройки: врачей {len(parsed['doctors'])}, сотрудников {len(parsed['staff'])}, "
+             f"расходы {MONTHLY_EXPENSES:,.0f} ₽/мес")
+    return _settings
+
+
+def settings_summary() -> str:
+    s = _settings
+    if not SHEET_SETTINGS:
+        return "Таблица «Настройки» не подключена."
+    if s["error"]:
+        return f"⚠️ Настройки: {s['error']}"
+    lines = ["⚙️ *Настройки из таблицы*\n", "👨‍⚕️ *Врачи:*"]
+    for name, (pct, services) in s["doctors"].items():
+        extra = ", ".join(f"{k} {v:.0f}%" for k, v in services.items())
+        lines.append(f"• {name.title()} — {pct:.0f}%" + (f" ({extra})" if extra else ""))
+    if s["staff"]:
+        lines.append("\n👥 *Сотрудники (оклад):*")
+        lines += [f"• {n} — {v:,.0f} ₽" for n, v in s["staff"].items()]
+    fixed = sum(s["expenses"].values()) if s["expenses"] else _BASE_MONTHLY_EXPENSES
+    lines.append(f"\n📉 Расходы: {fixed:,.0f} ₽ + оклады {sum(s['staff'].values()):,.0f} ₽ "
+                 f"= *{MONTHLY_EXPENSES:,.0f} ₽/мес* ({DAILY_EXPENSES:,.0f} ₽/день)")
+    return "\n".join(lines)
 
 PAY_TYPES = {
     "нал": "наличные", "налич": "наличные",
@@ -327,6 +462,7 @@ async def load_shift_data(
       load_shift_data(year=2026)                 — весь 2026 год
       load_shift_data(from_date=d1, to_date=d2)  — произвольный диапазон
     """
+    await load_settings()
     today = date.today()
     if from_date and to_date:
         d_from, d_to = from_date, to_date
@@ -367,7 +503,7 @@ async def load_shift_data(
 def analyze_doctors(records: list[dict]) -> dict:
     stats: dict = defaultdict(lambda: {
         "revenue": 0.0, "visits": 0, "paid_visits": 0,
-        "patients": set(), "days": set(),
+        "patients": set(), "days": set(), "earn": 0.0,
         "services": defaultdict(int), "pay_types": defaultdict(int),
     })
 
@@ -377,6 +513,7 @@ def analyze_doctors(records: list[dict]) -> dict:
             continue
         s = stats[doc]
         s["revenue"]  += r["cost"]
+        s["earn"]     += r["cost"] * _pct_for(doc, r["service"]) / 100
         s["visits"]   += 1
         if r["cost"] > 0:
             s["paid_visits"] += 1
@@ -391,8 +528,8 @@ def analyze_doctors(records: list[dict]) -> dict:
         visits = s["visits"] or 1
         working_days = len(s["days"]) or 1
         revenue = round(s["revenue"])
-        pct = _doctor_pct(doc)
-        doctor_earn = round(revenue * pct / 100)
+        doctor_earn = round(s["earn"])
+        pct = doctor_earn / revenue * 100 if revenue else _doctor_pct(doc)
         result[doc] = {
             "revenue":         revenue,
             "visits":          visits,
@@ -785,23 +922,34 @@ async def salary_report(year: int = None, month: int = None) -> str:
     doctors = analyze_doctors(records)
     total_rev    = sum(d["revenue"] for d in doctors.values())
     total_salary = sum(d["doctor_earn"] for d in doctors.values())
+    paid_visits  = sum(d["paid_visits"] for d in doctors.values())
+    avg_check    = round(total_rev / paid_visits) if paid_visits else 0
+    staff        = _settings["staff"]
+    staff_total  = sum(staff.values())
     clinic_gross = total_rev - total_salary
     working_days = calendar.monthrange(y, m)[1]
+    # DAILY_EXPENSES уже включает оклады сотрудников из «Настроек»
     clinic_net   = clinic_gross - DAILY_EXPENSES * working_days
 
     lines = [
         f"💼 *Зарплаты за {month_name} {y}*\n",
         f"💰 Выручка клиники: *{total_rev:,} ₽*",
+        f"🧾 Средний чек: *{avg_check:,} ₽* ({paid_visits} оплаченных визитов)",
         f"🏢 Клинике (чистыми): *{clinic_net:,.0f} ₽*\n",
-        f"{'Врач':<22} {'%':>4} {'Выручка':>10} {'Зарплата':>10}",
-        "─" * 50,
+        f"{'Врач':<22} {'%':>4} {'Выручка':>10} {'Зарплата':>10} {'Чек':>8}",
+        "─" * 59,
     ]
     for doc, d in sorted(doctors.items(), key=lambda x: -x[1]["revenue"]):
         lines.append(
             f"{doc:<22} {d['doctor_pct']:>3.0f}% "
-            f"{d['revenue']:>10,} ₽ {d['doctor_earn']:>10,} ₽"
+            f"{d['revenue']:>10,} ₽ {d['doctor_earn']:>10,} ₽ {d['avg_check']:>8,}"
         )
-    lines += ["─" * 50, f"{'ИТОГО':<22} {'':>4} {total_rev:>10,} ₽ {total_salary:>10,} ₽"]
+    lines += ["─" * 59, f"{'Врачам итого':<22} {'':>4} {total_rev:>10,} ₽ {total_salary:>10,} ₽"]
+    if staff:
+        lines += ["", f"{'Сотрудник':<22} {'Оклад':>27}", "─" * 59]
+        lines += [f"{name:<22} {val:>25,.0f} ₽" for name, val in staff.items()]
+        lines += ["─" * 59, f"{'Сотрудникам итого':<22} {staff_total:>25,.0f} ₽"]
+    lines += ["", f"{'ФОТ ВСЕГО':<22} {total_salary + staff_total:>25,.0f} ₽"]
     return "\n".join(lines)
 
 

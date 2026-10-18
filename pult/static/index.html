@@ -1,0 +1,1264 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Пульт клиники Аура</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600&display=swap">
+<style>
+/* Layout: reception desk console — sticky header with tabs, one content column up to 820px; cards for forms, lists, tables */
+:root {
+  --bg: #EEF2F4;
+  --card: #FFFFFF;
+  --fg: #10202A;
+  --muted: #5B6B75;
+  --line: #D7E0E5;
+  --accent: #0B7480;
+  --accent-ink: #FFFFFF;
+  --accent-soft: #D8EEF0;
+  --ok: #1F7A4A;
+  --ok-soft: #DCF0E4;
+  --warn: #A3620A;
+  --warn-soft: #F7EAD3;
+  --bad: #B0362A;
+  --bad-soft: #F6DEDA;
+  --f-ui: "Onest", "Segoe UI", system-ui, sans-serif;
+  --f-num: "JetBrains Mono", ui-monospace, "SFMono-Regular", monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0C1418; --card: #142026; --fg: #E3ECF0; --muted: #8FA2AC; --line: #24343C;
+    --accent: #3BB8C4; --accent-ink: #062126; --accent-soft: #15353A; --ok: #5CCB8E; --ok-soft: #173426;
+    --warn: #E5AE52; --warn-soft: #3A2D16; --bad: #F08A7C; --bad-soft: #3D1F1B; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0C1418; --card: #142026; --fg: #E3ECF0; --muted: #8FA2AC; --line: #24343C;
+  --accent: #3BB8C4; --accent-ink: #062126; --accent-soft: #15353A; --ok: #5CCB8E; --ok-soft: #173426;
+  --warn: #E5AE52; --warn-soft: #3A2D16; --bad: #F08A7C; --bad-soft: #3D1F1B; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--fg); font-family: var(--f-ui); font-size: 15px; line-height: 1.45;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 0 48px;
+}
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--bg); }
+.wrap { max-width: 820px; margin: 0 auto; }
+header { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; background: var(--bg); padding-block: 14px 10px; }
+.brand { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+h1 { margin: 0; font-weight: 800; font-size: 21px; letter-spacing: -0.02em; }
+h1 span { color: var(--accent); }
+.who { font-size: 12px; color: var(--muted); }
+nav { display: flex; gap: 4px; margin-top: 12px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 4px; overflow-x: auto; scrollbar-width: none; }
+nav button { flex: 1 0 auto; font: 600 14px var(--f-ui); color: var(--muted); background: none; border: 0; border-radius: 9px; padding: 9px 10px; cursor: pointer; white-space: nowrap; }
+nav button[aria-selected="true"] { background: var(--accent); color: var(--accent-ink); }
+nav button .cnt { display: inline-block; min-width: 18px; margin-left: 4px; padding: 0 5px; border-radius: 9px; background: var(--bad); color: #fff; font-size: 11px; line-height: 18px; }
+button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+main { display: flex; flex-direction: column; gap: 16px; margin-top: 6px; }
+.datebar, .monthbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.datebar .d { text-align: center; min-width: 0; }
+.datebar .d b, .monthbar b { display: block; font-size: 18px; font-weight: 700; }
+.datebar .d small { color: var(--muted); font-size: 12px; }
+.round { width: 40px; height: 40px; flex: none; border-radius: 50%; border: 1px solid var(--line); background: var(--card); color: var(--fg); font-size: 18px; cursor: pointer; }
+.link { font: 600 13px var(--f-ui); color: var(--accent); background: none; border: 0; cursor: pointer; padding: 2px 4px; }
+h2 { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); margin: 0 0 8px 2px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 16px; min-width: 0; }
+.card > h3 { margin: 0 0 12px; font-size: 16px; font-weight: 700; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.progress { display: flex; align-items: center; gap: 12px; }
+.track { flex: 1; height: 8px; background: var(--line); border-radius: 4px; overflow: hidden; }
+.track i { display: block; height: 100%; background: var(--ok); border-radius: 4px; }
+.progress b { font-family: var(--f-num); font-size: 14px; white-space: nowrap; }
+.list { background: var(--card); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
+.task { display: flex; gap: 12px; align-items: flex-start; width: 100%; text-align: left; background: none; border: 0; border-top: 1px solid var(--line); padding: 13px 14px; color: var(--fg); font: inherit; cursor: pointer; }
+.task:first-child { border-top: 0; }
+.box { flex: none; width: 22px; height: 22px; border-radius: 6px; border: 2px solid var(--accent); display: grid; place-items: center; color: var(--accent-ink); font-weight: 800; font-size: 13px; margin-top: 1px; }
+.task.done .box { background: var(--accent); }
+.task.done .tt { color: var(--muted); text-decoration: line-through; }
+.tt { min-width: 0; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; }
+.grid .full { grid-column: 1 / -1; }
+label.f { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); font-weight: 500; min-width: 0; }
+label.chk { display: flex; gap: 8px; align-items: center; font-size: 14px; color: var(--fg); }
+label.chk input { width: auto; }
+input, select, textarea { font: 500 15px var(--f-ui); color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 10px; width: 100%; min-width: 0; }
+input[type="number"], .num { font-family: var(--f-num); }
+textarea { min-height: 64px; resize: vertical; }
+.seg { display: flex; flex-wrap: wrap; gap: 6px; }
+.seg button, .chip { font: 600 13px var(--f-ui); color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 999px; padding: 7px 12px; cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); }
+.chip.ok { background: var(--ok-soft); border-color: transparent; color: var(--ok); }
+.chip.bad { background: var(--bad-soft); border-color: transparent; color: var(--bad); }
+.chip.warn { background: var(--warn-soft); border-color: transparent; color: var(--warn); }
+.btn { font: 700 15px var(--f-ui); color: var(--accent-ink); background: var(--accent); border: 0; border-radius: 11px; padding: 12px 16px; cursor: pointer; }
+.btn.ghost { color: var(--accent); background: var(--accent-soft); }
+.btn.sm { font-size: 13px; padding: 8px 12px; border-radius: 9px; }
+.btn.wide { width: 100%; margin-top: 12px; }
+.btns { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; align-items: center; }
+.row { display: flex; align-items: center; gap: 10px; padding: 11px 14px; border-top: 1px solid var(--line); }
+.row:first-child { border-top: 0; }
+.row.click { cursor: pointer; width: 100%; background: none; border-left: 0; border-right: 0; border-bottom: 0; text-align: left; font: inherit; color: inherit; }
+.row .main { flex: 1; min-width: 0; }
+.row .main small { display: block; color: var(--muted); font-size: 12px; }
+.row .sum { font-family: var(--f-num); font-weight: 600; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.x { flex: none; border: 0; background: none; color: var(--muted); font-size: 18px; cursor: pointer; padding: 2px 6px; border-radius: 6px; }
+.x.confirm { color: var(--bad); background: var(--bad-soft); font-size: 12px; font-weight: 700; }
+.empty { padding: 16px; color: var(--muted); font-size: 14px; text-align: center; }
+.pill { display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--fg); white-space: nowrap; }
+.pill.ok { background: var(--ok-soft); color: var(--ok); }
+.pill.warn { background: var(--warn-soft); color: var(--warn); }
+.pill.bad { background: var(--bad-soft); color: var(--bad); }
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+.kpi { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 14px; min-width: 0; }
+.kpi span { display: block; font-size: 12px; color: var(--muted); }
+.kpi b { display: block; font-family: var(--f-num); font-size: 21px; font-variant-numeric: tabular-nums; margin-top: 2px; overflow-wrap: anywhere; }
+.kpi small { display: block; font-size: 12px; color: var(--muted); margin-top: 2px; }
+.kpi.good b { color: var(--ok); } .kpi.bad b { color: var(--bad); }
+.tablewrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th { text-align: left; font-size: 12px; color: var(--muted); font-weight: 600; padding: 6px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+td { padding: 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+td.n, th.n { text-align: right; font-family: var(--f-num); font-variant-numeric: tabular-nums; }
+tr.total td { font-weight: 700; border-bottom: 0; }
+.chart { width: 100%; height: auto; display: block; }
+.chart text { font-family: var(--f-num); font-size: 10px; fill: var(--muted); }
+.close-grid { display: grid; grid-template-columns: 1fr auto auto auto; gap: 8px 12px; align-items: center; font-size: 14px; }
+.close-grid .h { font-size: 12px; color: var(--muted); }
+.close-grid .n { font-family: var(--f-num); text-align: right; white-space: nowrap; }
+.close-grid input { padding: 7px 8px; max-width: 120px; text-align: right; }
+.edit-row { display: grid; gap: 8px; align-items: center; padding: 8px 0; border-top: 1px solid var(--line); }
+.edit-row:first-of-type { border-top: 0; }
+.er-doc { grid-template-columns: minmax(0, 2fr) 76px minmax(0, 2fr) auto; }
+.er-two { grid-template-columns: minmax(0, 3fr) minmax(0, 1.3fr) auto; }
+.er-task { grid-template-columns: minmax(0, 3fr) minmax(0, 1fr) minmax(0, 1fr) auto; }
+.er-item { grid-template-columns: minmax(0, 2fr) 80px minmax(0, 1fr) auto auto; }
+.er-one { grid-template-columns: minmax(0, 1fr) auto; }
+@media (max-width: 560px) {
+  .er-doc { grid-template-columns: minmax(0, 1fr) 70px auto; }
+  .er-doc .sp { grid-column: 1 / -1; grid-row: 2; }
+  .er-task { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; }
+  .er-task .txt { grid-column: 1 / -1; }
+  .er-item { grid-template-columns: minmax(0, 1fr) 64px auto; }
+  .er-item .svc { grid-column: 1 / -1; }
+}
+.hint { font-size: 12px; color: var(--muted); margin: 6px 0 0; }
+.savebar { position: sticky; bottom: max(12px, env(safe-area-inset-bottom, 0px)); display: flex; align-items: center; justify-content: space-between; gap: 12px; background: var(--fg); color: var(--bg); border-radius: 14px; padding: 10px 10px 10px 16px; z-index: 4; }
+.status { font-size: 13px; color: var(--muted); text-align: center; margin-top: 14px; }
+.status.warn { color: var(--bad); }
+.toast { color: var(--ok); font-size: 13px; text-align: center; min-height: 18px; margin-top: 6px; }
+.qcard { padding: 12px 14px; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 8px; }
+.qcard:first-child { border-top: 0; }
+.qhead { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+.qhead b { font-size: 15px; }
+.phone { font-family: var(--f-num); font-size: 14px; user-select: all; }
+.qwhy { font-size: 13px; color: var(--muted); }
+.inline { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.inline input[type="date"] { width: auto; padding: 7px 8px; }
+.meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; font-size: 13px; }
+.meta div span { display: block; color: var(--muted); font-size: 12px; }
+.plan { border: 1px solid var(--line); border-radius: 12px; padding: 12px; margin-top: 10px; background: var(--card); }
+.plan-head { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; align-items: center; }
+.bar-h { display: grid; grid-template-columns: minmax(90px, 1fr) 3fr auto; gap: 8px; align-items: center; font-size: 13px; margin-top: 6px; }
+.bar-h .track i { background: var(--accent); }
+.filebtn { position: relative; overflow: hidden; display: inline-block; }
+.filebtn input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="brand">
+      <h1>Пульт клиники <span>Аура</span></h1>
+      <div class="who" id="who"></div>
+    </div>
+    <nav role="tablist" id="nav"></nav>
+  </header>
+  <main id="main"><div class="empty">Загрузка…</div></main>
+  <p class="status" id="status"></p>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  // ══════════ НАСТРОЙКИ ПО УМОЛЧАНИЮ (до загрузки config/main) ══════════
+  const DEFAULT_CFG = {
+    doctors: [
+      { name: "Кристина Алибековна", pct: 30, special: "" },
+      { name: "Бега Балаевич", pct: 25, special: "" },
+      { name: "Кисиев Михаил", pct: 25, special: "Удаление=30" },
+      { name: "Давлат Зафарович", pct: 30, special: "" },
+      { name: "Абдуразак", pct: 25, special: "" },
+    ],
+    staff: [],
+    fixed: [
+      { name: "Аренда", amount: 155463 }, { name: "Налоги", amount: 43000 },
+      { name: "Яндекс", amount: 100000 }, { name: "Маркетолог", amount: 30000 },
+      { name: "Бухгалтер", amount: 35000 }, { name: "Материалы", amount: 50000 },
+      { name: "Коммуналка", amount: 22000 }, { name: "Мусор", amount: 7500 },
+    ],
+    services: ["Консультация", "Лечение", "Пломбирование", "Реставрация", "Удаление", "Имплантация",
+      "Коронка", "Протезирование", "Чистка", "Отбеливание", "Рентген", "Штифт/стекловолокно"],
+    pays: ["Наличные", "Терминал", "Перевод"],
+    sources: ["Яндекс Карты", "2ГИС", "Instagram", "Рекомендация", "Вывеска", "Сайт", "Другое"],
+    lostDays: 90,
+    callsTarget: 20,
+    tasks: [
+      { id: "a01", section: "Утро", days: "all", text: "Прийти за 15 минут до открытия: свет, кондиционер, музыка" },
+      { id: "a02", section: "Утро", days: "all", text: "Холл: пол, диваны, столик, журналы — чисто и ровно" },
+      { id: "a03", section: "Утро", days: "all", text: "Санузел: туалетная бумага, мыло, бумажные полотенца, освежитель, чистота" },
+      { id: "a04", section: "Утро", days: "all", text: "Ресепшен: салфетки, антисептик, бахилы, ручки, визитки" },
+      { id: "a05", section: "Утро", days: "all", text: "Кулер: вода и стаканчики; чай и кофе для пациентов" },
+      { id: "a06", section: "Утро", days: "all", text: "Кабинеты: салфетки, антисептик, перчатки, нагрудники — проверить с ассистентами" },
+      { id: "a07", section: "Утро", days: "all", text: "Пересчитать кассу на начало дня" },
+      { id: "a08", section: "Утро", days: "all", text: "Расписание на сегодня, карты пациентов подготовлены" },
+      { id: "a09", section: "Утро", days: "all", text: "Ответить на все сообщения и пропущенные звонки за ночь" },
+      { id: "b01", section: "Обходы", days: "all", text: "11:00 · санузел (бумага, мыло, полотенца), холл, ресепшен" },
+      { id: "b02", section: "Обходы", days: "all", text: "13:00 · санузел, холл, мусорные вёдра, кулер" },
+      { id: "b03", section: "Обходы", days: "all", text: "15:00 · санузел, холл, салфетки и антисептик" },
+      { id: "b04", section: "Обходы", days: "all", text: "17:00 · санузел, холл, ресепшен" },
+      { id: "b05", section: "Обходы", days: "all", text: "19:00 · санузел, холл, мусор" },
+      { id: "c01", section: "День", days: "all", text: "Каждый приём — сразу во вкладку «Приём»" },
+      { id: "c02", section: "День", days: "all", text: "Каждого пациента после приёма записать на следующий визит" },
+      { id: "c03", section: "День", days: "all", text: "Отмечать посещаемость: пришёл / не пришёл / перенёс" },
+      { id: "c04", section: "День", days: "all", text: "Отвечать на звонки и сообщения в течение 15 минут" },
+      { id: "c05", section: "День", days: "all", text: "Обзвон по спискам во вкладке «Обзвон» — выполнить цель дня" },
+      { id: "c06", section: "День", days: "all", text: "Новых пациентов спрашивать, откуда узнали о клинике" },
+      { id: "d01", section: "Вечер", days: "all", text: "Подтвердить всех пациентов на завтра" },
+      { id: "d02", section: "Вечер", days: "all", text: "Позвонить вчерашним пациентам — как самочувствие" },
+      { id: "d03", section: "Вечер", days: "all", text: "Попросить отзыв на картах у 2 довольных пациентов" },
+      { id: "d04", section: "Вечер", days: "all", text: "Закрыть кассу во вкладке «Приём»: наличные, терминал, переводы" },
+      { id: "d05", section: "Вечер", days: "all", text: "Вынести мусор, проверить санузел перед уходом" },
+      { id: "d06", section: "Вечер", days: "all", text: "Выключить оборудование, свет, кондиционер; закрыть окна и двери" },
+      { id: "w01", section: "Утро", days: 1, text: "Проверить остатки материалов и составить заказ" },
+      { id: "w02", section: "Утро", days: 3, text: "Проверить сроки годности материалов и аптечку" },
+      { id: "w03", section: "День", days: 4, text: "Обзвонить всех с незавершёнными планами лечения" },
+      { id: "w04", section: "Вечер", days: 5, text: "Генеральная уборка ресепшена и холла" },
+      { id: "w05", section: "Вечер", days: 6, text: "Отправить владельцу итоги недели" },
+    ],
+  };
+  const SECTIONS = ["Утро", "Обходы", "День", "Вечер"];
+  const KINDS = ["Первичный", "Повторный"];
+  const PLAN_STATUSES = ["Предложен", "Согласован", "В работе", "Завершён", "Отказ"];
+  const OPEN_PLAN = new Set(["Предложен", "Согласован", "В работе"]);
+  const QUEUES = [
+    ["callback", "Перезвонить", "Перезвонить"],
+    ["confirm", "Подтвердить запись на завтра", "Подтверждение"],
+    ["noshow", "Не пришли", "Неявка"],
+    ["after", "После приёма — самочувствие", "После приёма"],
+    ["plans", "Незавершённые планы лечения", "План лечения"],
+    ["lost", "Потерянные пациенты", "Потерянный"],
+  ];
+  const DOW_SHORT = ["Вс", "Пн", "Вт", "Ср", "Чт", "Пт", "Сб"];
+  const DOWS = ["воскресенье", "понедельник", "вторник", "среда", "четверг", "пятница", "суббота"];
+  const MONTHS = ["январь", "февраль", "март", "апрель", "май", "июнь", "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь"];
+  const MONTHS_GEN = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"];
+
+  // ══════════ УТИЛИТЫ ══════════
+  const pad = (n) => String(n).padStart(2, "0");
+  const keyOf = (d) => d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate());
+  const parseKey = (k) => { const [y, m, d] = k.split("-").map(Number); return new Date(y, m - 1, d || 1); };
+  const addDays = (k, n) => { const d = parseKey(k); d.setDate(d.getDate() + n); return keyOf(d); };
+  const monthOf = (k) => k.slice(0, 7);
+  const addMonths = (m, n) => { const d = parseKey(m + "-01"); d.setMonth(d.getMonth() + n); return keyOf(d).slice(0, 7); };
+  const daysIn = (m) => { const d = parseKey(m + "-01"); return new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate(); };
+  const fmtDay = (k) => { if (!k) return "—"; const d = parseKey(k); return d.getDate() + " " + MONTHS_GEN[d.getMonth()] + (d.getFullYear() !== new Date().getFullYear() ? " " + d.getFullYear() : ""); };
+  const rub = (n) => Math.round(n || 0).toLocaleString("ru-RU") + " ₽";
+  const num = (v) => { const x = Number(String(v == null ? "" : v).replace(/\s/g, "").replace(",", ".").replace(/[^\d.-]/g, "")); return Number.isFinite(x) ? x : 0; };
+  const pct = (a, b) => (b ? Math.round(a / b * 100) : 0) + "%";
+  const rid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+  const clone = (o) => JSON.parse(JSON.stringify(o));
+  const todayKey = () => keyOf(new Date());
+  const live = (o) => Object.entries(o || {}).filter(([, v]) => v && typeof v === "object").map(([id, v]) => ({ id, ...v }));
+
+  function h(tag, attrs, ...kids) {
+    const el = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs || {})) {
+      if (v === false || v == null) continue;
+      if (k === "class") el.className = v;
+      else if (k === "value") el.value = v;
+      else if (k === "checked") el.checked = !!v;
+      else if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
+      else el.setAttribute(k, v === true ? "" : v);
+    }
+    for (const kid of kids.flat(Infinity)) if (kid != null && kid !== false) el.append(kid.nodeType ? kid : document.createTextNode(String(kid)));
+    return el;
+  }
+
+  // ══════════ ХРАНИЛИЩЕ: сервер пульта (SQLite), опрос изменений каждые 4 сек ══════════
+  const Store = (() => {
+    const watchers = new Set();
+    let seq = 0, offline = false;
+    async function api(method, url, body) {
+      let r;
+      try {
+        r = await fetch(url, { method, credentials: "same-origin",
+          headers: body !== undefined ? { "Content-Type": "application/json" } : {},
+          body: body !== undefined ? JSON.stringify(body) : undefined });
+      } catch (e) { throw { code: "unavailable", message: "нет связи с сервером" }; }
+      let j = null;
+      try { j = await r.json(); } catch (e) {}
+      if (r.status === 401) { showLogin(); throw { code: "unauth", message: "нужно войти" }; }
+      if (r.status === 403) throw { code: "invalid_argument", message: (j && j.error) || "нет прав" };
+      if (!r.ok) throw { code: r.status === 413 ? "quota_exceeded" : "unavailable", message: (j && j.error) || "ошибка сервера" };
+      return j;
+    }
+    async function run(w) {
+      try {
+        if (w.kind === "doc") { const r = await api("GET", "/api/doc?path=" + encodeURIComponent(w.path)); if (watchers.has(w)) w.cb(r.data); }
+        else { const list = await api("POST", "/api/query", { coll: w.coll, where: w.where }); if (watchers.has(w)) w.cb(list); }
+      } catch (e) {}
+    }
+    async function poll() {
+      try {
+        const r = await api("GET", "/api/changes?since=" + seq);
+        if (r.seq !== seq) {
+          for (const w of watchers)
+            if (r.reset || r.paths.some((p) => w.kind === "doc" ? p === w.path : p.startsWith(w.coll + "/"))) run(w);
+          seq = r.seq;
+        }
+        if (offline) { offline = false; setStatus(""); }
+      } catch (e) {
+        if (e.code === "unavailable") { offline = true; setStatus("Нет связи с сервером — изменения подтянутся, когда связь вернётся.", true); }
+      }
+      setTimeout(poll, document.hidden ? 15000 : 4000);
+    }
+    return {
+      api,
+      get live() { return true; },
+      async start() { try { seq = (await api("GET", "/api/changes?since=0")).seq; } catch (e) {} setTimeout(poll, 4000); },
+      refreshAll() { watchers.forEach(run); },
+      watchDoc(path, cb) { const w = { kind: "doc", path, cb }; watchers.add(w); run(w); return () => watchers.delete(w); },
+      watchColl(coll, where, cb) { const w = { kind: "coll", coll, where, cb }; watchers.add(w); run(w); return () => watchers.delete(w); },
+      async getRange(coll, field, from, to) { return api("POST", "/api/query", { coll, where: [[field, ">=", from], [field, "<=", to]] }); },
+      async get(path) { return (await api("GET", "/api/doc?path=" + encodeURIComponent(path))).data; },
+      async set(path, data) { await api("PUT", "/api/doc", { path, data }); },
+      async merge(path, data) { await api("PATCH", "/api/doc", { path, data }); },
+      async del(path) { await api("DELETE", "/api/doc?path=" + encodeURIComponent(path)); },
+    };
+  })();
+
+  // ══════════ СОСТОЯНИЕ ══════════
+  const S = {
+    tab: "tasks", day: todayKey(), repMonth: monthOf(todayKey()),
+    cfg: clone(DEFAULT_CFG), cfgLoaded: false,
+    dayDoc: {}, patients: {}, plans: {}, mDays: [],
+    isOwner: true, uid: null,
+    vd: { pid: "", query: "", isNew: false, name: "", phone: "", source: "", doctor: "", service: "", amount: "", pay: "Наличные", kind: "Повторный", next: "" },
+    ed: { name: "", amount: "" },
+    closeDraft: null, cfgDraft: null, cfgDirty: false, armed: null,
+    search: "", selPid: null, pDraft: null, planDraft: null, qOpen: {}, qInput: {}, restoreFile: null,
+    access: [], accDraft: "", loginShown: false,
+  };
+  try { const t = localStorage.getItem("aura-pult-tab"); if (t) S.tab = t; } catch (e) {}
+
+  function setStatus(msg, warn) { const el = document.getElementById("status"); el.textContent = msg || ""; el.classList.toggle("warn", !!warn); }
+  async function guard(p, okMsg) {
+    try { await p; if (okMsg) toast(okMsg); return true; }
+    catch (e) {
+      setStatus(e && e.code === "invalid_argument" ? "Нет прав на это действие." :
+        e && e.code === "quota_exceeded" ? "Хранилище заполнено — сделай резервную копию и напиши владельцу." : "Не сохранилось. Проверь интернет и повтори.", true);
+      return false;
+    }
+  }
+  let toastTimer;
+  function toast(msg) {
+    const els = document.querySelectorAll(".toast"); if (!els.length) return;
+    els.forEach((el) => { el.textContent = msg; });
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => document.querySelectorAll(".toast").forEach((el) => { el.textContent = ""; }), 2400);
+  }
+
+  // ══════════ ЗАПИСИ ══════════
+  const dayPath = (k) => "day/" + k;
+  const writeDay = (k, partial) => Store.merge(dayPath(k), { date: k, ...partial });
+  const patientList = () => Object.entries(S.patients).map(([id, p]) => ({ id, ...p }));
+  const pName = (pid) => (S.patients[pid] && S.patients[pid].name) || "Без имени";
+  const openPlans = (pid) => Object.entries(S.plans).filter(([, p]) => p.patientId === pid && OPEN_PLAN.has(p.status));
+  const planTotal = (pl) => (pl.items || []).reduce((s, i) => s + num(i.price), 0);
+  const planDone = (pl) => (pl.items || []).filter((i) => i.done).reduce((s, i) => s + num(i.price), 0);
+  function updatePatient(pid, data) { S.patients[pid] = { ...(S.patients[pid] || {}), ...data }; return guard(Store.merge("patients/" + pid, data)); }
+
+  // ══════════ РАСЧЁТЫ ══════════
+  function specialMap(str) {
+    const m = {};
+    for (const part of String(str || "").split(/[;,\n]/)) {
+      const r = part.match(/^\s*(.+?)\s*[=:]\s*(\d{1,3})\s*%?\s*$/);
+      if (r) m[r[1].toLowerCase()] = Number(r[2]);
+    }
+    return m;
+  }
+  function pctFor(doctor, service) {
+    const d = S.cfg.doctors.find((x) => x.name === doctor);
+    if (!d) return 0;
+    const s = String(service || "").toLowerCase();
+    for (const [k, v] of Object.entries(specialMap(d.special))) if (s.includes(k) || k.includes(s)) return v;
+    return num(d.pct);
+  }
+  const tasksFor = (k) => { const dow = parseKey(k).getDay(); return S.cfg.tasks.filter((t) => t.days === "all" || Number(t.days) === dow); };
+
+  function queues() {
+    const T = todayKey(), tm = addDays(T, 1), yd = addDays(T, -1), lostBefore = addDays(T, -(num(S.cfg.lostDays) || 90));
+    const since = (p, k) => p.lastCall && p.lastCall.date >= k;
+    const Q = Object.fromEntries(QUEUES.map(([k]) => [k, []]));
+    for (const p of patientList()) {
+      if (p.noCall) continue;
+      const quiet = p.quietUntil && p.quietUntil > T;
+      const hasNext = p.nextVisit && p.nextVisit >= T;
+      if (p.callback && p.callback.date && p.callback.date <= T) Q.callback.push(p);
+      else if (p.nextVisit === tm && !(p.lastCall && p.lastCall.date === T)) Q.confirm.push(p);
+      else if (p.noShowAt && p.noShowAt >= addDays(T, -3) && !hasNext && !since(p, p.noShowAt)) Q.noshow.push(p);
+      else if (p.lastVisit === yd && !since(p, T)) Q.after.push(p);
+      else if (!quiet && openPlans(p.id).length && !hasNext && !since(p, addDays(T, -7))) Q.plans.push(p);
+      else if (!quiet && p.lastVisit && p.lastVisit <= lostBefore && !hasNext && !since(p, addDays(T, -14))) Q.lost.push(p);
+    }
+    Q.lost.sort((a, b) => String(b.lastVisit).localeCompare(String(a.lastVisit)));
+    return Q;
+  }
+
+  function computeMonth(days, m) {
+    const r = { revenue: 0, count: 0, paid: 0, primary: 0, byPay: {}, doctors: {}, daily: Array(daysIn(m)).fill(0), variable: 0,
+      calls: 0, booked: 0, callTypes: {}, noshow: 0, came: 0, moved: 0, uniq: new Set(), taskDays: [], cashDiff: [] };
+    for (const d of days) {
+      const day = Number(String(d.date).slice(8, 10));
+      const visits = live(d.visits);
+      for (const v of visits) {
+        const a = num(v.amount);
+        r.revenue += a; r.count++; if (a > 0) r.paid++;
+        if (v.kind === "Первичный") r.primary++;
+        if (v.patientId) r.uniq.add(v.patientId);
+        r.byPay[v.pay || "—"] = (r.byPay[v.pay || "—"] || 0) + a;
+        const x = r.doctors[v.doctor] || (r.doctors[v.doctor] = { revenue: 0, count: 0, paid: 0, pay: 0 });
+        x.revenue += a; x.count++; if (a > 0) x.paid++; x.pay += a * pctFor(v.doctor, v.service) / 100;
+        if (day >= 1 && day <= r.daily.length) r.daily[day - 1] += a;
+      }
+      for (const e of live(d.expenses)) r.variable += num(e.amount);
+      for (const c of live(d.calls)) {
+        r.calls++; const ok = c.result === "Записан" || c.result === "Подтвердил"; if (ok) r.booked++;
+        const t = r.callTypes[c.type] || (r.callTypes[c.type] = { n: 0, booked: 0 });
+        t.n++; if (ok) t.booked++;
+      }
+      for (const a of live(d.attendance)) { if (a.status === "Не пришёл") r.noshow++; else if (a.status === "Пришёл") r.came++; else if (a.status === "Перенёс") r.moved++; }
+      const tasks = tasksFor(d.date), checks = d.checks || {};
+      if (tasks.length && (visits.length || Object.keys(checks).length)) r.taskDays.push({ date: d.date, pct: tasks.filter((t) => checks[t.id]).length / tasks.length });
+      if (d.closing && d.closing.fact) {
+        let diff = 0; for (const [k, v] of Object.entries(d.closing.fact)) diff += num(v) - num((d.closing.expected || {})[k]);
+        if (Math.abs(diff) >= 1) r.cashDiff.push({ date: d.date, diff });
+      }
+    }
+    r.taskDays.sort((a, b) => a.date.localeCompare(b.date));
+    r.cashDiff.sort((a, b) => a.date.localeCompare(b.date));
+    r.doctorsPay = Object.values(r.doctors).reduce((s, d) => s + d.pay, 0);
+    r.staff = S.cfg.staff.reduce((s, x) => s + num(x.salary), 0);
+    r.fixed = S.cfg.fixed.reduce((s, x) => s + num(x.amount), 0);
+    r.avg = r.paid ? r.revenue / r.paid : 0;
+    r.profit = r.revenue - r.doctorsPay - r.staff - r.fixed - r.variable;
+    const from = m + "-01", to = m + "-" + pad(daysIn(m));
+    r.newPatients = patientList().filter((p) => p.firstVisit && p.firstVisit >= from && p.firstVisit <= to);
+    r.bySource = {};
+    for (const p of r.newPatients) r.bySource[p.source || "Не указан"] = (r.bySource[p.source || "Не указан"] || 0) + 1;
+    r.plans = Object.values(S.plans).filter((p) => String(p.created || "").slice(0, 7) === m);
+    r.planSum = { proposed: 0, agreed: 0, done: 0, refused: 0, byDoctor: {} };
+    for (const p of r.plans) {
+      const t = planTotal(p), agreed = p.status !== "Предложен" && p.status !== "Отказ";
+      r.planSum.proposed += t;
+      if (agreed) r.planSum.agreed += t;
+      if (p.status === "Отказ") r.planSum.refused += t;
+      r.planSum.done += planDone(p);
+      const bd = r.planSum.byDoctor[p.doctor || "—"] || (r.planSum.byDoctor[p.doctor || "—"] = { n: 0, proposed: 0, agreed: 0 });
+      bd.n++; bd.proposed += t; if (agreed) bd.agreed += t;
+    }
+    return r;
+  }
+
+  // ══════════ ПОДПИСКИ ══════════
+  let daySub = null, monthSub = null;
+  function subscribeDay() {
+    if (daySub) daySub();
+    daySub = Store.watchDoc(dayPath(S.day), (d) => {
+      S.dayDoc = d || {};
+      if (!S.closeDraft || !S.closeDraft.touched) S.closeDraft = null;
+      requestRender();
+    });
+  }
+  function subscribeMonth() {
+    if (monthSub) monthSub();
+    const m = S.repMonth;
+    monthSub = Store.watchColl("day", [["date", ">=", m + "-01"], ["date", "<=", m + "-" + pad(daysIn(m))]], (list) => { S.mDays = list; requestRender(); });
+  }
+
+  // ══════════ РЕНДЕР ══════════
+  const $main = document.getElementById("main");
+  let pendingRender = false;
+  const typing = () => { const a = document.activeElement; return a && $main.contains(a) && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) && a.type !== "checkbox" && a.type !== "file"; };
+  function requestRender() { if (typing()) { pendingRender = true; return; } render(); }
+  $main.addEventListener("focusout", () => setTimeout(() => { if (pendingRender && !typing()) { pendingRender = false; render(); } }, 0));
+
+  const TABS = [["tasks", "Задачи"], ["visit", "Приём"], ["calls", "Обзвон"], ["patients", "Пациенты"], ["stats", "Аналитика", true], ["settings", "Настройки", true]];
+  function renderNav() {
+    const qn = Object.values(queues()).reduce((s, a) => s + a.length, 0);
+    document.getElementById("nav").replaceChildren(...TABS.filter((t) => !t[2] || S.isOwner).map(([id, label]) =>
+      h("button", { role: "tab", id: "tab-" + id, "aria-selected": String(S.tab === id), onclick: () => switchTab(id) },
+        label, id === "calls" && qn ? h("span", { class: "cnt" }, qn) : null)));
+  }
+  function switchTab(id) {
+    if (S.tab === "settings" && S.cfgDirty && id !== "settings") setStatus("Настройки не сохранены — вернись во вкладку «Настройки» и нажми «Сохранить».", true);
+    S.tab = id; S.armed = null;
+    try { localStorage.setItem("aura-pult-tab", id); } catch (e) {}
+    if (id === "settings" && !S.cfgDirty) S.cfgDraft = clone(S.cfg);
+    render(); window.scrollTo(0, 0);
+  }
+
+  function dateBar() {
+    const d = parseKey(S.day), isToday = S.day === todayKey();
+    const go = (k) => { S.day = k; S.armed = null; S.closeDraft = null; subscribeDay(); render(); };
+    return h("div", { class: "datebar" },
+      h("button", { class: "round", "aria-label": "Предыдущий день", onclick: () => go(addDays(S.day, -1)) }, "‹"),
+      h("div", { class: "d" },
+        h("b", {}, (isToday ? "Сегодня, " : "") + d.getDate() + " " + MONTHS_GEN[d.getMonth()]),
+        h("small", {}, DOWS[d.getDay()]),
+        !isToday && h("div", {}, h("button", { class: "link", onclick: () => go(todayKey()) }, "К сегодняшнему дню"))),
+      h("button", { class: "round", "aria-label": "Следующий день", onclick: () => go(addDays(S.day, 1)) }, "›"));
+  }
+  const kpi = (lbl, val, cls, sub) => h("div", { class: "kpi " + (cls || "") }, h("span", {}, lbl), h("b", {}, val), sub ? h("small", {}, sub) : null);
+  const delBtn = (key, onDel) => h("button", {
+    class: "x" + (S.armed === key ? " confirm" : ""), "aria-label": "Удалить",
+    onclick: (e) => { e.stopPropagation(); if (S.armed === key) { S.armed = null; onDel(); } else { S.armed = key; render(); } },
+  }, S.armed === key ? "Удалить?" : "×");
+
+  // ── ЗАДАЧИ ──
+  function renderTasks() {
+    const tasks = tasksFor(S.day), checks = S.dayDoc.checks || {};
+    const done = tasks.filter((t) => checks[t.id]).length;
+    const calls = live(S.dayDoc.calls), booked = calls.filter((c) => c.result === "Записан").length;
+    const target = num(S.cfg.callsTarget);
+    const out = [dateBar(),
+      h("div", { class: "kpis" },
+        kpi("Задачи", done + " из " + tasks.length, done === tasks.length && tasks.length ? "good" : ""),
+        kpi("Звонков", calls.length + (target ? " / " + target : ""), target && calls.length >= target ? "good" : "", "записано: " + booked),
+        kpi("Приёмов", String(live(S.dayDoc.visits).length))),
+      h("div", { class: "card progress" }, h("div", { class: "track" }, h("i", { style: "width:" + (tasks.length ? Math.round(done / tasks.length * 100) : 0) + "%" })), h("b", {}, pct(done, tasks.length)))];
+    for (const sec of SECTIONS) {
+      const list = tasks.filter((t) => t.section === sec);
+      if (!list.length) continue;
+      const secDone = list.filter((t) => checks[t.id]).length;
+      out.push(h("section", {}, h("h2", {}, sec, h("span", { class: "pill" + (secDone === list.length ? " ok" : "") }, secDone + "/" + list.length)),
+        h("div", { class: "list" }, list.map((t) => {
+          const on = !!checks[t.id];
+          return h("button", { class: "task" + (on ? " done" : ""), "aria-pressed": String(on), onclick: () => toggleTask(t.id) },
+            h("span", { class: "box", "aria-hidden": "true" }, on ? "✓" : ""), h("span", { class: "tt" }, t.text));
+        }))));
+    }
+    if (!tasks.length) out.push(h("div", { class: "card empty" }, "На этот день задач нет. Владелец добавляет их во вкладке «Настройки»."));
+    out.push(h("div", { class: "toast" }));
+    return out;
+  }
+  function toggleTask(id) {
+    const v = !((S.dayDoc.checks || {})[id]);
+    S.dayDoc = { ...S.dayDoc, checks: { ...(S.dayDoc.checks || {}), [id]: v } };
+    render();
+    guard(writeDay(S.day, { checks: { [id]: v } }));
+  }
+
+  // ── ПРИЁМ ──
+  const pLabel = (p) => (p.name || "Без имени") + (p.phone ? " · " + p.phone : "") + (p.doctor ? " · " + p.doctor : "");
+  function patientPicker(D) {
+    const listId = "pl-visit";
+    const pats = patientList().sort((a, b) => String(b.lastVisit || "").localeCompare(String(a.lastVisit || "")));
+    return h("div", { class: "full" },
+      h("label", { class: "f" }, "Пациент",
+        h("input", { id: "v-patient", list: listId, autocomplete: "off", value: D.pid && S.patients[D.pid] ? pLabel(S.patients[D.pid]) : D.query, placeholder: "Начни вводить имя или телефон",
+          disabled: D.isNew,
+          oninput: (e) => { const v = e.target.value; D.query = v; const hit = pats.find((p) => pLabel(p) === v); D.pid = hit ? hit.id : ""; } })),
+      h("datalist", { id: listId }, pats.slice(0, 1500).map((p) => h("option", { value: pLabel(p) }))),
+      h("div", { class: "inline", style: "margin-top:6px" },
+        h("label", { class: "chk" }, h("input", { type: "checkbox", id: "v-isnew", checked: D.isNew,
+          onchange: (e) => { D.isNew = e.target.checked; if (D.isNew) { D.pid = ""; D.kind = "Первичный"; if (!D.name) D.name = D.query; } render(); } }), "Новый пациент"),
+        D.pid ? h("span", { class: "pill ok" }, "выбран") : D.query && !D.isNew ? h("span", { class: "qwhy" }, "выбери из подсказок или отметь «Новый пациент»") : null));
+  }
+
+  function addVisit() {
+    const D = S.vd, amount = num(D.amount), k = S.day;
+    if (!D.doctor) { toast("Выбери врача"); return; }
+    if (D.isNew && !D.name.trim()) { toast("Впиши имя нового пациента"); return; }
+    let pid = D.pid;
+    const at = new Date().toISOString();
+    if (D.isNew) {
+      pid = rid();
+      const p = { name: D.name.trim(), phone: D.phone.trim(), doctor: D.doctor, source: D.source, created: at, firstVisit: k, lastVisit: k };
+      if (D.next) p.nextVisit = D.next;
+      S.patients[pid] = p;
+      guard(Store.set("patients/" + pid, p));
+    }
+    const vid = rid();
+    const v = { patientId: pid || "", doctor: D.doctor, service: D.service, amount, pay: D.pay, kind: D.kind, at, by: S.uid || "" };
+    const partial = { visits: { [vid]: v } };
+    if (pid && !D.isNew) {
+      const p = S.patients[pid] || {};
+      const upd = { lastVisit: !p.lastVisit || p.lastVisit < k ? k : p.lastVisit };
+      if (!p.firstVisit || p.firstVisit > k) upd.firstVisit = k;
+      if (!p.doctor) upd.doctor = D.doctor;
+      if (D.next) upd.nextVisit = D.next; else if (p.nextVisit === k) upd.nextVisit = "";
+      if (p.nextVisit === k || (S.dayDoc.attendance || {})[pid]) partial.attendance = { [pid]: { status: "Пришёл", at } };
+      updatePatient(pid, upd);
+    }
+    S.dayDoc = { ...S.dayDoc, visits: { ...(S.dayDoc.visits || {}), [vid]: v },
+      attendance: partial.attendance ? { ...(S.dayDoc.attendance || {}), ...partial.attendance } : S.dayDoc.attendance };
+    Object.assign(D, { pid: "", query: "", isNew: false, name: "", phone: "", source: "", amount: "", next: "", kind: "Повторный" });
+    render();
+    guard(writeDay(k, partial), "Приём добавлен");
+  }
+
+  function setAttendance(pid, status, extra) {
+    const at = new Date().toISOString();
+    S.dayDoc = { ...S.dayDoc, attendance: { ...(S.dayDoc.attendance || {}), [pid]: { status, at } } };
+    if (status === "Не пришёл") updatePatient(pid, { noShowAt: S.day });
+    if (status === "Перенёс" && extra) updatePatient(pid, { nextVisit: extra });
+    render();
+    guard(writeDay(S.day, { attendance: { [pid]: { status, at } } }));
+  }
+
+  function renderVisit() {
+    const D = S.vd, cfg = S.cfg, dd = S.dayDoc;
+    if (!D.doctor || !cfg.doctors.some((d) => d.name === D.doctor)) D.doctor = cfg.doctors[0] ? cfg.doctors[0].name : "";
+    if (!D.service || !cfg.services.includes(D.service)) D.service = cfg.services[0] || "";
+    if (!cfg.pays.includes(D.pay)) D.pay = cfg.pays[0] || "";
+    const seg = (opts, key) => h("div", { class: "seg", role: "group" }, opts.map((o) =>
+      h("button", { type: "button", "aria-pressed": String(D[key] === o), onclick: () => { D[key] = o; render(); } }, o)));
+
+    const att = dd.attendance || {};
+    const booked = patientList().filter((p) => p.nextVisit === S.day || att[p.id]);
+    const bookedCard = h("section", {}, h("h2", {}, "По записи", h("span", { class: "pill" }, booked.length)),
+      h("div", { class: "list" }, booked.length ? booked.map((p) => {
+        const a = att[p.id], key = "mv" + p.id;
+        return h("div", { class: "qcard" },
+          h("div", { class: "qhead" }, h("b", {}, p.name || "Без имени"),
+            a ? h("span", { class: "pill " + (a.status === "Пришёл" ? "ok" : a.status === "Не пришёл" ? "bad" : "warn") }, a.status) : h("span", { class: "phone" }, p.phone || "")),
+          !a || a.status !== "Пришёл" ? h("div", { class: "inline" },
+            h("button", { class: "chip ok", onclick: () => { D.pid = p.id; D.isNew = false; D.query = ""; D.kind = "Повторный"; render(); const el = document.getElementById("v-amount"); if (el) { el.scrollIntoView({ block: "center" }); el.focus(); } } }, "Пришёл → внести приём"),
+            h("button", { class: "chip bad", onclick: () => setAttendance(p.id, "Не пришёл") }, "Не пришёл"),
+            S.qOpen[key] ? [h("input", { type: "date", id: "mv-" + p.id, value: S.qInput[key] || addDays(S.day, 1), oninput: (e) => { S.qInput[key] = e.target.value; } }),
+              h("button", { class: "chip warn", onclick: () => { const d = S.qInput[key] || addDays(S.day, 1); S.qOpen[key] = false; setAttendance(p.id, "Перенёс", d); } }, "Сохранить перенос")]
+              : h("button", { class: "chip warn", onclick: () => { S.qOpen[key] = true; render(); } }, "Перенёс")) : null);
+      }) : h("div", { class: "empty" }, "На этот день никто не записан. Дату следующего визита ставят при внесении приёма, при обзвоне или в карточке пациента.")));
+
+    const visitForm = h("div", { class: "card" }, h("h3", {}, "Внести приём"),
+      h("div", { class: "grid" },
+        patientPicker(D),
+        D.isNew ? [
+          h("label", { class: "f" }, "Имя", h("input", { id: "v-name", value: D.name, oninput: (e) => { D.name = e.target.value; } })),
+          h("label", { class: "f" }, "Телефон", h("input", { id: "v-phone", type: "tel", value: D.phone, placeholder: "+7…", oninput: (e) => { D.phone = e.target.value; } })),
+          h("label", { class: "f" }, "Откуда узнал", h("select", { id: "v-source", onchange: (e) => { D.source = e.target.value; } },
+            h("option", { value: "" }, "—"), cfg.sources.map((s) => h("option", { value: s, selected: s === D.source }, s))))] : null,
+        h("label", { class: "f" }, "Врач", h("select", { id: "v-doctor", onchange: (e) => { D.doctor = e.target.value; } },
+          cfg.doctors.map((d) => h("option", { value: d.name, selected: d.name === D.doctor }, d.name)))),
+        h("label", { class: "f" }, "Услуга", h("select", { id: "v-service", onchange: (e) => { D.service = e.target.value; } },
+          cfg.services.map((s) => h("option", { value: s, selected: s === D.service }, s)))),
+        h("label", { class: "f" }, "Сумма, ₽", h("input", { id: "v-amount", type: "number", inputmode: "numeric", min: "0", step: "100", value: D.amount, placeholder: "0",
+          oninput: (e) => { D.amount = e.target.value; }, onkeydown: (e) => { if (e.key === "Enter") addVisit(); } })),
+        h("label", { class: "f" }, "Следующий визит", h("input", { id: "v-next", type: "date", value: D.next, oninput: (e) => { D.next = e.target.value; } }))),
+      h("div", { class: "grid", style: "margin-top:12px" },
+        h("div", {}, h("div", { class: "hint", style: "margin:0 0 6px" }, "Оплата"), seg(cfg.pays, "pay")),
+        h("div", {}, h("div", { class: "hint", style: "margin:0 0 6px" }, "Пациент"), seg(KINDS, "kind"))),
+      h("button", { class: "btn wide", onclick: addVisit }, "Добавить приём"),
+      h("div", { class: "toast" }));
+
+    const visits = live(dd.visits).sort((a, b) => String(a.at).localeCompare(String(b.at)));
+    const total = visits.reduce((s, v) => s + num(v.amount), 0);
+    const visitsList = h("section", {}, h("h2", {}, "Приёмы за день", h("span", { class: "pill" }, visits.length + " · " + rub(total))),
+      h("div", { class: "list" }, visits.length ? visits.map((v) => h("div", { class: "row" },
+        h("div", { class: "main" }, (v.patientId ? pName(v.patientId) + " · " : "") + v.service,
+          h("small", {}, [v.doctor, v.pay, v.kind].filter(Boolean).join(" · "))),
+        h("span", { class: "sum" }, rub(v.amount)),
+        delBtn("v" + v.id, () => { S.dayDoc = { ...S.dayDoc, visits: { ...S.dayDoc.visits, [v.id]: null } }; render(); guard(writeDay(S.day, { visits: { [v.id]: null } }), "Удалено"); })))
+        : h("div", { class: "empty" }, "Приёмов пока нет.")));
+
+    const E = S.ed;
+    const exps = live(dd.expenses).sort((a, b) => String(a.at).localeCompare(String(b.at)));
+    const expTotal = exps.reduce((s, e) => s + num(e.amount), 0);
+    const addExp = () => {
+      const amount = num(E.amount);
+      if (!E.name.trim() || amount <= 0) { toast("Напиши, на что расход, и сумму"); return; }
+      const id = rid(), e = { name: E.name.trim(), amount, at: new Date().toISOString(), by: S.uid || "" };
+      E.name = ""; E.amount = "";
+      S.dayDoc = { ...S.dayDoc, expenses: { ...(S.dayDoc.expenses || {}), [id]: e } }; render();
+      guard(writeDay(S.day, { expenses: { [id]: e } }), "Расход добавлен");
+    };
+    const expCard = h("div", { class: "card" }, h("h3", {}, "Расходы за день · " + rub(expTotal)),
+      h("div", { class: "grid" },
+        h("label", { class: "f" }, "На что", h("input", { id: "e-name", value: E.name, placeholder: "Салфетки, вода, курьер…", oninput: (e) => { E.name = e.target.value; } })),
+        h("label", { class: "f" }, "Сумма, ₽", h("input", { id: "e-amount", type: "number", inputmode: "numeric", min: "0", value: E.amount, oninput: (e) => { E.amount = e.target.value; }, onkeydown: (e) => { if (e.key === "Enter") addExp(); } }))),
+      h("button", { class: "btn ghost wide", onclick: addExp }, "Добавить расход"),
+      exps.length ? h("div", { class: "list", style: "margin-top:12px" }, exps.map((e) => h("div", { class: "row" },
+        h("div", { class: "main" }, e.name), h("span", { class: "sum" }, rub(e.amount)),
+        delBtn("e" + e.id, () => { S.dayDoc = { ...S.dayDoc, expenses: { ...S.dayDoc.expenses, [e.id]: null } }; render(); guard(writeDay(S.day, { expenses: { [e.id]: null } }), "Удалено"); })))) : null);
+
+    const expected = {};
+    for (const p of cfg.pays) expected[p] = 0;
+    for (const v of visits) expected[v.pay] = (expected[v.pay] || 0) + num(v.amount);
+    if (expected["Наличные"] != null) expected["Наличные"] -= expTotal;
+    if (!S.closeDraft) { const c = dd.closing || {}; S.closeDraft = { fact: { ...(c.fact || {}) }, note: c.note || "" }; }
+    const CD = S.closeDraft;
+    const rows = Object.keys(expected).map((p) => {
+      const exp = expected[p], diffCell = h("div", { class: "n" });
+      const show = (f) => { const diff = f === "" || f == null ? null : num(f) - exp;
+        diffCell.replaceChildren(diff == null ? "—" : h("span", { class: "pill " + (Math.abs(diff) < 1 ? "ok" : "bad") }, (diff > 0 ? "+" : "") + rub(diff))); };
+      show(CD.fact[p]);
+      return [h("div", {}, p + (p === "Наличные" && expTotal ? " (минус расходы)" : "")), h("div", { class: "n" }, rub(exp)),
+        h("input", { type: "number", inputmode: "numeric", id: "c-" + p, value: CD.fact[p] == null ? "" : CD.fact[p], placeholder: "факт",
+          oninput: (e) => { CD.fact[p] = e.target.value; CD.touched = true; show(e.target.value); } }), diffCell];
+    });
+    const saveClosing = () => {
+      const fact = {};
+      for (const [k, v] of Object.entries(CD.fact)) if (v !== "" && v != null) fact[k] = num(v);
+      const data = { fact, expected, note: CD.note.trim(), closedAt: new Date().toISOString(), by: S.uid || "" };
+      S.dayDoc = { ...S.dayDoc, closing: data }; S.closeDraft = null; render();
+      guard(writeDay(S.day, { closing: data }), "День закрыт");
+    };
+    const closed = dd.closing && dd.closing.closedAt;
+    const closeCard = h("div", { class: "card" },
+      h("h3", {}, "Закрытие кассы", closed ? h("span", { class: "pill ok" }, "закрыто") : null),
+      h("div", { class: "close-grid" }, h("div", { class: "h" }, "Оплата"), h("div", { class: "h n" }, "По отчёту"), h("div", { class: "h" }, "Факт"), h("div", { class: "h n" }, "Разница"), rows),
+      h("label", { class: "f", style: "margin-top:12px" }, "Что произошло за день",
+        h("textarea", { id: "c-note", placeholder: "Отмены, жалобы, поломки, что купить…", oninput: (e) => { CD.note = e.target.value; CD.touched = true; } }, CD.note)),
+      h("button", { class: "btn wide", onclick: saveClosing }, closed ? "Обновить закрытие" : "Закрыть день"),
+      h("div", { class: "toast" }));
+
+    return [dateBar(), bookedCard, visitForm, visitsList, expCard, closeCard];
+  }
+
+  // ── ОБЗВОН ──
+  function logCall(p, type, result, date) {
+    const T = todayKey(), id = rid(), at = new Date().toISOString();
+    const call = { patientId: p.id, type, result, at, by: S.uid || "" };
+    const upd = { lastCall: { date: T, type, result } };
+    if (result === "Записан") { upd.nextVisit = date || addDays(T, 1); upd.callback = null; upd.noShowAt = ""; }
+    else if (result === "Перезвонить") upd.callback = { date: date || addDays(T, 1), note: "" };
+    else if (result === "Не дозвонились") upd.callback = { date: addDays(T, 1), note: "не дозвонились " + fmtDay(T) };
+    else if (result === "Отказ") { upd.callback = null; upd.quietUntil = addDays(T, 90); }
+    else upd.callback = null;
+    if (date && result === "Записан") call.visitDate = date;
+    updatePatient(p.id, upd);
+    if (S.day === T) S.dayDoc = { ...S.dayDoc, calls: { ...(S.dayDoc.calls || {}), [id]: call } };
+    render();
+    guard(writeDay(T, { calls: { [id]: call } }), "Звонок записан");
+  }
+
+  function queueCard(p, qk, type) {
+    const key = qk + p.id, open = S.qOpen[key], T = todayKey();
+    const why = qk === "callback" ? "Перезвонить " + fmtDay(p.callback.date) + (p.callback.note ? " · " + p.callback.note : "")
+      : qk === "confirm" ? "Записан на " + fmtDay(p.nextVisit)
+      : qk === "noshow" ? "Не пришёл " + fmtDay(p.noShowAt)
+      : qk === "after" ? "Был вчера, " + fmtDay(p.lastVisit)
+      : qk === "plans" ? openPlans(p.id).map(([, pl]) => pl.status + " · осталось " + rub(planTotal(pl) - planDone(pl)) + (pl.nextStep ? " · " + pl.nextStep : "")).join("; ")
+      : "Последний визит " + fmtDay(p.lastVisit);
+    const copy = () => {
+      try { navigator.clipboard.writeText(p.phone || "").then(() => toast("Номер скопирован"), () => toast("Выдели номер и скопируй вручную")); }
+      catch (e) { toast("Выдели номер и скопируй вручную"); }
+    };
+    const pick = (r) => {
+      if (r === "Записан" || r === "Перезвонить") { S.qOpen[key] = r; S.qInput[key] = S.qInput[key] || addDays(T, 1); render(); return; }
+      logCall(p, type, r);
+    };
+    const results = qk === "confirm" ? ["Подтвердил", "Перезвонить", "Не дозвонились", "Отказ"]
+      : qk === "after" ? ["Всё хорошо", "Записан", "Перезвонить", "Не дозвонились"]
+      : ["Записан", "Перезвонить", "Не дозвонились", "Отказ"];
+    const good = new Set(["Записан", "Подтвердил", "Всё хорошо"]);
+    return h("div", { class: "qcard" },
+      h("div", { class: "qhead" },
+        h("b", {}, p.name || "Без имени", p.doctor ? h("span", { class: "qwhy" }, " · " + p.doctor) : null),
+        p.phone ? h("span", { class: "inline" }, h("span", { class: "phone" }, p.phone), h("button", { class: "link", onclick: copy }, "копировать")) : h("span", { class: "qwhy" }, "нет телефона")),
+      h("div", { class: "qwhy" }, why),
+      open ? h("div", { class: "inline" },
+        h("span", { class: "qwhy" }, open === "Записан" ? "Дата визита:" : "Когда перезвонить:"),
+        h("input", { type: "date", id: "q-" + key, value: S.qInput[key], oninput: (e) => { S.qInput[key] = e.target.value; } }),
+        h("button", { class: "btn sm", onclick: () => { const d = S.qInput[key]; S.qOpen[key] = false; logCall(p, type, open, d); } }, "Сохранить"),
+        h("button", { class: "link", onclick: () => { S.qOpen[key] = false; render(); } }, "Отмена"))
+        : h("div", { class: "inline" }, results.map((r) => h("button", { class: "chip" + (good.has(r) ? " ok" : r === "Отказ" ? " bad" : ""), onclick: () => pick(r) }, r))));
+  }
+
+  function renderCalls() {
+    const Q = queues(), T = todayKey();
+    const todayCalls = S.day === T ? live(S.dayDoc.calls) : [];
+    const target = num(S.cfg.callsTarget);
+    const inQueue = Object.values(Q).reduce((s, a) => s + a.length, 0);
+    const out = [h("div", { class: "kpis" },
+      kpi("Звонков сегодня", todayCalls.length + (target ? " / " + target : ""), target && todayCalls.length >= target ? "good" : ""),
+      kpi("Записано", String(todayCalls.filter((c) => c.result === "Записан").length)),
+      kpi("В очереди", String(inQueue)))];
+    if (S.day !== T) out.push(h("p", { class: "hint" }, "Счётчик звонков считает сегодняшний день. Вернись на сегодня во вкладке «Задачи» или «Приём»."));
+    for (const [k, title, type] of QUEUES) {
+      const list = Q[k];
+      if (!list.length) continue;
+      const shown = list.slice(0, k === "lost" ? 20 : 50);
+      out.push(h("section", {}, h("h2", {}, title, h("span", { class: "pill" }, list.length)),
+        h("div", { class: "list" }, shown.map((p) => queueCard(p, k, type))),
+        list.length > shown.length ? h("p", { class: "hint" }, "Показаны первые " + shown.length + ". Остальные появятся по мере обзвона.") : null));
+    }
+    if (!inQueue) out.push(h("div", { class: "card empty" }, "Очередь пуста. Списки собираются сами: записи на завтра, неявки, вчерашние пациенты, незавершённые планы и те, кто давно не был."));
+    out.push(h("div", { class: "toast" }));
+    return out;
+  }
+
+  // ── ПАЦИЕНТЫ ──
+  function renderPatients() {
+    if (S.selPid) return renderPatientCard(S.selPid);
+    const q = S.search.trim().toLowerCase();
+    let list = patientList();
+    if (q) list = list.filter((p) => [p.name, p.doctor, p.phone].some((x) => String(x || "").toLowerCase().includes(q)));
+    list.sort((a, b) => String(b.lastVisit || b.created || "").localeCompare(String(a.lastVisit || a.created || "")));
+    const total = Object.keys(S.patients).length;
+    const withPlans = new Set(Object.values(S.plans).filter((p) => OPEN_PLAN.has(p.status)).map((p) => p.patientId));
+    const T = todayKey();
+    const listEl = h("div", { class: "list", id: "p-list" });
+    const fill = () => {
+      const qq = S.search.trim().toLowerCase();
+      let l = patientList();
+      if (qq) l = l.filter((p) => [p.name, p.doctor, p.phone].some((x) => String(x || "").toLowerCase().includes(qq)));
+      l.sort((a, b) => String(b.lastVisit || b.created || "").localeCompare(String(a.lastVisit || a.created || "")));
+      listEl.replaceChildren(...(l.length ? l.slice(0, 80).map((p) => h("button", { class: "row click", onclick: () => { S.selPid = p.id; S.pDraft = null; S.planDraft = null; render(); window.scrollTo(0, 0); } },
+        h("div", { class: "main" }, p.name || "Без имени",
+          h("small", {}, [p.phone, p.doctor, p.lastVisit && "был " + fmtDay(p.lastVisit)].filter(Boolean).join(" · "))),
+        withPlans.has(p.id) ? h("span", { class: "pill warn" }, "план") : null,
+        p.nextVisit && p.nextVisit >= T ? h("span", { class: "pill ok" }, fmtDay(p.nextVisit)) : null))
+        : [h("div", { class: "empty" }, total ? "Никого не нашли." : "Пациентов пока нет. Они появляются при внесении приёма с галочкой «Новый пациент» или кнопкой выше.")]));
+      const more = document.getElementById("p-more");
+      if (more) more.textContent = l.length > 80 ? "Показаны 80 из " + l.length + ". Уточни поиск." : "";
+    };
+    fill();
+    return [
+      h("label", { class: "f" }, "Поиск: имя, телефон, врач",
+        h("input", { id: "p-search", type: "search", value: S.search, placeholder: "Найти пациента", oninput: (e) => { S.search = e.target.value; fill(); } })),
+      h("div", { class: "inline" },
+        h("button", { class: "btn ghost sm", onclick: () => { S.selPid = rid(); S.pDraft = { name: S.search, phone: "", doctor: "", source: "", note: "", nextVisit: "", noCall: false, isNew: true }; render(); } }, "+ Новый пациент"),
+        h("span", { class: "qwhy" }, "Всего: " + total + " · с открытым планом: " + withPlans.size)),
+      listEl,
+      h("p", { class: "hint", id: "p-more" }, list.length > 80 ? "Показаны 80 из " + list.length + ". Уточни поиск." : ""),
+    ];
+  }
+
+  function renderPatientCard(pid) {
+    const p = S.patients[pid] || {};
+    if (!S.pDraft) S.pDraft = { name: p.name || "", phone: p.phone || "", doctor: p.doctor || "", source: p.source || "", note: p.note || "", nextVisit: p.nextVisit || "", noCall: !!p.noCall };
+    const P = S.pDraft, cfg = S.cfg;
+    const inp = (key, label, type) => h("label", { class: "f" }, label,
+      h("input", { type: type || "text", id: "pc-" + key, value: P[key], oninput: (e) => { P[key] = e.target.value; } }));
+    const save = () => {
+      if (!P.name.trim()) { toast("Впиши имя"); return; }
+      const data = { name: P.name.trim(), phone: P.phone.trim(), doctor: P.doctor, source: P.source, note: P.note.trim(), nextVisit: P.nextVisit, noCall: !!P.noCall };
+      if (P.isNew) {
+        data.created = new Date().toISOString();
+        S.patients[pid] = data; S.pDraft = null; render();
+        guard(Store.set("patients/" + pid, data), "Пациент добавлен");
+      } else { updatePatient(pid, data).then((ok) => { if (ok) toast("Сохранено"); }); S.pDraft = null; render(); }
+    };
+    const plans = Object.entries(S.plans).filter(([, pl]) => pl.patientId === pid).sort((a, b) => String(b[1].created).localeCompare(String(a[1].created)));
+    const out = [
+      h("button", { class: "link", style: "align-self:flex-start", onclick: () => { S.selPid = null; S.pDraft = null; S.planDraft = null; render(); } }, "‹ Все пациенты"),
+      h("div", { class: "card" }, h("h3", {}, P.isNew ? "Новый пациент" : (p.name || "Пациент"), p.noCall ? h("span", { class: "pill bad" }, "не звонить") : null),
+        !P.isNew ? h("div", { class: "meta", style: "margin-bottom:12px" },
+          h("div", {}, h("span", {}, "Первый визит"), fmtDay(p.firstVisit)),
+          h("div", {}, h("span", {}, "Последний визит"), fmtDay(p.lastVisit)),
+          h("div", {}, h("span", {}, "Последний звонок"), p.lastCall ? fmtDay(p.lastCall.date) + " · " + p.lastCall.result : "—"),
+          h("div", {}, h("span", {}, "Откуда"), p.source || "—")) : null,
+        h("div", { class: "grid" },
+          inp("name", "Имя"), inp("phone", "Телефон", "tel"),
+          h("label", { class: "f" }, "Лечащий врач", h("select", { id: "pc-doctor", onchange: (e) => { P.doctor = e.target.value; } },
+            h("option", { value: "" }, "—"), cfg.doctors.map((d) => h("option", { value: d.name, selected: d.name === P.doctor }, d.name)),
+            P.doctor && !cfg.doctors.some((d) => d.name === P.doctor) ? h("option", { value: P.doctor, selected: true }, P.doctor) : null)),
+          h("label", { class: "f" }, "Откуда узнал", h("select", { id: "pc-source", onchange: (e) => { P.source = e.target.value; } },
+            h("option", { value: "" }, "—"), cfg.sources.map((s) => h("option", { value: s, selected: s === P.source }, s)))),
+          inp("nextVisit", "Следующий визит", "date"),
+          h("label", { class: "f full" }, "Заметка", h("textarea", { id: "pc-note", oninput: (e) => { P.note = e.target.value; } }, P.note)),
+          h("label", { class: "chk full" }, h("input", { type: "checkbox", id: "pc-nocall", checked: P.noCall, onchange: (e) => { P.noCall = e.target.checked; } }), "Не звонить (просил не беспокоить)")),
+        h("button", { class: "btn wide", onclick: save }, P.isNew ? "Добавить пациента" : "Сохранить"),
+        h("div", { class: "toast" })),
+    ];
+    if (!P.isNew) {
+      const newPlanBtn = h("button", { class: "btn ghost", style: "margin-top:10px", onclick: () => {
+        S.planDraft = { id: rid(), isNew: true, patientId: pid, doctor: cfg.doctors[0] ? cfg.doctors[0].name : "", status: "Предложен", nextStep: "", items: [{ service: cfg.services[0] || "", tooth: "", price: "", done: false }] }; render(); } }, "+ План лечения");
+      out.push(h("section", {}, h("h2", {}, "Планы лечения", h("span", { class: "pill" }, plans.length)),
+        plans.map(([id, pl]) => planView(id, pl)),
+        !plans.length && !(S.planDraft && S.planDraft.isNew) ? h("div", { class: "card empty" }, "Планов пока нет. Врач называет план после осмотра — внеси его сюда, чтобы не потерять пациента.") : null,
+        S.planDraft && S.planDraft.isNew ? planEditor(S.planDraft) : newPlanBtn));
+    }
+    return out;
+  }
+
+  function planView(id, pl) {
+    if (S.planDraft && S.planDraft.id === id) return planEditor(S.planDraft);
+    const total = planTotal(pl), done = planDone(pl);
+    const cls = pl.status === "Завершён" ? "ok" : pl.status === "Отказ" ? "bad" : "warn";
+    const toggleItem = (i) => {
+      const items = clone(pl.items); items[i].done = !items[i].done;
+      let st = pl.status;
+      if (items.every((x) => x.done)) st = "Завершён";
+      else if (items.some((x) => x.done) && (st === "Предложен" || st === "Согласован" || st === "Завершён")) st = "В работе";
+      const updated = new Date().toISOString();
+      S.plans[id] = { ...pl, items, status: st, updated }; render();
+      guard(Store.merge("plans/" + id, { items, status: st, updated }));
+    };
+    return h("div", { class: "plan" },
+      h("div", { class: "plan-head" }, h("b", {}, (pl.doctor || "—") + " · " + rub(total)), h("span", { class: "pill " + cls }, pl.status)),
+      h("div", { class: "qwhy" }, "Создан " + fmtDay(String(pl.created || "").slice(0, 10)) + " · выполнено " + rub(done) + " (" + pct(done, total) + ")" + (pl.nextStep ? " · дальше: " + pl.nextStep : "")),
+      h("div", { class: "list", style: "margin-top:8px" }, (pl.items || []).map((it, i) => h("button", {
+        class: "task" + (it.done ? " done" : ""), "aria-pressed": String(!!it.done), onclick: () => toggleItem(i) },
+        h("span", { class: "box", "aria-hidden": "true" }, it.done ? "✓" : ""), h("span", { class: "tt" }, it.service + (it.tooth ? " · зуб " + it.tooth : "") + " · " + rub(it.price))))),
+      h("div", { class: "btns" },
+        h("button", { class: "link", onclick: () => { S.planDraft = { id, ...clone(pl) }; render(); } }, "Изменить"),
+        delBtn("pl" + id, () => { delete S.plans[id]; render(); guard(Store.del("plans/" + id), "План удалён"); })));
+  }
+
+  function planEditor(PD) {
+    const cfg = S.cfg;
+    const total = PD.items.reduce((s, i) => s + num(i.price), 0);
+    const save = () => {
+      const items = PD.items.filter((i) => i.service).map((i) => ({ service: i.service, tooth: String(i.tooth || "").trim(), price: num(i.price), done: !!i.done }));
+      if (!items.length) { toast("Добавь хотя бы одну услугу"); return; }
+      const now = new Date().toISOString();
+      const data = { patientId: PD.patientId, doctor: PD.doctor, status: PD.status, nextStep: String(PD.nextStep || "").trim(), items, created: PD.created || now, updated: now, by: PD.by || S.uid || "" };
+      S.plans[PD.id] = data; S.planDraft = null; render();
+      guard(Store.set("plans/" + PD.id, data), "План сохранён");
+    };
+    const totalEl = h("span", {}, rub(total));
+    const recalc = () => totalEl.replaceChildren(rub(PD.items.reduce((s, i) => s + num(i.price), 0)));
+    return h("div", { class: "plan" },
+      h("div", { class: "grid" },
+        h("label", { class: "f" }, "Врач", h("select", { onchange: (e) => { PD.doctor = e.target.value; } }, cfg.doctors.map((d) => h("option", { value: d.name, selected: d.name === PD.doctor }, d.name)))),
+        h("label", { class: "f" }, "Статус", h("select", { onchange: (e) => { PD.status = e.target.value; } }, PLAN_STATUSES.map((s) => h("option", { value: s, selected: s === PD.status }, s)))),
+        h("label", { class: "f full" }, "Следующий шаг", h("input", { value: PD.nextStep || "", placeholder: "Например: КТ, затем имплант 36", oninput: (e) => { PD.nextStep = e.target.value; } }))),
+      h("div", { style: "margin-top:10px" }, PD.items.map((it, i) => h("div", { class: "edit-row er-item" },
+        h("div", { class: "svc" }, h("select", { "aria-label": "Услуга", onchange: (e) => { it.service = e.target.value; } }, cfg.services.map((s) => h("option", { value: s, selected: s === it.service }, s)))),
+        h("input", { "aria-label": "Зуб", placeholder: "зуб", value: it.tooth || "", oninput: (e) => { it.tooth = e.target.value; } }),
+        h("input", { "aria-label": "Цена", type: "number", inputmode: "numeric", placeholder: "цена", value: it.price, oninput: (e) => { it.price = e.target.value; recalc(); } }),
+        h("label", { class: "chk" }, h("input", { type: "checkbox", checked: !!it.done, onchange: (e) => { it.done = e.target.checked; } }), "сделано"),
+        h("button", { class: "x", "aria-label": "Убрать услугу", onclick: () => { PD.items.splice(i, 1); render(); } }, "×")))),
+      h("button", { class: "link", style: "margin-top:6px", onclick: () => { PD.items.push({ service: cfg.services[0] || "", tooth: "", price: "", done: false }); render(); } }, "+ Услуга"),
+      h("div", { class: "btns" },
+        h("button", { class: "btn sm", onclick: save }, "Сохранить план · ", totalEl),
+        h("button", { class: "link", onclick: () => { S.planDraft = null; render(); } }, "Отмена")),
+      h("div", { class: "toast" }));
+  }
+
+  // ── АНАЛИТИКА ──
+  function barChart(daily) {
+    const W = 360, H = 150, L = 34, R = 4, T = 8, B = 20;
+    const max = Math.max(1, ...daily), step = Math.pow(10, Math.floor(Math.log10(max))), top = Math.ceil(max / step) * step;
+    const bw = (W - L - R) / daily.length;
+    let s = '<svg class="chart" viewBox="0 0 ' + W + " " + H + '" role="img" aria-label="Выручка по дням">';
+    for (let j = 0; j <= 4; j++) {
+      const v = top * j / 4, y = T + (H - T - B) * (1 - j / 4);
+      s += '<line x1="' + L + '" x2="' + (W - R) + '" y1="' + y + '" y2="' + y + '" style="stroke:var(--line)" stroke-width="1"/>';
+      s += '<text x="' + (L - 4) + '" y="' + (y + 3) + '" text-anchor="end">' + (v >= 1000 ? Math.round(v / 1000) + "к" : Math.round(v)) + "</text>";
+    }
+    daily.forEach((v, i) => {
+      const bh = (H - T - B) * v / top, x = L + i * bw + 1, y = H - B - bh;
+      if (v > 0) s += '<rect x="' + x.toFixed(1) + '" y="' + y.toFixed(1) + '" width="' + Math.max(1, bw - 2).toFixed(1) + '" height="' + bh.toFixed(1) + '" rx="1.5" style="fill:var(--accent)"/>';
+      if (i === 0 || (i + 1) % 5 === 0) s += '<text x="' + (x + (bw - 2) / 2).toFixed(1) + '" y="' + (H - 6) + '" text-anchor="middle">' + (i + 1) + "</text>";
+    });
+    return s + "</svg>";
+  }
+  const hbars = (entries, fmt) => { const max = Math.max(1, ...entries.map((e) => e[1])); return entries.map(([k, v]) =>
+    h("div", { class: "bar-h" }, h("span", {}, k), h("div", { class: "track" }, h("i", { style: "width:" + Math.round(v / max * 100) + "%" })), h("b", { class: "num" }, fmt ? fmt(v) : v))); };
+  const table = (head, rows, numeric) => h("div", { class: "tablewrap" }, h("table", {},
+    h("thead", {}, h("tr", {}, head.map((t, i) => h("th", { class: i && numeric !== false ? "n" : null }, t)))),
+    h("tbody", {}, rows)));
+
+  function renderStats() {
+    const m = S.repMonth, r = computeMonth(S.mDays, m);
+    const d = parseKey(m + "-01"), label = MONTHS[d.getMonth()] + " " + d.getFullYear();
+    const go = (n) => { S.repMonth = addMonths(S.repMonth, n); subscribeMonth(); render(); };
+    const chart = h("div", { class: "card" }, h("h3", {}, "Выручка по дням"));
+    chart.insertAdjacentHTML("beforeend", barChart(r.daily));
+    const docRows = Object.entries(r.doctors).sort((a, b) => b[1].revenue - a[1].revenue).map(([name, x]) =>
+      h("tr", {}, h("td", {}, name), h("td", { class: "n" }, x.count), h("td", { class: "n" }, rub(x.revenue)),
+        h("td", { class: "n" }, rub(x.paid ? x.revenue / x.paid : 0)), h("td", { class: "n" }, pct(x.pay, x.revenue)), h("td", { class: "n" }, rub(x.pay))));
+    const avgTasks = r.taskDays.length ? r.taskDays.reduce((s, x) => s + x.pct, 0) / r.taskDays.length : 0;
+    const weakDays = r.taskDays.filter((x) => x.pct < 0.7);
+    const ps = r.planSum;
+
+    const exportCsv = () => {
+      const lines = [["Дата", "Пациент", "Врач", "Услуга", "Сумма", "Оплата", "Тип"].join(";")];
+      for (const day of S.mDays.slice().sort((a, b) => a.date.localeCompare(b.date)))
+        for (const v of live(day.visits).sort((a, b) => String(a.at).localeCompare(String(b.at))))
+          lines.push([day.date, pName(v.patientId).replace(/;/g, ","), v.doctor, v.service, num(v.amount), v.pay, v.kind].join(";"));
+      lines.push("", "Итоги за " + label, "Выручка;" + Math.round(r.revenue), "Средний чек;" + Math.round(r.avg), "Приёмов;" + r.count,
+        "Врачам;" + Math.round(r.doctorsPay), "Сотрудникам;" + r.staff, "Постоянные расходы;" + r.fixed, "Расходы по дням;" + Math.round(r.variable), "Чистая прибыль;" + Math.round(r.profit));
+      for (const [n, x] of Object.entries(r.doctors)) lines.push("ЗП " + n + ";" + Math.round(x.pay));
+      for (const s of S.cfg.staff) lines.push("ЗП " + s.name + ";" + num(s.salary));
+      saveFile("Аура_" + m + ".csv", "﻿" + lines.join("\n"));
+    };
+
+    return [
+      h("div", { class: "monthbar" },
+        h("button", { class: "round", "aria-label": "Предыдущий месяц", onclick: () => go(-1) }, "‹"),
+        h("b", {}, label[0].toUpperCase() + label.slice(1)),
+        h("button", { class: "round", "aria-label": "Следующий месяц", onclick: () => go(1) }, "›")),
+      h("h2", {}, "Деньги"),
+      h("div", { class: "kpis" },
+        kpi("Выручка", rub(r.revenue)), kpi("Средний чек", rub(r.avg), "", r.paid + " оплаченных приёмов"),
+        kpi("Чистая прибыль", rub(r.profit), r.profit >= 0 ? "good" : "bad"), kpi("Фонд оплаты труда", rub(r.doctorsPay + r.staff))),
+      chart,
+      h("div", { class: "card" }, h("h3", {}, "Врачи"),
+        table(["Врач", "Приёмов", "Выручка", "Ср. чек", "%", "Зарплата"], [
+          docRows.length ? docRows : h("tr", {}, h("td", { colspan: "6" }, "За этот месяц приёмов нет.")),
+          docRows.length ? h("tr", { class: "total" }, h("td", {}, "Итого"), h("td", { class: "n" }, r.count), h("td", { class: "n" }, rub(r.revenue)), h("td", { class: "n" }, rub(r.avg)), h("td", {}), h("td", { class: "n" }, rub(r.doctorsPay))) : null])),
+      h("div", { class: "card" }, h("h3", {}, "Куда ушли деньги"),
+        h("div", { class: "tablewrap" }, h("table", {}, h("tbody", {},
+          h("tr", {}, h("td", {}, "Зарплаты врачам"), h("td", { class: "n" }, rub(r.doctorsPay))),
+          S.cfg.staff.map((s) => h("tr", {}, h("td", {}, "Оклад: " + s.name), h("td", { class: "n" }, rub(num(s.salary))))),
+          h("tr", {}, h("td", {}, "Постоянные расходы (за месяц)"), h("td", { class: "n" }, rub(r.fixed))),
+          h("tr", {}, h("td", {}, "Расходы, внесённые за дни"), h("td", { class: "n" }, rub(r.variable))),
+          h("tr", { class: "total" }, h("td", {}, "Чистая прибыль"), h("td", { class: "n" }, rub(r.profit)))))),
+        h("h3", { style: "margin-top:14px" }, "Оплаты"),
+        Object.keys(r.byPay).length ? hbars(Object.entries(r.byPay).sort((a, b) => b[1] - a[1]), rub) : h("p", { class: "hint" }, "Нет оплат.")),
+      h("h2", {}, "Пациенты"),
+      h("div", { class: "kpis" },
+        kpi("Новых пациентов", String(r.newPatients.length)),
+        kpi("Разных пациентов", String(r.uniq.size), "", "приёмов " + r.count + " · первичных " + r.primary),
+        kpi("Неявки", String(r.noshow), r.noshow ? "bad" : "", "пришли " + r.came + " · перенесли " + r.moved),
+        kpi("Доля неявок", pct(r.noshow, r.noshow + r.came))),
+      h("div", { class: "card" }, h("h3", {}, "Откуда пришли новые"),
+        Object.keys(r.bySource).length ? hbars(Object.entries(r.bySource).sort((a, b) => b[1] - a[1])) : h("p", { class: "hint" }, "Новых пациентов в этом месяце нет.")),
+      h("h2", {}, "Обзвон"),
+      h("div", { class: "kpis" },
+        kpi("Звонков", String(r.calls)), kpi("Записано и подтверждено", String(r.booked)), kpi("Результативность", pct(r.booked, r.calls))),
+      Object.keys(r.callTypes).length ? h("div", { class: "card" }, h("h3", {}, "По спискам"),
+        table(["Список", "Звонков", "Результат", "%"], Object.entries(r.callTypes).map(([t, x]) => h("tr", {}, h("td", {}, t), h("td", { class: "n" }, x.n), h("td", { class: "n" }, x.booked), h("td", { class: "n" }, pct(x.booked, x.n)))))) : null,
+      h("h2", {}, "Планы лечения, созданные в этом месяце"),
+      h("div", { class: "kpis" },
+        kpi("Предложено", rub(ps.proposed), "", r.plans.length + " планов"),
+        kpi("Согласовано", rub(ps.agreed), "", "конверсия " + pct(ps.agreed, ps.proposed)),
+        kpi("Выполнено", rub(ps.done)), kpi("Отказ", rub(ps.refused), ps.refused ? "bad" : "")),
+      Object.keys(ps.byDoctor).length ? h("div", { class: "card" }, h("h3", {}, "Планы по врачам"),
+        table(["Врач", "Планов", "Предложено", "Согласовано", "%"], Object.entries(ps.byDoctor).map(([dn, x]) => h("tr", {}, h("td", {}, dn), h("td", { class: "n" }, x.n), h("td", { class: "n" }, rub(x.proposed)), h("td", { class: "n" }, rub(x.agreed)), h("td", { class: "n" }, pct(x.agreed, x.proposed)))))) : null,
+      h("h2", {}, "Администратор"),
+      h("div", { class: "kpis" },
+        kpi("Задачи выполнены", pct(avgTasks, 1), avgTasks >= 0.85 ? "good" : avgTasks < 0.6 && r.taskDays.length ? "bad" : "", "в среднем за " + r.taskDays.length + " раб. дн."),
+        kpi("Слабых дней", String(weakDays.length), weakDays.length ? "bad" : "", "меньше 70% задач"),
+        kpi("Расхождения кассы", String(r.cashDiff.length), r.cashDiff.length ? "bad" : "good", r.cashDiff.length ? "итого " + rub(r.cashDiff.reduce((s, x) => s + x.diff, 0)) : "всё сходится")),
+      weakDays.length || r.cashDiff.length ? h("div", { class: "card" }, h("h3", {}, "Дни, на которые стоит посмотреть"),
+        h("div", { class: "list" },
+          weakDays.map((x) => h("div", { class: "row" }, h("div", { class: "main" }, fmtDay(x.date)), h("span", { class: "pill warn" }, "задачи " + pct(x.pct, 1)))),
+          r.cashDiff.map((x) => h("div", { class: "row" }, h("div", { class: "main" }, fmtDay(x.date)), h("span", { class: "pill bad" }, "касса " + (x.diff > 0 ? "+" : "") + rub(x.diff)))))) : null,
+      h("button", { class: "btn ghost wide", onclick: exportCsv }, "Скачать месяц для бухгалтера (CSV)"),
+      h("div", { class: "toast" }),
+    ];
+  }
+
+  function saveBlob(name, blob) {
+    const url = URL.createObjectURL(blob);
+    const a = h("a", { href: url, download: name });
+    document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  }
+  async function saveFile(name, data) {
+    saveBlob(name, new Blob([data], { type: name.endsWith(".csv") ? "text/csv;charset=utf-8" : "application/json" }));
+    toast("Файл скачан");
+    return true;
+  }
+
+  // ── РЕЗЕРВНАЯ КОПИЯ ──
+  async function backup() {
+    try {
+      const r = await fetch("/api/backup", { credentials: "same-origin" });
+      if (!r.ok) throw new Error();
+      saveBlob("Аура_копия_" + todayKey() + ".json", await r.blob());
+      toast("Копия скачана");
+    } catch (e) { setStatus("Не удалось скачать копию. Повтори позже.", true); }
+  }
+  async function restore(file) {
+    let data;
+    try { data = JSON.parse(await file.text()); } catch (e) { toast("Это не файл резервной копии"); return; }
+    setStatus("Восстанавливаю…");
+    try { const r = await Store.api("POST", "/api/restore", data); setStatus(""); toast("Восстановлено записей: " + r.restored); Store.refreshAll(); }
+    catch (e) { setStatus("Не удалось восстановить: " + (e.message || "ошибка"), true); }
+  }
+
+  // ── НАСТРОЙКИ ──
+  function renderSettings() {
+    if (!S.cfgDraft) S.cfgDraft = clone(S.cfg);
+    const C = S.cfgDraft;
+    const save = () => {
+      const clean = {
+        doctors: C.doctors.filter((d) => String(d.name).trim()).map((d) => ({ name: String(d.name).trim(), pct: num(d.pct), special: String(d.special || "").trim() })),
+        staff: C.staff.filter((s) => String(s.name).trim()).map((s) => ({ name: String(s.name).trim(), salary: num(s.salary) })),
+        fixed: C.fixed.filter((x) => String(x.name).trim()).map((x) => ({ name: String(x.name).trim(), amount: num(x.amount) })),
+        services: C.services.map((s) => String(s).trim()).filter(Boolean),
+        pays: C.pays.map((s) => String(s).trim()).filter(Boolean),
+        sources: C.sources.map((s) => String(s).trim()).filter(Boolean),
+        lostDays: num(C.lostDays) || 90, callsTarget: num(C.callsTarget),
+        tasks: C.tasks.filter((t) => String(t.text).trim()).map((t) => ({ id: t.id, text: String(t.text).trim(), section: t.section, days: t.days })),
+      };
+      S.cfg = clean; S.cfgDraft = clone(clean); S.cfgDirty = false; setStatus(""); render();
+      guard(Store.set("config/main", clean), "Настройки сохранены");
+    };
+    const saveBar = () => h("div", { class: "savebar" }, h("span", {}, "Есть несохранённые изменения"), h("button", { class: "btn", onclick: () => save() }, "Сохранить"));
+    const dirty = () => { if (S.cfgDirty) return; S.cfgDirty = true; if (!$main.querySelector(".savebar")) $main.append(saveBar()); };
+    const inp = (obj, key, attrs) => h("input", { ...attrs, value: obj[key] == null ? "" : obj[key], oninput: (e) => { obj[key] = attrs && attrs.type === "number" ? (e.target.value === "" ? "" : num(e.target.value)) : e.target.value; dirty(); } });
+    const del = (arr, i) => h("button", { class: "x", "aria-label": "Удалить строку", onclick: () => { arr.splice(i, 1); S.cfgDirty = true; render(); } }, "×");
+    const addBtn = (label, fn) => h("button", { class: "link", style: "margin-top:8px", onclick: () => { fn(); S.cfgDirty = true; render(); } }, "+ " + label);
+    const list = (title, arr, ph) => h("div", { class: "card" }, h("h3", {}, title),
+      arr.map((v, i) => h("div", { class: "edit-row er-one" }, h("input", { value: v, "aria-label": title, oninput: (e) => { arr[i] = e.target.value; dirty(); } }), del(arr, i))),
+      addBtn(ph, () => arr.push("")));
+
+    return [
+      S.cfgLoaded ? null : h("div", { class: "card hint" }, "Загружаю сохранённые настройки…"),
+      h("div", { class: "card" }, h("h3", {}, "Врачи и проценты"),
+        C.doctors.map((d, i) => h("div", { class: "edit-row er-doc" },
+          inp(d, "name", { "aria-label": "Имя врача", placeholder: "Имя врача" }),
+          inp(d, "pct", { type: "number", "aria-label": "Процент", min: "0", max: "100", placeholder: "%" }),
+          h("div", { class: "sp" }, inp(d, "special", { "aria-label": "Особые услуги", placeholder: "Особые услуги: Удаление=30" })), del(C.doctors, i))),
+        addBtn("Врач", () => C.doctors.push({ name: "", pct: 30, special: "" })),
+        h("p", { class: "hint" }, "Процент — от выручки врача. «Особые услуги» — свой процент на услугу: «Удаление=30; Имплантация=25».")),
+      h("div", { class: "card" }, h("h3", {}, "Сотрудники и оклады"),
+        C.staff.length ? C.staff.map((s, i) => h("div", { class: "edit-row er-two" },
+          inp(s, "name", { "aria-label": "Сотрудник", placeholder: "Администратор Анна" }), inp(s, "salary", { type: "number", "aria-label": "Оклад в месяц", placeholder: "Оклад, ₽" }), del(C.staff, i)))
+          : h("p", { class: "hint" }, "Добавь администраторов, ассистентов, санитарок."),
+        addBtn("Сотрудник", () => C.staff.push({ name: "", salary: "" }))),
+      h("div", { class: "card" }, h("h3", {}, "Постоянные расходы в месяц · " + rub(C.fixed.reduce((s, x) => s + num(x.amount), 0))),
+        C.fixed.map((x, i) => h("div", { class: "edit-row er-two" }, inp(x, "name", { "aria-label": "Статья расхода" }), inp(x, "amount", { type: "number", "aria-label": "Сумма в месяц" }), del(C.fixed, i))),
+        addBtn("Статья расхода", () => C.fixed.push({ name: "", amount: "" }))),
+      h("div", { class: "card" }, h("h3", {}, "Обзвон"),
+        h("div", { class: "grid" },
+          h("label", { class: "f" }, "Цель звонков в день", inp(C, "callsTarget", { type: "number", min: "0" })),
+          h("label", { class: "f" }, "«Потерянный», если не был дней", inp(C, "lostDays", { type: "number", min: "30" })))),
+      h("div", { class: "card" }, h("h3", {}, "Задачи администратора · " + C.tasks.length),
+        C.tasks.map((t, i) => h("div", { class: "edit-row er-task" },
+          h("div", { class: "txt" }, inp(t, "text", { "aria-label": "Задача", placeholder: "Что сделать" })),
+          h("select", { "aria-label": "Когда", onchange: (e) => { t.section = e.target.value; dirty(); } }, SECTIONS.map((s) => h("option", { value: s, selected: t.section === s }, s))),
+          h("select", { "aria-label": "Дни", onchange: (e) => { t.days = e.target.value === "all" ? "all" : Number(e.target.value); dirty(); } },
+            h("option", { value: "all", selected: t.days === "all" }, "Каждый день"),
+            [1, 2, 3, 4, 5, 6, 0].map((n) => h("option", { value: String(n), selected: t.days !== "all" && Number(t.days) === n }, "Только " + DOW_SHORT[n]))),
+          del(C.tasks, i))),
+        addBtn("Задача", () => C.tasks.push({ id: "t" + rid(), text: "", section: "День", days: "all" }))),
+      list("Услуги", C.services, "Услуга"),
+      list("Виды оплаты", C.pays, "Вид оплаты"),
+      list("Откуда узнают о клинике", C.sources, "Источник"),
+      S.isOwner ? h("div", { class: "card" }, h("h3", {}, "Доступ администраторов"),
+        h("p", { class: "qwhy", style: "margin:0 0 8px" }, "Почты, с которых можно войти как администратор. Код для входа приходит на эту почту. Владелец входит со своей почты, она задана на сервере."),
+        S.access.length ? S.access.map((em, i) => h("div", { class: "edit-row er-one acc-row" }, h("span", {}, em),
+          h("button", { class: "x", "aria-label": "Убрать доступ", onclick: () => { const a = S.access.filter((_, j) => j !== i); S.access = a; render(); guard(Store.set("config/access", { admins: a }), "Доступ убран"); } }, "×")))
+          : h("p", { class: "hint" }, "Пока ни у кого нет доступа. Добавь почту администратора."),
+        h("div", { class: "inline", style: "margin-top:8px" },
+          h("input", { id: "acc-email", type: "email", placeholder: "admin@mail.ru", value: S.accDraft, style: "flex:1;min-width:180px", oninput: (e) => { S.accDraft = e.target.value; } }),
+          h("button", { class: "btn sm", onclick: () => {
+            const em = String(S.accDraft || "").trim().toLowerCase();
+            if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(em)) { toast("Проверь почту"); return; }
+            if (S.access.includes(em)) { toast("Эта почта уже есть"); return; }
+            const a = [...S.access, em]; S.access = a; S.accDraft = ""; render();
+            guard(Store.set("config/access", { admins: a }), "Доступ выдан");
+          } }, "Дать доступ"))) : null,
+      h("div", { class: "card" }, h("h3", {}, "Резервная копия"),
+        h("p", {}, "Сервер сам сохраняет копию каждый день и хранит последние 30. Кнопка ниже скачивает файл со всем (пациенты, планы, приёмы, расходы, звонки, касса, задачи, настройки) — раз в неделю сохраняй его у себя."),
+        h("div", { class: "btns" },
+          h("button", { class: "btn", onclick: backup }, "Скачать полную копию"),
+          h("span", { class: "btn ghost filebtn" }, "Восстановить из файла",
+            h("input", { type: "file", accept: ".json,application/json", "aria-label": "Файл резервной копии", onchange: (e) => {
+              const f = e.target.files && e.target.files[0]; e.target.value = "";
+              if (f) { S.restoreFile = f; render(); }
+            } }))),
+        S.restoreFile ? h("div", { class: "inline", style: "margin-top:10px" },
+          h("span", { class: "qwhy" }, "Восстановить из «" + S.restoreFile.name + "»? Записи с теми же номерами будут заменены."),
+          h("button", { class: "btn sm", onclick: () => { const f = S.restoreFile; S.restoreFile = null; render(); restore(f); } }, "Да, восстановить"),
+          h("button", { class: "link", onclick: () => { S.restoreFile = null; render(); } }, "Отмена")) : null),
+      h("div", { class: "toast" }),
+      S.cfgDirty ? saveBar() : null,
+    ];
+  }
+
+  function render() {
+    if (!S.isOwner && (S.tab === "stats" || S.tab === "settings")) S.tab = "tasks";
+    if (!TABS.some((t) => t[0] === S.tab)) S.tab = "tasks";
+    renderNav();
+    const fn = { tasks: renderTasks, visit: renderVisit, calls: renderCalls, patients: renderPatients, stats: renderStats, settings: renderSettings }[S.tab];
+    $main.replaceChildren(...fn().flat(Infinity).filter(Boolean));
+  }
+
+  // ══════════ СТАРТ ══════════
+  function startSubs() {
+    Store.watchDoc("config/main", (d) => {
+      if (d) { S.cfg = { ...clone(DEFAULT_CFG), ...d }; if (!S.cfgDirty) S.cfgDraft = null; }
+      S.cfgLoaded = true; requestRender();
+    });
+    Store.watchColl("patients", [], (list) => { const m = {}; for (const p of list) { const { id, ...rest } = p; m[id] = rest; } S.patients = m; requestRender(); });
+    Store.watchColl("plans", [], (list) => { const m = {}; for (const p of list) { const { id, ...rest } = p; m[id] = rest; } S.plans = m; requestRender(); });
+    if (S.isOwner) Store.watchDoc("config/access", (d) => { S.access = (d && d.admins) || []; requestRender(); });
+    subscribeDay();
+    subscribeMonth();
+  }
+
+  // ══════════ ВХОД ПО ПОЧТЕ ══════════
+  function showLogin() {
+    if (S.loginShown) return;
+    S.loginShown = true;
+    document.getElementById("nav").replaceChildren();
+    document.getElementById("who").textContent = "";
+    const st = { email: "", code: "", step: 1, busy: false, msg: "" };
+    const post = async (url, body) => {
+      const r = await fetch(url, { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      let j = {};
+      try { j = await r.json(); } catch (e) {}
+      if (!r.ok) throw new Error(j.error || "Что-то пошло не так, попробуй ещё раз");
+      return j;
+    };
+    async function send() {
+      if (st.busy) return;
+      st.busy = true; st.msg = ""; draw();
+      try { await post("/api/login/request", { email: st.email.trim() }); st.step = 2; st.code = ""; }
+      catch (e) { st.msg = e.message; }
+      st.busy = false; draw();
+    }
+    async function verify() {
+      if (st.busy) return;
+      st.busy = true; st.msg = ""; draw();
+      try { await post("/api/login/verify", { email: st.email.trim(), code: st.code }); location.reload(); return; }
+      catch (e) { st.msg = e.message; }
+      st.busy = false; draw();
+    }
+    function draw() {
+      $main.replaceChildren(h("div", { class: "card", style: "max-width:420px;width:100%;margin:24px auto 0" },
+        h("h3", {}, "Вход в пульт"),
+        st.step === 1 ? [
+          h("p", { class: "qwhy", style: "margin:0 0 10px" }, "Введи рабочую почту — пришлём код для входа."),
+          h("label", { class: "f" }, "Почта", h("input", { id: "l-email", type: "email", autocomplete: "email", value: st.email, placeholder: "name@mail.ru",
+            oninput: (e) => { st.email = e.target.value; }, onkeydown: (e) => { if (e.key === "Enter") send(); } })),
+          h("button", { class: "btn wide", onclick: send, disabled: st.busy }, st.busy ? "Отправляю…" : "Получить код"),
+        ] : [
+          h("p", { class: "qwhy", style: "margin:0 0 10px" }, "Если у почты " + st.email.trim() + " есть доступ, код придёт в течение минуты. Проверь и папку «Спам»."),
+          h("label", { class: "f" }, "Код из письма", h("input", { id: "l-code", inputmode: "numeric", autocomplete: "one-time-code", value: st.code, placeholder: "6 цифр",
+            oninput: (e) => { st.code = e.target.value; }, onkeydown: (e) => { if (e.key === "Enter") verify(); } })),
+          h("button", { class: "btn wide", onclick: verify, disabled: st.busy }, st.busy ? "Проверяю…" : "Войти"),
+          h("div", { class: "btns" },
+            h("button", { class: "link", onclick: () => { st.step = 1; st.msg = ""; draw(); } }, "Другая почта"),
+            h("button", { class: "link", onclick: send }, "Прислать код ещё раз")),
+        ],
+        st.msg ? h("p", { class: "hint", style: "color:var(--bad)" }, st.msg) : null));
+      const f = document.getElementById(st.step === 1 ? "l-email" : "l-code");
+      if (f) f.focus();
+    }
+    draw();
+  }
+
+  function renderWho(me) {
+    document.getElementById("who").replaceChildren(
+      me.email + (me.role === "owner" ? " · владелец · " : " · администратор · "),
+      h("button", { class: "link", onclick: async () => { try { await fetch("/api/logout", { method: "POST", credentials: "same-origin" }); } catch (e) {} location.reload(); } }, "Выйти"));
+  }
+
+  (async () => {
+    let me;
+    try { me = await Store.api("GET", "/api/me"); }
+    catch (e) { if (e.code !== "unauth") $main.replaceChildren(h("div", { class: "card empty" }, "Сервер недоступен. Обнови страницу через минуту.")); return; }
+    S.isOwner = me.role === "owner";
+    S.uid = me.email;
+    renderWho(me);
+    await Store.start();
+    startSubs();
+    render();
+  })();
+})();
+</script>
+
+</body>
+</html>
